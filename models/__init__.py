@@ -6,7 +6,7 @@ def create_model(opt,args):
     model = opt['model']
 
     if model == 'CVPR':
-        from .IRN_model import IRNModel as M
+        from .Modified_invISP import IRNModel as M
         m = M(opt, args)
     elif model == 'PAMI':
         from .IRNp_model import IRNpModel as M
