@@ -1,0 +1,67 @@
+# mix-up jpeg layer, remeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeember to clamp after each attack! Or gradient explosion will occur!!!
+                num_jpeg, num_identity = 3,2
+                if self.global_step % 8 < num_jpeg:
+                    attack_layer = self.combined_jpeg_weak
+                    attack_layer_1 = self.combined_jpeg_strong
+                    attacked_forward_0 = attack_layer(attacked_forward)
+                    attacked_forward_0 = torch.clamp(attacked_forward_0, 0, 1)
+                    attacked_forward_1 = attack_layer_1(attacked_forward)
+                    attacked_forward_1 = torch.clamp(attacked_forward_1, 0, 1)
+                    beta = np.random.rand()
+                    attacked_forward = beta * attacked_forward_0 + (1 - beta) * attacked_forward_1
+                    attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                    ASL_diff = attacked_forward - forward_image
+
+                    attacked_forward = ASL_diff.clone().detach() + forward_image
+                    attacked_forward = self.Quantization(attacked_forward)
+                    attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                    attack_full_name += attack_layer.name + attack_layer_1.name
+
+                elif self.global_step % 8 < 4:
+                    attack_layer = self.gaussian_blur
+                    attack_layer_1 = self.median_blur
+                    attacked_forward_0 = attack_layer(attacked_forward)
+                    attacked_forward_0 = torch.clamp(attacked_forward_0, 0, 1)
+                    attacked_forward_1 = attack_layer_1(attacked_forward)
+                    attacked_forward_1 = torch.clamp(attacked_forward_1, 0, 1)
+                    beta = np.random.rand()
+                    attacked_forward = beta * attacked_forward_0 + (1 - beta) * attacked_forward_1
+                    attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                    ASL_diff = attacked_forward - forward_image
+
+                    attacked_forward = ASL_diff.clone().detach() + forward_image
+                    attacked_forward = self.Quantization(attacked_forward)
+                    attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                    attack_full_name += "Blurring"
+
+                # elif self.global_step % 8 < 4:
+                #     blur_image = self.median_blur(attacked_forward)
+                #     blur_image = torch.clamp(blur_image, 0, 1)
+                #     ASL_blur_diff = (blur_image - attacked_forward)
+                #
+                #     attacked_forward = ASL_blur_diff.clone().detach() + forward_image
+                #     attacked_forward = self.Quantization(attacked_forward)
+                #     attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                #     attack_full_name += "MBlur"
+
+                elif self.global_step % 8 < 6:
+                    blur_image = self.resize(attacked_forward)
+                    blur_image = torch.clamp(blur_image, 0, 1)
+                    ASL_blur_diff = (blur_image - attacked_forward)
+
+                    attacked_forward = ASL_blur_diff.clone().detach() + forward_image
+                    attacked_forward = self.Quantization(attacked_forward)
+                    attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                    attack_full_name += "Resize"
+
+                else:
+                    # blur_image = self.identity(attacked_forward)
+                    # blur_image = torch.clamp(blur_image, 0, 1)
+                    # ASL_blur_diff = (blur_image - attacked_forward)
+                    #
+                    # attacked_forward = ASL_blur_diff.clone().detach() + forward_image
+                    attacked_forward = self.Quantization(attacked_forward)
+                    attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                    attack_full_name += "Identity"
+
+                logs.append(('Kind', attack_full_name))

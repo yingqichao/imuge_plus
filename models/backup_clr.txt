@@ -1,0 +1,232 @@
+                ## old attack layer
+                attacked_forward = scaled_cropped
+                attacked_forward = torch.clamp(attacked_forward, 0, 1)
+                attack_full_name = ""
+
+                # mix-up jpeg layer, remeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeember to clamp after each attack! Or gradient explosion will occur!!!
+                # if self.global_step % 4 < 2:
+                # attacked_image = torch.zeros((4,forward_image.shape[1],forward_image.shape[2],forward_image.shape[3]),dtype=torch.float32).cuda()
+                way_attack = 6
+                num_attacks = way_attack * batch_size
+
+                attacked_image_0 = self.resize(attacked_forward)
+                attacked_image_0 = torch.clamp(attacked_image_0, 0, 1)
+                attack_layer = self.combined_jpeg_weak
+                attack_layer_1 = self.combined_jpeg_weak
+                attacked_forward_0 = attack_layer(attacked_forward)
+                # attacked_forward_0 = torch.clamp(attacked_forward_0, 0, 1)
+                attacked_forward_1 = attack_layer_1(attacked_forward)
+                # attacked_forward_1 = torch.clamp(attacked_forward_1, 0, 1)
+                beta = np.random.rand()
+                attacked_image_1 = beta * attacked_forward_0 + (1 - beta) * attacked_forward_1
+                attacked_image_1 = torch.clamp(attacked_image_1, 0, 1)
+
+                attacked_image_2 = self.median_blur(attacked_forward)
+                attacked_image_2 = torch.clamp(attacked_image_2, 0, 1)
+
+                attacked_image_3 = self.gaussian_blur(attacked_forward)
+                attacked_image_3 = torch.clamp(attacked_image_3, 0, 1)
+                # attacked_image_4 = self.dropout(attacked_forward * (1 - masks),
+                #                                 modified_input) + self.previous_previous_images * masks
+                # attacked_image_4 = torch.clamp(attacked_image_4, 0, 1)
+
+                # attack_layer = self.combined_jpeg_strong
+                # attack_layer_1 = self.combined_jpeg_strong
+                # attacked_forward_0 = attack_layer(attacked_forward)
+                # # attacked_forward_0 = torch.clamp(attacked_forward_0, 0, 1)
+                # attacked_forward_1 = attack_layer_1(attacked_forward)
+                # # attacked_forward_1 = torch.clamp(attacked_forward_1, 0, 1)
+                # beta = np.random.rand()
+                # attacked_image_5 = beta * attacked_forward_0 + (1 - beta) * attacked_forward_1
+                # attacked_image_5 = torch.clamp(attacked_image_5, 0, 1)
+
+                attacked_image_6 = self.gaussian(attacked_forward)
+                attacked_image_6 = torch.clamp(attacked_image_6, 0, 1)
+
+                attacked_image_7 = self.identity(attacked_forward)
+                attacked_image_7 = torch.clamp(attacked_image_7, 0, 1)
+
+                attacked_image = torch.cat((attacked_image_0, attacked_image_1, attacked_image_2, attacked_image_3,
+                                            attacked_image_6, attacked_image_7), dim=0)
+                attacked_image = self.Quantization(attacked_image)
+
+                masks_expand = masks.repeat(way_attack, 1, 1, 1)
+                canny_expanded = self.canny_image.repeat(way_attack, 1, 1, 1)
+                masks_GT_expand = masks_GT.repeat(way_attack, 1, 1, 1)
+                modified_expand = modified_input.repeat(way_attack, 1, 1, 1)
+                forward_expand = forward_image.repeat(way_attack, 1, 1, 1)
+
+
+######## DUAL RESIZING #########
+                # we first directly crop-out the region of interest
+                self.ideal_crop_pad_image = attacked_image * (1 - masks_expand)
+                # next, we
+                scaled_back_padded = torch.zeros_like(self.ideal_crop_pad_image)
+                scaled_back = Functional.interpolate( #
+                    attacked_image,
+                    size=[h_end - h_start, w_end - w_start],
+                    mode='bicubic')
+                scaled_back = torch.clamp(scaled_back, 0, 1)
+                scaled_back_padded[:,:, h_start: h_end, w_start: w_end] = scaled_back
+                dual_reshape_diff = (scaled_back_padded - self.ideal_crop_pad_image).clone().detach()
+
+                self.real_crop_pad_image = self.ideal_crop_pad_image + dual_reshape_diff
+
+
+
+
+     def loss_forward(self, label_GT, label_pred, out, y, z):
+        is_targeted = False
+        l_forw_fit = self.train_opt['lambda_fit_forw'] * self.Reconstruction_forw(out, y)
+
+        z = z.reshape([out.shape[0], -1])
+        l_forw_ce = self.train_opt['lambda_ce_forw'] * torch.sum(z ** 2) / z.shape[0]
+        loss_adv = None
+        if label_GT is not None:
+            loss_adv = 2 * self.criterion_adv(label_pred, label_GT, is_targeted)
+
+        return l_forw_fit, l_forw_ce, loss_adv
+
+    def loss_backward(self, label_pred, label_GT, GT_ref, reversed_image):
+        l_back_rec = self.train_opt['lambda_rec_back'] * self.Reconstruction_back(GT_ref, reversed_image)
+
+        # loss_label = self.criterion(label_pred, label_GT)
+        loss_label = None
+        return l_back_rec, loss_label
+
+    def loss_forward_and_backward_imuge(self, fake_outputs, cover_images, masks=None, use_l1=True, use_vgg=False,
+                                        use_percept=False):
+        gen_loss = 0
+        if use_l1:
+            gen_l1_loss = self.l1_loss(fake_outputs, cover_images)
+        else:
+            gen_l1_loss = self.l2_loss(fake_outputs, cover_images)
+        gen_loss += gen_l1_loss
+        gen_l1_local_loss = None
+        if masks is not None:
+            if use_l1:
+                gen_l1_local_loss = self.l1_loss(fake_outputs * masks,
+                                                 cover_images * masks) / torch.mean(masks)
+            else:
+                gen_l1_local_loss = self.l2_loss(fake_outputs * masks,
+                                                 cover_images * masks) / torch.mean(masks)
+            # gen_loss += 2 * gen_l1_local_loss
+
+        if use_percept and cover_images.shape[1] == 3:
+            # generator perceptual loss
+
+            gen_content_loss = self.perceptual_loss(fake_outputs, cover_images)
+            gen_loss += 0.01 * gen_content_loss
+
+        if use_vgg and cover_images.shape[1] == 3:
+            l_forward_ssim = - self.ssim_loss(fake_outputs, cover_images)
+            gen_loss += 0.01 * l_forward_ssim
+
+        # generator style loss
+        # if masks is not None:
+        #     gen_style_loss = self.style_loss(fake_outputs, cover_images)
+        #     gen_style_loss = gen_style_loss * 250
+        #     gen_loss += gen_style_loss
+
+        return gen_l1_local_loss, gen_l1_loss, gen_loss
+
+
+ # ####### Save independent images #############
+            save_independent = False
+            if save_independent:
+                name = self.out_space_storage + '/ori_0114/' + str(self.global_step).zfill(5) + "_" + str(
+                    self.rank) + ".png"
+                for image_no in range(self.real_H.shape[0]):
+                    camera_ready = self.real_H[image_no].unsqueeze(0)
+                    torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                                 name, nrow=1, padding=0,
+                                                 normalize=False)
+                print("Saved:{}".format(name))
+
+                name = self.out_space_storage + '/immu_0114/' + str(self.global_step).zfill(5) + "_" + str(
+                    self.rank) + ".png"
+                for image_no in range(forward_image.shape[0]):
+                    camera_ready = forward_image[image_no].unsqueeze(0)
+                    torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                                 name, nrow=1, padding=0,
+                                                 normalize=False)
+                print("Saved:{}".format(name))
+
+
+
+     def loss_forward(self, label_GT, label_pred, out, y, z):
+        is_targeted = False
+        l_forw_fit = self.train_opt['lambda_fit_forw'] * self.Reconstruction_forw(out, y)
+
+        z = z.reshape([out.shape[0], -1])
+        l_forw_ce = self.train_opt['lambda_ce_forw'] * torch.sum(z ** 2) / z.shape[0]
+        loss_adv = None
+        if label_GT is not None:
+            loss_adv = 2 * self.criterion_adv(label_pred, label_GT, is_targeted)
+
+        return l_forw_fit, l_forw_ce, loss_adv
+
+    def loss_backward(self, label_pred, label_GT, GT_ref, reversed_image):
+        l_back_rec = self.train_opt['lambda_rec_back'] * self.Reconstruction_back(GT_ref, reversed_image)
+
+        # loss_label = self.criterion(label_pred, label_GT)
+        loss_label = None
+        return l_back_rec, loss_label
+
+    def loss_forward_and_backward_imuge(self, fake_outputs, cover_images, masks=None, use_l1=True, use_vgg=False,
+                                        use_percept=False):
+        gen_loss = 0
+        if use_l1:
+            gen_l1_loss = self.l1_loss(fake_outputs, cover_images)
+        else:
+            gen_l1_loss = self.l2_loss(fake_outputs, cover_images)
+        gen_loss += gen_l1_loss
+        gen_l1_local_loss = None
+        if masks is not None:
+            if use_l1:
+                gen_l1_local_loss = self.l1_loss(fake_outputs * masks,
+                                                 cover_images * masks) / torch.mean(masks)
+            else:
+                gen_l1_local_loss = self.l2_loss(fake_outputs * masks,
+                                                 cover_images * masks) / torch.mean(masks)
+            # gen_loss += 2 * gen_l1_local_loss
+
+        if use_percept and cover_images.shape[1] == 3:
+            # generator perceptual loss
+
+            gen_content_loss = self.perceptual_loss(fake_outputs, cover_images)
+            gen_loss += 0.01 * gen_content_loss
+
+        if use_vgg and cover_images.shape[1] == 3:
+            l_forward_ssim = - self.ssim_loss(fake_outputs, cover_images)
+            gen_loss += 0.01 * l_forward_ssim
+
+        # generator style loss
+        # if masks is not None:
+        #     gen_style_loss = self.style_loss(fake_outputs, cover_images)
+        #     gen_style_loss = gen_style_loss * 250
+        #     gen_loss += gen_style_loss
+
+        return gen_l1_local_loss, gen_l1_loss, gen_loss
+
+  def symm_pad(self, im, padding):
+        h, w = im.shape[-2:]
+        left, right, top, bottom = padding
+
+        x_idx = np.arange(-left, w + right)
+        y_idx = np.arange(-top, h + bottom)
+
+        x_pad = self.reflect(x_idx, -0.5, w - 0.5)
+        y_pad = self.reflect(y_idx, -0.5, h - 0.5)
+        xx, yy = np.meshgrid(x_pad, y_pad)
+        return im[..., yy, xx]
+
+    def reflect(self, x, minx, maxx):
+        """ Reflects an array around two points making a triangular waveform that ramps up
+        and down,  allowing for pad lengths greater than the input length """
+        rng = maxx - minx
+        double_rng = 2 * rng
+        mod = np.fmod(x - minx, double_rng)
+        normed_mod = np.where(mod < 0, mod + double_rng, mod)
+        out = np.where(normed_mod >= rng, double_rng - normed_mod, normed_mod) + minx
+        return np.array(out, dtype=x.dtype)

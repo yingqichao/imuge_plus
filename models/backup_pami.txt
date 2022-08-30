@@ -1,0 +1,289 @@
+# #### domain generalization discriminator ###
+                    # self.generator.train()
+                    # dg_pred = self.generator(reverse_feature.clone().detach())
+                    # l_dg = self.l2_loss(dg_pred,attack_rate_tensor)
+                    # self.optimizer_generator.zero_grad()
+                    # l_dg.backward()
+                    # self.optimizer_generator.step()
+
+                    # logs.append(('DG', l_dg.item()))
+                    # dg_pred = self.generator(reverse_feature)
+                    #
+                    # l_dg = - self.l2_loss(dg_pred, attack_rate_tensor)
+
+                    ######## DISCRIMINATORS #######################
+                    ########### discriminator loss for marked image
+                    # dis_input_real = modified_input
+                    # dis_input_fake = forward_image.detach()
+                    # dis_real = self.discriminator(dis_input_real)  # in: (grayscale(1) + edge(1))
+                    # dis_fake = self.discriminator(dis_input_fake)  # in: (grayscale(1) + edge(1))
+                    # dis_real_loss = self.bce_loss(dis_real,torch.ones_like(dis_real))
+                    # dis_fake_loss = self.bce_loss(dis_fake,torch.zeros_like(dis_fake))
+                    # dis_loss = (dis_real_loss + dis_fake_loss) / 2
+                    # self.discriminator.train()
+                    # self.optimizer_discriminator.zero_grad()
+                    # dis_loss.backward()
+                    # if self.train_opt['gradient_clipping']:
+                    #     nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.train_opt['gradient_clipping'])
+                    # self.optimizer_discriminator.step()
+                    # ########## generator adversarial loss
+                    # gen_input_fake = forward_image
+                    # gen_fake = self.discriminator(gen_input_fake)
+                    # FW_GAN = self.bce_loss(gen_fake,torch.ones_like(dis_real))
+                    # logs.append(('FW_GAN', FW_GAN.item()))
+                    # # gen_marked_feat = 0
+                    # # for i in range(len(dis_real_feat)):
+                    # #     gen_marked_feat += self.l1_loss(gen_fake_feat[i], dis_real_feat[i].detach())
+                    # # gen_marked_loss = gen_marked_feat * 5
+                    # # FW_GAN += gen_marked_loss
+                    # #
+                    # ########### discriminator loss for recovered image
+                    # dis_input_real = modified_expand
+                    # dis_input_fake = reversed_image.detach()
+                    # dis_real = self.discriminator_mask(dis_input_real)  # in: (grayscale(1) + edge(1))
+                    # dis_fake = self.discriminator_mask(dis_input_fake)  # in: (grayscale(1) + edge(1))
+                    # dis_real_loss = self.bce_loss(dis_real, torch.ones_like(dis_real))
+                    # downsample_mask = Functional.interpolate(
+                    #                     1-masks_GT_expand,
+                    #                     size=[dis_fake.shape[2], dis_fake.shape[3]],
+                    #                     mode='bilinear')
+                    # downsample_mask = self.clamp_with_grad(downsample_mask,0,1)
+                    # dis_fake_loss = self.bce_loss(dis_fake,downsample_mask)
+                    # # dis_fake_loss = self.bce_loss(dis_real,torch.zeros_like(dis_real))
+                    # dis_loss = (dis_real_loss + dis_fake_loss) / 2
+                    # self.discriminator_mask.train()
+                    # self.optimizer_discriminator_mask.zero_grad()
+                    # dis_loss.backward()
+                    # if self.train_opt['gradient_clipping']:
+                    #     nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), self.train_opt['gradient_clipping'])
+                    # self.optimizer_discriminator_mask.step()
+                    # ########## generator adversarial loss
+                    # gen_input_fake = reversed_image
+                    # gen_fake = self.discriminator_mask(gen_input_fake)
+                    # REV_GAN = self.bce_loss(gen_fake, torch.ones_like(dis_real)) #/ torch.mean(masks)
+                    # logs.append(('REV_GAN', REV_GAN.item()))
+                    # # gen_style_loss = 0
+                    # # for i in range(len(dis_real_feat)):
+                    # #     gen_style_loss += self.l1_loss(gen_fake_feat[i], dis_real_feat[i].detach())
+                    # # gen_style_loss = gen_style_loss * 10
+                    # # REV_GAN += gen_style_loss
+                    #
+                    # #### discrim for edge
+                    # dis_input_real = self.canny_image
+                    # dis_input_fake = reversed_canny.detach()
+                    # dis_real, dis_real_feat = self.dis_adv_cov(dis_input_real)  # in: (grayscale(1) + edge(1))
+                    # dis_fake, _ = self.dis_adv_cov(dis_input_fake)  # in: (grayscale(1) + edge(1))
+                    # dis_real_loss = self.bce_loss(dis_real, torch.ones_like(dis_real))
+                    # downsample_mask = Functional.interpolate(
+                    #     1 - masks_GT,
+                    #     size=[dis_fake.shape[2], dis_fake.shape[3]],
+                    #     mode='bilinear')
+                    # downsample_mask = self.clamp_with_grad(downsample_mask)
+                    # dis_fake_loss = self.bce_loss(dis_fake, downsample_mask)
+                    # dis_loss = (dis_real_loss + dis_fake_loss) / 2
+                    # self.dis_adv_cov.train()
+                    # self.optimizer_dis_adv_cov.zero_grad()
+                    # dis_loss.backward()
+                    # if self.train_opt['gradient_clipping']:
+                    #     nn.utils.clip_grad_norm_(self.dis_adv_cov.parameters(), se3lf.train_opt['gradient_clipping'])
+                    # self.optimizer_dis_adv_cov.step()
+                    # ########## generator adversarial loss
+                    # gen_input_fake = reversed_canny
+                    # gen_fake, gen_fake_feat = self.dis_adv_cov(gen_input_fake)
+                    # REVedge_GAN = self.bce_loss(gen_fake, torch.ones_like(dis_real))  # / torch.mean(masks)
+                    # logs.append(('REVedge_GAN', REVedge_GAN.item()))
+                    # gen_fm_loss = 0
+                    # for i in range(len(dis_real_feat)):
+                    #     gen_fm_loss += self.l1_loss(gen_fake_feat[i], dis_real_feat[i].detach())
+                    # gen_fm_loss = gen_fm_loss * 10
+                    # REVedge_GAN += gen_fm_loss
+
+                    # ########### domain discriminator differentiates jpeg with blur
+                    # print(reverse_feature.shape)
+                    # dis_input_fake = reverse_feature.detach()
+                    # dis_fake, _ = self.discriminator(dis_input_fake)  # in: (grayscale(1) + edge(1))
+                    # dis_fake_loss = self.bce_loss(dis_fake,torch.zeros_like(dis_fake) if self.global_step%4<2 else torch.ones_like(dis_fake))
+                    # self.discriminator.train()
+                    # self.optimizer_discriminator.zero_grad()
+                    # dis_fake_loss.backward()
+                    # if self.train_opt['gradient_clipping']:
+                    #     nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.train_opt['gradient_clipping'])
+                    # self.optimizer_discriminator.step()
+                    #
+                    # self.optimizer_discriminator.zero_grad()
+                    # dis_fake, _ = self.discriminator(dis_input_fake)
+                    # l_dg = self.bce_loss(dis_fake, torch.ones_like(dis_fake) if self.global_step % 4 < 2 else torch.zeros_like(dis_fake))
+                    # logs.append(('l_dg', l_dg.item()))
+
+
+
+
+
+
+
+                    # loss
+                    # _, l_forward_l1, l_forward = self.loss_forward_and_backward_imuge(forward_image, modified_input, masks=None, use_l1=True)
+                    # l_backward_l1_local, l_backward_l1, l_backward = self.loss_forward_and_backward_imuge(reversed_image, modified_input, masks=masks, use_l1=True)
+
+
+
+
+
+
+
+
+                    #        + alpha_back * l_bac
+                    #       kward_l1_local
+                    # loss += delta * FW_GAN
+                    # loss += delta * (REV_GAN)
+                    # loss += delta * REVedge_GAN
+                    # loss += 1.0 * l_null
+                    # loss += 1 * l_dg
+
+                    # print(l_forward)
+                    # print(l_backward)
+                    # print(l_backward_l1_local)
+                    # print(REV_GAN)
+                    # print(CE)
+                    # if psnr_forward<28:
+
+                    #     # generator perceptual loss
+                    # l_percept_fw_vgg = self.perceptual_loss(forward_image, modified_input)
+                    # l_percept_bk_vgg = self.perceptual_loss(reversed_image, modified_input)
+
+
+
+
+
+
+
+                    # loss += delta * (l_percept_canny_ssim)
+                    # loss += delta * l_dg
+
+                    # # l_percept_fw_lpips = torch.mean(self.lpips_vgg.forward(forward_image, modified_input))
+                    # # l_percept_bk_lpips = torch.mean(self.lpips_vgg.forward(reversed_image, modified_input))
+                    # l_percept_fw = (l_percept_fw_vgg + l_percept_fw_ssim )/2
+                    # l_percept_bk = (l_percept_bk_vgg + l_percept_bk_ssim )/2
+                    # logs.append(('lpF', l_percept_fw.item()))
+                    # logs.append(('lpB', l_percept_bk.item()))
+                    # logs.append(('lssimF', l_percept_fw_ssim.item()))
+                    # # logs.append(('lpipF', l_percept_fw_lpips.item()))
+                    # logs.append(('lvggF', l_percept_fw_vgg.item()))
+                    # logs.append(('lssimB', l_percept_bk_ssim.item()))
+                    # # logs.append(('lpipF', l_percept_fw_lpips.item()))
+                    # logs.append(('lvggB', l_percept_bk_vgg.item()))
+                    # loss +=  1.5 * l_percept_fw
+                    # loss += 0.1 * CE
+                    # loss += 0.1 * FW_GAN
+                    # if psnr_forward>20:
+                    #     loss += 0.1 * (REV_GAN)
+                    #
+                    #     loss += 1 * l_percept_bk
+                    #     loss += 2 * l_backward_l1_local
+
+                        # l_forward_ssim = - self.ssim_loss(fake_outputs, cover_images)
+                        # gen_loss += 0.01 * l_forward_ssim
+
+
+  # def loss_forward(self, label_GT, label_pred, out, y, z):
+    #     is_targeted = False
+    #     l_forw_fit = self.train_opt['lambda_fit_forw'] * self.Reconstruction_forw(out, y)
+    #
+    #     z = z.reshape([out.shape[0], -1])
+    #     l_forw_ce = self.train_opt['lambda_ce_forw'] * torch.sum(z ** 2) / z.shape[0]
+    #     loss_adv = None
+    #     if label_GT is not None:
+    #         loss_adv = 2 * self.criterion_adv(label_pred, label_GT, is_targeted)
+    #
+    #     return l_forw_fit, l_forw_ce, loss_adv
+    #
+    # def loss_backward(self, label_pred, label_GT, GT_ref, reversed_image):
+    #     l_back_rec = self.train_opt['lambda_rec_back'] * self.Reconstruction_back(GT_ref, reversed_image)
+    #
+    #     # loss_label = self.criterion(label_pred, label_GT)
+    #     loss_label = None
+    #     return l_back_rec, loss_label
+    #
+    # def loss_forward_and_backward_imuge(self, fake_outputs, cover_images, masks=None, use_l1=True, use_vgg=False,use_percept=False):
+    #     gen_loss = 0
+    #     if use_l1:
+    #         gen_l1_loss = self.l1_loss(fake_outputs, cover_images)
+    #     else:
+    #         gen_l1_loss = self.l2_loss(fake_outputs, cover_images)
+    #     gen_loss += gen_l1_loss
+    #     gen_l1_local_loss = None
+    #     if masks is not None:
+    #         if use_l1:
+    #             gen_l1_local_loss = self.l1_loss(fake_outputs * masks,
+    #                                              cover_images * masks) / torch.mean(masks)
+    #         else:
+    #             gen_l1_local_loss = self.l2_loss(fake_outputs * masks,
+    #                                              cover_images * masks) / torch.mean(masks)
+    #         # gen_loss += 2 * gen_l1_local_loss
+    #
+    #     if use_percept and cover_images.shape[1] == 3:
+    #         # generator perceptual loss
+    #
+    #         gen_content_loss = self.perceptual_loss(fake_outputs, cover_images)
+    #         gen_loss += 0.01 * gen_content_loss
+    #
+    #     if use_vgg and cover_images.shape[1] == 3:
+    #         l_forward_ssim = - self.ssim_loss(fake_outputs, cover_images)
+    #         gen_loss += 0.01 * l_forward_ssim
+    #
+    #     # generator style loss
+    #     # if masks is not None:
+    #     #     gen_style_loss = self.style_loss(fake_outputs, cover_images)
+    #     #     gen_style_loss = gen_style_loss * 250
+    #     #     gen_loss += gen_style_loss
+    #
+    #     return gen_l1_local_loss, gen_l1_loss, gen_loss
+
+    # def only_gen_immunized(self):
+    #     with torch.no_grad():
+    #         forward_stuff = self.netG(x=torch.cat((self.real_H, self.canny_image), dim=1))
+    #         forward_image, forward_null = forward_stuff[:, :3, :, :], forward_stuff[:, 3:, :, :]
+    #         forward_image = self.clamp_with_grad(forward_image)
+    #         forward_null = self.clamp_with_grad(forward_null)
+    #
+    #         # ####### Save independent images #############
+    #         main_folder = self.out_space_storage + '/ori_{}_0114'.format(self.opt["datasets"]["train"]["name"])
+    #         if not os.path.exists(main_folder): os.mkdir(main_folder)
+    #         name = main_folder + "/" + str(self.global_step).zfill(5) + "_" + str(self.gpu_id) + ".png"
+    #         for image_no in range(self.real_H.shape[0]):
+    #             camera_ready = self.real_H[image_no].unsqueeze(0)
+    #             torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                          name, nrow=1, padding=0,
+    #                                          normalize=False)
+    #         print("Saved:{}".format(name))
+    #
+    #         main_folder = self.out_space_storage + '/immu_{}_0114'.format(self.opt["datasets"]["train"]["name"])
+    #         if not os.path.exists(main_folder): os.mkdir(main_folder)
+    #         name = main_folder + "/" + str(self.global_step).zfill(5) + "_" + str(self.gpu_id) + ".png"
+    #         for image_no in range(forward_image.shape[0]):
+    #             camera_ready = forward_image[image_no].unsqueeze(0)
+    #             torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                          name, nrow=1, padding=0,
+    #                                          normalize=False)
+    #         print("Saved:{}".format(name))
+
+        ########## PRINT IMAGES AS POSSIBLE #############
+
+    # def save_independent(self, forward_image):
+    #     name = self.out_space_storage + '/ori_{}_0114/'.format(self.opt["datasets"]["train"]["name"]) + str(
+    #         self.global_step).zfill(5) + "_" + str(self.gpu_id) + ".png"
+    #     for image_no in range(self.real_H.shape[0]):
+    #         camera_ready = self.real_H[image_no].unsqueeze(0)
+    #         torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                      name, nrow=1, padding=0,
+    #                                      normalize=False)
+    #     print("Saved:{}".format(name))
+    #
+    #     name = self.out_space_storage + '/immu_{}_0114/'.format(self.opt["datasets"]["train"]["name"]) + str(
+    #         self.global_step).zfill(5) + "_" + str(self.gpu_id) + ".png"
+    #     for image_no in range(forward_image.shape[0]):
+    #         camera_ready = forward_image[image_no].unsqueeze(0)
+    #         torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                      name, nrow=1, padding=0,
+    #                                      normalize=False)
+    #     print("Saved:{}".format(name))
