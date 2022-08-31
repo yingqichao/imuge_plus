@@ -129,6 +129,8 @@ class IRNpModel(BaseModel):
         # todo: invISP
         ####################################################################################################
 
+
+
         ####################################################################################################
         # todo: losses and attack layers
         # todo: JPEG attack rescaling deblurring
@@ -341,12 +343,19 @@ class IRNpModel(BaseModel):
         # else:
         #     raise NotImplementedError('MultiStepLR learning rate scheme is enough.')
 
-        ######## init constants
+        ####################################################################################################
+        # todo: init constants
+        # todo: invISP
+        ####################################################################################################
         self.forward_image_buff = None
         self.reloaded_time = 0
         self.basic_weight_fw = 5
 
-        ########## Load pre-trained ##################
+        ####################################################################################################
+        # todo: Loading Pretrained models
+        # todo: invISP
+        ####################################################################################################
+        
         if self.args.val<2:
             # good_models: '/model/Rerun_4/29999'
             self.out_space_storage = '/home/qcying/20220106_IMUGE'
@@ -357,12 +366,6 @@ class IRNpModel(BaseModel):
             self.model_storage = '/jpeg_model/Rerun_3/'
             self.model_path = str(16999)  # 29999
 
-        ########## WELCOME BACK!!!
-        ########## THE FOLLOWING MODELS SHOULD BE KEEP INTACT!!!
-        # self.model_path = '/model/welcome_back/COCO/18010'
-        # self.model_path = '/model/backup/COCO/24003'
-        # self.model_path = '/model/CelebA/15010'
-        # self.model_path = '/model/ILSVRC/2010'
         load_models = True
         load_state = False
         if load_models:

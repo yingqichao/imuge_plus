@@ -131,7 +131,7 @@ def main(args,opt):
         raise NotImplementedError("Dataset Not Implemented. Exit.")
 
     train_size = int(math.ceil(len(train_set) / dataset_opt['batch_size']))
-    total_iters = int(opt['train']['niter'])
+    # total_iters = int(opt['train']['niter'])
     total_epochs = 100
     if opt['dist']:
         train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio,seed=seed)
@@ -141,8 +141,8 @@ def main(args,opt):
     if rank <= 0:
         logger.info('Number of train images: {:,d}, iters: {:,d}'.format(
             len(train_set), train_size))
-        logger.info('Total epochs needed: {:d} for iters {:,d}'.format(
-            total_epochs, total_iters))
+        # logger.info('Total epochs needed: {:d} for iters {:,d}'.format(
+        #     total_epochs, total_iters))
     ####################################################################################################
     # todo: TEST DATASET DEFINITION
     # todo: Define the testing set
@@ -234,8 +234,6 @@ def main(args,opt):
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
                 current_step += 1
-                if current_step > total_iters:
-                    break
                 #### training
                 model.feed_data(train_data)
 
@@ -292,8 +290,6 @@ def main(args,opt):
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
                 current_step += 1
-                if current_step > total_iters:
-                    break
                 #### training
                 model.feed_data(train_data)
 
@@ -323,8 +319,6 @@ def main(args,opt):
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
                 current_step += 1
-                if current_step > total_iters:
-                    break
                 #### training
                 model.feed_data(train_data)
 
