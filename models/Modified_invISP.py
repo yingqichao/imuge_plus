@@ -42,6 +42,9 @@ from noise_layers.jpeg_compression import JpegCompression
 from noise_layers.crop import Crop
 from models.networks import EdgeGenerator, DG_discriminator, InpaintGenerator, Discriminator, NormalGenerator, UNetDiscriminator, \
     JPEGGenerator, Localizer
+from MVSS.inference import get_opt
+from MVSS.models.mvssnet import get_mvss
+from MVSS.models.resfcn import ResFCN
 from mbrs_models.Decoder import Decoder, Decoder_MLP
 # import matlab.engine
 from mbrs_models.baluja_networks import HidingNetwork, RevealNetwork
@@ -67,6 +70,7 @@ import data
 # import lpips
 from losses.fourier_loss import fft_L1_loss_color, fft_L1_loss_mask, decide_circle
 from torchstat import stat
+from MantraNet.mantranet import pre_trained_model
 
 class IRNpModel(BaseModel):
     def __init__(self, opt,args):
@@ -96,7 +100,39 @@ class IRNpModel(BaseModel):
         self.global_step = 0
         self.new_task = self.train_opt['new_task']
 
-        ############## Metrics and attacks #############
+        ####################################################################################################
+        # todo: Image Manipulation Detection Network (Downstream task)
+        # todo: mantranet mvssnet resfcn
+        ####################################################################################################
+        self.mantra_net = pre_trained_model(weight_path='./MantraNetv4.pt').cuda()
+        mvss_opt = get_opt()
+        print("MVSS: in the head of inference:", mvss_opt)
+
+        # load model
+        model_path = './MVSS/ckpt/mvssnet_casia.pt'
+        # if "mvssnet" in model_path:
+        self.mvss_net = get_mvss(backbone='resnet50',
+                         pretrained_base=True,
+                         nclass=1,
+                         sobel=True,
+                         constrain=True,
+                         n_input=3,
+                         ).cuda()
+        # elif "fcn" in model_path:
+        self.res_fcn = ResFCN().cuda()
+
+        checkpoint = torch.load(model_path, map_location='cpu')
+        self.mvss_net.load_state_dict(checkpoint, strict=True)
+
+        ####################################################################################################
+        # todo: Image Signal Processing Pipeline
+        # todo: invISP
+        ####################################################################################################
+
+        ####################################################################################################
+        # todo: losses and attack layers
+        # todo: JPEG attack rescaling deblurring
+        ####################################################################################################
         self.tanh = nn.Tanh().cuda()
         self.psnr = PSNR(255.0).cuda()
         # self.lpips_vgg = lpips.LPIPS(net="vgg").cuda()
@@ -140,7 +176,10 @@ class IRNpModel(BaseModel):
         self.init_gaussian = None
         # self.adversarial_loss = AdversarialLoss(type="nsgan").cuda()
 
-        ############## Nets ################################
+        ####################################################################################################
+        # todo: MAIN Networks
+        # todo: including ...
+        ####################################################################################################
         self.network_list = []
         if self.args.val in {0,1}: # training of Imuge+
             self.network_list = ['netG', 'localizer','discriminator_mask']
@@ -194,7 +233,10 @@ class IRNpModel(BaseModel):
         else:
             raise NotImplementedError("args.val value error! please check...")
 
-        ########## optimizers ##################
+        ####################################################################################################
+        # todo: Optmizers
+        # todo: invISP
+        ####################################################################################################
         wd_G = train_opt['weight_decay_G'] if train_opt['weight_decay_G'] else 0
 
         if self.args.val in {0,1}: # training of Imuge+

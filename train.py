@@ -88,7 +88,7 @@ def main(args,opt):
     print(opt)
 
     ####################################################################################################
-    # SEED SELECTION
+    # todo: SEED SELECTION
     # todo: The seeds are randomly shuffled each time. It is to prevent frequent debugging causing the model
     # todo: to remember the first several examples
     ####################################################################################################
@@ -109,41 +109,71 @@ def main(args,opt):
     ####################################################################################################
 
     ####################################################################################################
-    # todo: DATASET DEFINITION
-    # todo: Define the training/test set
+    # todo: TRAINING DATASET DEFINITION
+    # todo: Define the training set
     ####################################################################################################
-    for phase, dataset_opt in opt['datasets'].items():
-        if phase == 'train':
+    # for phase, dataset_opt in opt['datasets'].items():
+    dataset_opt = opt['datasets']['train']
+    if "PAMI" in opt['model'] or "CLR" in opt['model']:
+        print("dataset with canny")
+        from data.LQGT_dataset import LQGTDataset as D
+        train_set = D(opt, dataset_opt)
+    # elif "ICASSP_RHI" in opt['model']:
+    #     print("dataset with jpeg")
+    #     from data.tianchi_dataset import LQGTDataset as D
+    #     train_set = D()
+    #     # train_set = D(opt, dataset_opt)
+    elif "diffusion" in opt['model']:
+        print("Using FiveK dataset")
+        from data.qian_rumor_dataset import QianDataset as D
+        train_set = D(opt, dataset_opt)
+    else:
+        raise NotImplementedError("Dataset Not Implemented. Exit.")
 
-            if "PAMI" in opt['model'] or "CLR" in opt['model']:
-                print("dataset with canny")
-                from data.LQGT_dataset import LQGTDataset as D
-                train_set = D(opt, dataset_opt)
-            elif "ICASSP_RHI" in opt['model']:
-                print("dataset with jpeg")
-                from data.tianchi_dataset import LQGTDataset as D
-                train_set = D()
-                # train_set = D(opt, dataset_opt)
-            elif "diffusion" in opt['model']:
-                print("Using FiveK dataset")
-                from data.qian_rumor_dataset import QianDataset as D
-                train_set = D(opt, dataset_opt)
-            else:
-                raise NotImplementedError("Dataset Not Implemented. Exit.")
+    train_size = int(math.ceil(len(train_set) / dataset_opt['batch_size']))
+    total_iters = int(opt['train']['niter'])
+    total_epochs = 100
+    if opt['dist']:
+        train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio,seed=seed)
+    else:
+        train_sampler = None
+    train_loader = create_dataloader(train_set, dataset_opt, opt, train_sampler)
+    if rank <= 0:
+        logger.info('Number of train images: {:,d}, iters: {:,d}'.format(
+            len(train_set), train_size))
+        logger.info('Total epochs needed: {:d} for iters {:,d}'.format(
+            total_epochs, total_iters))
+    ####################################################################################################
+    # todo: TEST DATASET DEFINITION
+    # todo: Define the testing set
+    ####################################################################################################
+    # for phase, dataset_opt in opt['datasets'].items():
+    dataset_opt = opt['datasets']['val']
+    if "PAMI" in opt['model'] or "CLR" in opt['model']:
+        print("dataset with canny")
+        from data.LQGT_dataset import LQGTDataset as D
+        val_set = D(opt, dataset_opt)
+    # elif "ICASSP_RHI" in opt['model']:
+    #     print("dataset with jpeg")
+    #     from data.tianchi_dataset import LQGTDataset as D
+    #     val_set = D()
+    #     # train_set = D(opt, dataset_opt)
+    elif "diffusion" in opt['model']:
+        print("Using FiveK dataset")
+        from data.qian_rumor_dataset import QianDataset as D
+        val_set = D(opt, dataset_opt)
+    else:
+        raise NotImplementedError("Dataset Not Implemented. Exit.")
 
-            train_size = int(math.ceil(len(train_set) / dataset_opt['batch_size']))
-            total_iters = int(opt['train']['niter'])
-            total_epochs = 100
-            if opt['dist']:
-                train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio,seed=seed)
-            else:
-                train_sampler = None
-            train_loader = create_dataloader(train_set, dataset_opt, opt, train_sampler)
-            if rank <= 0:
-                logger.info('Number of train images: {:,d}, iters: {:,d}'.format(
-                    len(train_set), train_size))
-                logger.info('Total epochs needed: {:d} for iters {:,d}'.format(
-                    total_epochs, total_iters))
+    val_size = int(math.ceil(len(val_set) / 1))
+    if opt['dist']:
+        val_sampler = DistIterSampler(val_size, world_size, rank, dataset_ratio, seed=seed)
+    else:
+        val_sampler = None
+    val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
+    if rank <= 0:
+        logger.info('Number of val images: {:,d}, iters: {:,d}'.format(
+            len(val_set), val_size))
     ####################################################################################################
     ## todo: END OF DEFINITION
     ####################################################################################################
