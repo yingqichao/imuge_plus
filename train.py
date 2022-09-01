@@ -43,6 +43,7 @@ def init_dist(backend='nccl', **kwargs):
     return world_size, rank
 
 def main(args,opt):
+    print(args)
     #### options
     # gpu_list = ','.join(str(x) for x in opt['gpu_ids'])
     # os.environ['CUDA_VISIBLE_DEVICES'] ="3,4"
@@ -85,7 +86,7 @@ def main(args,opt):
     # convert to NoneDict, which returns None for missing keys
     opt = option.dict_to_nonedict(opt)
     # if dist.get_rank()==0:
-    print(opt)
+    # print(opt)
 
     ####################################################################################################
     # todo: SEED SELECTION
@@ -114,6 +115,8 @@ def main(args,opt):
     ####################################################################################################
     # for phase, dataset_opt in opt['datasets'].items():
     dataset_opt = opt['datasets']['train']
+    print("#################################### train set ####################################")
+    print(dataset_opt)
     if "PAMI" in opt['model'] or "CLR" in opt['model']:
         print("dataset with canny")
         from data.LQGT_dataset import LQGTDataset as D
@@ -123,9 +126,9 @@ def main(args,opt):
     #     from data.tianchi_dataset import LQGTDataset as D
     #     train_set = D()
     #     # train_set = D(opt, dataset_opt)
-    elif "diffusion" in opt['model']:
-        print("Using FiveK dataset")
-        from data.qian_rumor_dataset import QianDataset as D
+    elif "ISP" in opt['model']:
+        print("dataset with ISP")
+        from data.LQGT_dataset import LQGTDataset as D
         train_set = D(opt, dataset_opt)
     else:
         raise NotImplementedError("Dataset Not Implemented. Exit.")
@@ -137,7 +140,16 @@ def main(args,opt):
         train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio,seed=seed)
     else:
         train_sampler = None
-    train_loader = create_dataloader(train_set, dataset_opt, opt, train_sampler)
+    # train_loader = create_dataloader(train_set, dataset_opt, opt, train_sampler)
+    world_size = torch.distributed.get_world_size()
+    print("World size: {}".format(world_size))
+    print("Batch size: {}".format(dataset_opt['batch_size']))
+    num_workers = dataset_opt['n_workers']
+    assert dataset_opt['batch_size'] % world_size == 0
+    batch_size = dataset_opt['batch_size'] // world_size
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=False,
+                                num_workers=num_workers, sampler=train_sampler, drop_last=True,
+                                pin_memory=True)
     if rank <= 0:
         logger.info('Number of train images: {:,d}, iters: {:,d}'.format(
             len(train_set), train_size))
@@ -149,6 +161,8 @@ def main(args,opt):
     ####################################################################################################
     # for phase, dataset_opt in opt['datasets'].items():
     dataset_opt = opt['datasets']['val']
+    print('#################################### val set ####################################')
+    print(dataset_opt)
     if "PAMI" in opt['model'] or "CLR" in opt['model']:
         print("dataset with canny")
         from data.LQGT_dataset import LQGTDataset as D
@@ -158,19 +172,22 @@ def main(args,opt):
     #     from data.tianchi_dataset import LQGTDataset as D
     #     val_set = D()
     #     # train_set = D(opt, dataset_opt)
-    elif "diffusion" in opt['model']:
-        print("Using FiveK dataset")
-        from data.qian_rumor_dataset import QianDataset as D
+    elif "ISP" in opt['model']:
+        print("dataset with ISP")
+        from data.LQGT_dataset import LQGTDataset as D
         val_set = D(opt, dataset_opt)
     else:
         raise NotImplementedError("Dataset Not Implemented. Exit.")
 
     val_size = int(math.ceil(len(val_set) / 1))
     if opt['dist']:
-        val_sampler = DistIterSampler(val_size, world_size, rank, dataset_ratio, seed=seed)
+        val_sampler = DistIterSampler(val_set, world_size, rank, dataset_ratio, seed=seed)
     else:
         val_sampler = None
-    val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
+    # val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
+    val_loader = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=False, num_workers=1,
+                                pin_memory=True)
+
     if rank <= 0:
         logger.info('Number of val images: {:,d}, iters: {:,d}'.format(
             len(val_set), val_size))
@@ -183,24 +200,27 @@ def main(args,opt):
     # todo: Create the new model file
     ####################################################################################################
     # model = create_model(opt,args)
-    model = opt['model']
+    which_model = opt['model']
 
-    if model == 'CVPR':
+    if which_model == 'CVPR':
         from models.Modified_invISP import IRNModel as M
         model = M(opt, args)
-    elif model == 'PAMI':
+    elif which_model == 'PAMI':
         from models.IRNp_model import IRNpModel as M
         model = M(opt, args)
-    elif model == 'ICASSP_NOWAY':
+    elif which_model == 'ICASSP_NOWAY':
         from models.IRNcrop_model import IRNcropModel as M
-    elif model == 'ICASSP_RHI':
+    elif which_model == 'ICASSP_RHI':
         from models.tianchi_model import IRNrhiModel as M
         # from .IRNrhi_model import IRNrhiModel as M
-    elif model == 'CLRNet':
+    elif which_model == 'CLRNet':
         from models.IRNclrNew_model import IRNclrModel as M
         model = M(opt, args)
+    elif which_model == 'ISP':
+        from models.Modified_invISP import Modified_invISP as M
+        model = M(opt, args)
     else:
-        raise NotImplementedError('Model [{:s}] not recognized.'.format(model))
+        raise NotImplementedError('Model [{:s}] not recognized.'.format(which_model))
 
     logger.info('Model [{:s}] is created.'.format(model.__class__.__name__))
     ####################################################################################################
@@ -214,7 +234,7 @@ def main(args,opt):
     start_epoch = 0
     current_step = opt['train']['current_step']
 
-    if args.val==0.0:
+    if ('CVPR' in which_model or 'ISP' in which_model) and args.mode==0.0:
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
@@ -243,7 +263,7 @@ def main(args,opt):
         ####################################################################################################
         ## todo: END OF DEFINITION
         ####################################################################################################
-    elif args.val==1.0:
+    elif which_model == 'CVPR' and args.mode==1.0:
         ####################################################################################################
         # todo: Eval
         # todo: the evaluation procedure should ONLY include evaluate so far
@@ -270,7 +290,7 @@ def main(args,opt):
         ####################################################################################################
         ## todo: END OF DEFINITION
         ####################################################################################################
-    elif args.val==2.0:
+    elif which_model == 'CVPR' and args.mode==2.0:
         ####################################################################################################
         # todo: Training the KD-JPEG
         # todo: customized for PAMI, KD_JPEG_Generator_training
@@ -299,7 +319,7 @@ def main(args,opt):
         ####################################################################################################
         ## todo: END OF DEFINITION
         ####################################################################################################
-    elif args.val==3.0:
+    elif which_model == 'ISP' and args.mode==1.0:
         ####################################################################################################
         # todo: ISP protection
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
@@ -335,10 +355,10 @@ if __name__ == '__main__':
     parser.add_argument('--launcher', choices=['none', 'pytorch'], default='none',
                         help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
-    parser.add_argument('-val', type=int, default=0, help='validate or not.')
+    parser.add_argument('-mode', type=int, default=0, help='validate or not.')
     args = parser.parse_args()
     opt = option.parse(args.opt, is_train=True)
 
-    main(args,opt)
+    main(args, opt)
 
 

@@ -230,3 +230,22 @@
         normed_mod = np.where(mod < 0, mod + double_rng, mod)
         out = np.where(normed_mod >= rng, double_rng - normed_mod, normed_mod) + minx
         return np.array(out, dtype=x.dtype)
+
+
+ ############# SCHEDULER #########################
+ # if train_opt['lr_scheme'] == 'MultiStepLR':
+        #     for optimizer in self.optimizers:
+        #         self.schedulers.append(
+        #             lr_scheduler.MultiStepLR_Restart(optimizer, train_opt['lr_steps'],
+        #                                              restarts=train_opt['restarts'],
+        #                                              weights=train_opt['restart_weights'],
+        #                                              gamma=train_opt['lr_gamma'],
+        #                                              clear_state=train_opt['clear_state']))
+        # elif train_opt['lr_scheme'] == 'CosineAnnealingLR_Restart':
+        #     for optimizer in self.optimizers:
+        #         self.schedulers.append(
+        #             lr_scheduler.CosineAnnealingLR_Restart(
+        #                 optimizer, train_opt['T_period'], eta_min=train_opt['eta_min'],
+        #                 restarts=train_opt['restarts'], weights=train_opt['restart_weights']))
+        # else:
+        #     raise NotImplementedError('MultiStepLR learning rate scheme is enough.')

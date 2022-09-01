@@ -532,7 +532,13 @@ class MantraNet(nn.Module):
                                  bias=True,
                                  return_all_layers=False)
 
-        self.end = nn.Sequential(nn.Conv2d(8, 1, 7, 1, padding=3),nn.Sigmoid())
+        self.end = nn.Sequential(
+            nn.Conv2d(8, 1, 7, 1, padding=3),
+            ####################################################################################################
+            # todo: Note the sigmoid should be removed if we use bce_with_logit_loss
+            ####################################################################################################
+            # nn.Sigmoid()
+        )
         
     def forward(self, x):
         B, nb_channel, H, W = x.shape

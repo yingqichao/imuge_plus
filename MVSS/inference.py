@@ -1,8 +1,8 @@
 import sys
 import os
 import numpy as np
-from common.transforms import direct_val
-from common.utils import Progbar, read_annotations
+from MVSS.common.transforms import direct_val
+from MVSS.common.utils import Progbar, read_annotations
 import torch.backends.cudnn as cudnn
 from MVSS.models.mvssnet import get_mvss
 from MVSS.models.resfcn import ResFCN
