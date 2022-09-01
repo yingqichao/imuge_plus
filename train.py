@@ -243,13 +243,15 @@ def main(args,opt):
             logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
         latest_values = None
         total = len(train_set)
+        print_step = 15
         for epoch in range(start_epoch, total_epochs + 1):
             stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
                                 'SIMUL','RECON','RealTime'
                                 'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
                                 'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
-            if rank <= 0:
-                progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
+            # if rank <= 0:
+            #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
+            running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
             if opt['dist']:
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
@@ -258,8 +260,20 @@ def main(args,opt):
                 model.feed_data(train_data)
 
                 logs, debug_logs = model.optimize_parameters(current_step,latest_values)
-                if rank <= 0:
-                    progbar.add(len(model.real_H), values=logs)
+                if 'CE_MVSS' in logs:
+                    running_CE_MVSS += logs['CE_MVSS']
+                    running_CE_mantra += logs['CE_mantra']
+                    running_CE_resfcn += logs['CE_resfcn']
+                    valid_idx += 1
+                if valid_idx % print_step == print_step - 1:  # print every 2000 mini-batches
+                    print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
+                          f'running_CE_MVSS: {running_CE_MVSS / print_step:.5f} '
+                          f'running_CE_mantra: {running_CE_mantra / print_step:.5f} '
+                          f'running_CE_resfcn: {running_CE_resfcn / print_step:.5f} '
+                          )
+                    running_CE_MVSS, running_CE_mantra, running_CE_resfcn = 0.0, 0.0, 0.0
+                # if rank <= 0:
+                #     progbar.add(len(model.real_H), values=logs)
         ####################################################################################################
         ## todo: END OF DEFINITION
         ####################################################################################################

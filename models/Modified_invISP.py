@@ -281,10 +281,10 @@ class Modified_invISP(BaseModel):
 
         # good_models: '/model/Rerun_4/29999'
         self.out_space_storage = '/home/groupshare/ISP_results/tamper_results'
-        self.model_storage = f'/model/{self.task_name}/'
-        self.model_path = str(42999) # 29999
+        self.model_storage = f'/model/{self.task_name}_{str(self.gpu_id)}/'
+        self.model_path = str(14999) # 29999
 
-        load_models = False
+        load_models = True
         load_state = False
         if load_models:
             self.pretrain = self.out_space_storage + self.model_storage + self.model_path
@@ -335,12 +335,12 @@ class Modified_invISP(BaseModel):
         self.localizer.train()
         self.discriminator_mask.train()
 
-        logs, debug_logs = [], []
+        logs, debug_logs = {}, []
 
         self.real_H = self.clamp_with_grad(self.real_H)
         batch_size, num_channels, height_width, _ = self.real_H.shape
         lr = self.get_current_learning_rate()
-        logs.append(('lr', lr))
+        logs['lr'] = lr
 
         modified_input = self.real_H.clone().detach()
         modified_input = self.clamp_with_grad(modified_input)
@@ -373,9 +373,9 @@ class Modified_invISP(BaseModel):
                 CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
 
 
-                logs.append(('CE_MVSS', CE_MVSS.item()))
-                logs.append(('CE_mantra', CE_mantra.item()))
-                logs.append(('CE_resfcn', CE_resfcn.item()))
+                logs['CE_MVSS'] = CE_MVSS.item()
+                logs['CE_mantra'] = CE_mantra.item()
+                logs['CE_resfcn'] = CE_resfcn.item()
 
 
             ####################################################################################################
@@ -540,7 +540,7 @@ class Modified_invISP(BaseModel):
         ####### Tamper ###############
         attacked_forward = torch.zeros_like(forward_image)
         for img_idx in range(batch_size):
-            way_tamper = img_idx%3
+            way_tamper = img_idx%2
 
 
             if way_tamper == 0:
@@ -1236,8 +1236,8 @@ class Modified_invISP(BaseModel):
         if 'generator' in network_list:
             self.save_network(self.generator, 'generator', iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/')
         # if 'netG' in network_list:
-        self.save_training_state(epoch=0, iter_step=iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/',
-                                 network_list=network_list)
+        # self.save_training_state(epoch=0, iter_step=iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/',
+        #                          network_list=network_list)
 
     def generate_stroke_mask(self, im_size, parts=5, parts_square=2, maxVertex=6, maxLength=64, maxBrushWidth=32,
                              maxAngle=360, percent_range=(0.0, 0.25)):
