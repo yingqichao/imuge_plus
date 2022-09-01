@@ -142,7 +142,7 @@ class IRNpModel(BaseModel):
 
         ############## Nets ################################
         self.network_list = []
-        if self.args.val in {0,1}: # training of Imuge+
+        if self.args.mode in {0,1}: # training of Imuge+
             self.network_list = ['netG', 'localizer','discriminator_mask']
 
             self.localizer = UNetDiscriminator() #Localizer().cuda()
@@ -171,7 +171,7 @@ class IRNpModel(BaseModel):
             self.scaler_discriminator_mask = torch.cuda.amp.GradScaler()
             self.scaler_generator = torch.cuda.amp.GradScaler()
 
-        elif args.val==2:
+        elif args.mode==2:
             self.network_list = ['KD_JPEG','generator','qf_predict']
             self.KD_JPEG_net = JPEGGenerator()
             self.KD_JPEG_net = self.KD_JPEG_net.cuda()
@@ -192,12 +192,12 @@ class IRNpModel(BaseModel):
             self.scaler_qf_predict = torch.cuda.amp.GradScaler()
 
         else:
-            raise NotImplementedError("args.val value error! please check...")
+            raise NotImplementedError("args.mode value error! please check...")
 
         ########## optimizers ##################
         wd_G = train_opt['weight_decay_G'] if train_opt['weight_decay_G'] else 0
 
-        if self.args.val in {0,1}: # training of Imuge+
+        if self.args.mode in {0,1}: # training of Imuge+
 
             optim_params = []
             for k, v in self.netG.named_parameters():
@@ -237,7 +237,7 @@ class IRNpModel(BaseModel):
                                                         betas=(0.9,0.99))
             self.optimizers.append(self.optimizer_localizer)
 
-        elif self.args.val==2:
+        elif self.args.mode==2:
             # # for student network of kd-jpeg
             optim_params = []
             for k, v in self.KD_JPEG_net.named_parameters():
@@ -305,7 +305,7 @@ class IRNpModel(BaseModel):
         self.basic_weight_fw = 5
 
         ########## Load pre-trained ##################
-        if self.args.val<2:
+        if self.args.mode<2:
             # good_models: '/model/Rerun_4/29999'
             self.out_space_storage = '/home/qcying/20220106_IMUGE'
             self.model_storage = '/model/Rerun_3/'

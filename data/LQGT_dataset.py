@@ -118,14 +118,11 @@ class LQGTDataset(data.Dataset):
         img_gray = rgb2gray(img_GT)
         sigma = 2 #random.randint(1, 4)
 
-        if self.opt['model']=="PAMI" or self.opt['model']=="CLRNet":
-            canny_img = canny(img_gray, sigma=sigma, mask=None)
-            canny_img = canny_img.astype(np.float)
-            canny_img = self.to_tensor(canny_img)
-        # elif self.opt['model']=="ICASSP_NOWAY":
-        #     canny_img = img_gray
-        else:
-            canny_img = None
+
+        canny_img = canny(img_gray, sigma=sigma, mask=None)
+        canny_img = canny_img.astype(np.float)
+        canny_img = self.to_tensor(canny_img)
+
 
 
         # BGR to RGB, HWC to CHW, numpy to tensor

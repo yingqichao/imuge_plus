@@ -192,18 +192,19 @@ class Modified_invISP(BaseModel):
 
         elif self.args.mode in {0}:
             self.network_list = ['netG', 'localizer', 'discriminator_mask']
+            print(f"network list:{self.network_list}")
             ####################################################################################################
             # todo: Image Manipulation Detection Network (Downstream task)
             # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
             ####################################################################################################
-            self.netG = pre_trained_model(weight_path='./MantraNetv4.pt').cuda()
-            self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
+            print("Building MantraNet...........please wait...")
+            self.localizer = pre_trained_model(weight_path='./MantraNetv4.pt').cuda()
+            self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
                                                 find_unused_parameters=True)
 
-            mvss_opt = get_opt()
-            print("MVSS: in the head of inference:", mvss_opt)
+            print("Building MVSS...........please wait...")
             model_path = './MVSS/ckpt/mvssnet_casia.pt'
-            self.localizer = get_mvss(backbone='resnet50',
+            self.netG = get_mvss(backbone='resnet50',
                                       pretrained_base=True,
                                       nclass=1,
                                       sobel=True,
@@ -211,10 +212,10 @@ class Modified_invISP(BaseModel):
                                       n_input=3,
                                       ).cuda()
             checkpoint = torch.load(model_path, map_location='cpu')
-            self.localizer.load_state_dict(checkpoint, strict=True)
-            self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
+            self.netG.load_state_dict(checkpoint, strict=True)
+            self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                                      find_unused_parameters=True)
-
+            print("Building ResFCN...........please wait...")
             self.discriminator_mask = ResFCN().cuda()
             self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
                                                               device_ids=[torch.cuda.current_device()],
@@ -235,19 +236,19 @@ class Modified_invISP(BaseModel):
         wd_G = train_opt['weight_decay_G'] if train_opt['weight_decay_G'] else 0
 
         if 'netG' in self.network_list:
-            self.create_optimizer(self.netG, self.optimizer_G,
+            self.optimizer_G = self.create_optimizer(self.netG,
                                   lr=train_opt['lr_G'], weight_decay=wd_G)
         if 'discriminator_mask' in self.network_list:
-            self.create_optimizer(self.discriminator_mask, self.optimizer_discriminator_mask,
+            self.optimizer_discriminator_mask = self.create_optimizer(self.discriminator_mask,
                                   lr=train_opt['lr_G'], weight_decay=wd_G)
         if 'localizer' in self.network_list:
-            self.create_optimizer(self.localizer, self.optimizer_localizer,
+            self.optimizer_localizer = self.create_optimizer(self.localizer,
                                   lr=train_opt['lr_G'], weight_decay=wd_G)
         # if 'KD_JPEG_net' in self.network_list:
         #     self.create_optimizer(self.KD_JPEG_net, self.optimizer_KD_JPEG,
         #                           lr=train_opt['lr_G'], weight_decay=wd_G)
         if 'discriminator' in self.network_list:
-            self.create_optimizer(self.discriminator, self.optimizer_discriminator,
+            self.optimizer_discriminator = self.create_optimizer(self.discriminator,
                                   lr=train_opt['lr_G'], weight_decay=wd_G)
         # if 'generator' in self.network_list:
         #     self.create_optimizer(self.generator, self.optimizer_generator,
@@ -297,7 +298,7 @@ class Modified_invISP(BaseModel):
                 else:
                     logger.info('Did not find state [{:s}] ...'.format(state_path))
 
-    def create_optimizer(self, net, optimizer, lr=1e-4, weight_decay=0):
+    def create_optimizer(self, net, lr=1e-4, weight_decay=0):
         ## lr should be train_opt['lr_G'] in default
         optim_params = []
         for k, v in net.named_parameters():
@@ -310,6 +311,8 @@ class Modified_invISP(BaseModel):
                                              weight_decay=weight_decay,
                                              betas=(0.9, 0.99))  # train_opt['beta1'], train_opt['beta2']
         self.optimizers.append(optimizer)
+
+        return optimizer
 
     def clamp_with_grad(self,tensor):
         tensor_clamp = torch.clamp(tensor,0,1)
@@ -360,13 +363,13 @@ class Modified_invISP(BaseModel):
                 attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs, quality_idx=quality_idx)
 
 
-                _, pred_mvss = self.netG(attacked_image)
+                _, pred_mvss = self.netG(attacked_image.detach())
                 CE_MVSS = self.bce_with_logit_loss(pred_mvss, masks_GT)
 
-                pred_mantra = self.localizer(attacked_image)
+                pred_mantra = self.localizer(attacked_image.detach())
                 CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
 
-                pred_resfcn = self.discriminator_mask(attacked_image)
+                _, pred_resfcn = self.discriminator_mask(attacked_image.detach())
                 CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
 
 

@@ -234,7 +234,7 @@ def main(args,opt):
     start_epoch = 0
     current_step = opt['train']['current_step']
 
-    if ('CVPR' in which_model or 'ISP' in which_model) and args.mode==0.0:
+    if ('CVPR' in which_model or 'PAMI' in which_model or 'ISP' in which_model) and args.mode==0.0:
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
