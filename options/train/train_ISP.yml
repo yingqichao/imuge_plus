@@ -22,16 +22,16 @@ datasets:
   train:
     name: Rerun
     mode: LQGT
-#    dataroot_GT: /home/qichaoying/Downloads/Invertible-Image-Rescaling-master/icassp_real/images    # Test images
-#    dataroot_GT: /home/groupshare//Places/data_256                                        # Places
-#    dataroot_GT: /home/groupshare/CelebA/img/img_celeba_200                                          # CelebA
-#    dataroot_GT: /home/groupshare/paris_street_view/paris_train                            # ParisStreetView
-    dataroot_GT: /home/groupshare//COCOdataset/train2017                                   # COCO
-#    dataroot_GT: /home/groupshare//Flickr1024/train                                 # Flicker
-#    dataroot_GT: /home/groupshare//DIV2K_valid                                # DIV2K
-#    dataroot_GT: /home/groupshare//VOC2012/JPEGImages
-#    dataroot_GT: /home/groupshare//UCID_color/images                                                 # UCID
-#    dataroot_GT: /home/groupshare//ILSVRC2012_img_val                                      # ImageNet
+#    dataroot_GT: /qichaoying/Downloads/Invertible-Image-Rescaling-master/icassp_real/images    # Test images
+#    dataroot_GT: /groupshare//Places/data_256                                        # Places
+#    dataroot_GT: /groupshare/CelebA/img/img_celeba_200                                          # CelebA
+#    dataroot_GT: /groupshare/paris_street_view/paris_train                            # ParisStreetView
+    dataroot_GT: /groupshare//COCOdataset/train2017                                   # COCO
+#    dataroot_GT: /groupshare//Flickr1024/train                                 # Flicker
+#    dataroot_GT: /groupshare//DIV2K_valid                                # DIV2K
+#    dataroot_GT: /groupshare//VOC2012/JPEGImages
+#    dataroot_GT: /groupshare//UCID_color/images                                                 # UCID
+#    dataroot_GT: /groupshare//ILSVRC2012_img_val                                      # ImageNet
     dataroot_LQ: ~ # path to training reference LR images, not necessary, if not provided, LR images will be generated in dataloader
 
     use_shuffle: true
@@ -50,7 +50,7 @@ datasets:
   val:
     name: val_DIV2K
     mode: LQGT
-    dataroot_GT: /home/groupshare//COCOdataset/test2017
+    dataroot_GT: /groupshare//COCOdataset/test2017
     dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
 
 
@@ -76,7 +76,7 @@ path:
 #  pretrain_model: ../experiments/pretrained_models/230100
 #  pretrain_model: ../experiments/pretrained_models/64100
   ######## Imuge #########
-  pretrain_model: /home/qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
+  pretrain_model: /qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
   #########################
   strict_load: true
   resume_state: ~

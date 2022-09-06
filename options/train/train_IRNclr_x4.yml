@@ -6,7 +6,7 @@ use_tb_logger: true
 model: CLRNet # CVPR
 distortion: sr
 scale: 4
-gpu_ids: [4,3]
+gpu_ids: [0,1,2]
 
 
 #### datasets
@@ -17,26 +17,26 @@ datasets:
   train:
     name: COCO
     mode: LQGT
-#    dataroot_GT: /home/qichaoying/Downloads/Invertible-Image-Rescaling-master/icassp_real/images    # Test images
-#    dataroot_GT: /home/groupshare//Places/test                                        # Places
-#    dataroot_GT: /home/groupshare//CelebA/img/imgs                                          # CelebA
-#    dataroot_GT: /home/groupshare//paris_street_view/paris_train                            # ParisStreetView
-    dataroot_GT: /home/groupshare/COCOdataset/train2017                                   # COCO
-#    dataroot_GT: /home/groupshare//Flickr1024/train                                 # Flicker
-#    dataroot_GT: /home/groupshare//DIV2K_train_HR_image                                # DIV2K
-#    dataroot_GT: /home/groupshare//VOC2012/JPEGImages
-#    dataroot_GT: /home/groupshare//UCID_color/images                                                 # UCID
-#    dataroot_GT: //home/groupshare//ILSVRC2012_img_val                                      # ImageNet
+#    dataroot_GT: /qichaoying/Downloads/Invertible-Image-Rescaling-master/icassp_real/images    # Test images
+#    dataroot_GT: /groupshare//Places/test                                        # Places
+#    dataroot_GT: /groupshare//CelebA/img/imgs                                          # CelebA
+#    dataroot_GT: /groupshare//paris_street_view/paris_train                            # ParisStreetView
+    dataroot_GT: /groupshare/COCOdataset/train2017                                   # COCO
+#    dataroot_GT: /groupshare//Flickr1024/train                                 # Flicker
+#    dataroot_GT: /groupshare//DIV2K_train_HR_image                                # DIV2K
+#    dataroot_GT: /groupshare//VOC2012/JPEGImages
+#    dataroot_GT: /groupshare//UCID_color/images                                                 # UCID
+#    dataroot_GT: //groupshare//ILSVRC2012_img_val                                      # ImageNet
     dataroot_LQ: ~ # path to training reference LR images, not necessary, if not provided, LR images will be generated in dataloader
 
     use_shuffle: true
-    n_workers: 2  # per GPU
+    n_workers: 4  # per GPU
     ######## CVPR #########
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 4  # 4
-    GT_size: 512
+    batch_size: 24  # 4
+    GT_size: 256
     #########################
     use_flip: true
     use_rot: true
@@ -45,7 +45,7 @@ datasets:
   val:
     name: val_DIV2K
     mode: LQGT
-    dataroot_GT: /home/qichaoying/Downloads/Invertible-Image-Rescaling-master/icassp_real/images
+    dataroot_GT: /groupshare/COCOdataset/val2017
     dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
 
 
@@ -71,7 +71,7 @@ path:
 #  pretrain_model: ../experiments/pretrained_models/230100
 #  pretrain_model: ../experiments/pretrained_models/64100
   ######## Imuge #########
-  pretrain_model: /home/qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
+  pretrain_model: /qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
   #########################
   strict_load: true
   resume_state: ~
@@ -86,15 +86,15 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_G: !!float 1e-5    # 2e-5
-  lr_D: !!float 1e-5
+  lr_G: !!float 1e-4    # 2e-5
+  lr_D: !!float 1e-4
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
   niter: 500000
   warmup_iter: -1  # no warm up
 
   lr_scheme: MultiStepLR
-  lr_steps: [20000, 40000, 60000, 80000 ,100000,120000,140000,160000,180000,200000]
+  lr_steps: [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000,60000,70000,80000,90000,100000]
   lr_gamma: 0.5
 
   pixel_criterion_forw: l2

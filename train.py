@@ -234,7 +234,7 @@ def main(args,opt):
     start_epoch = 0
     current_step = opt['train']['current_step']
 
-    if ('CVPR' in which_model or 'PAMI' in which_model or 'ISP' in which_model) and args.mode==0.0:
+    if ('PAMI' in which_model or 'ISP' in which_model) and args.mode==0.0:
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
@@ -277,7 +277,61 @@ def main(args,opt):
         ####################################################################################################
         ## todo: END OF DEFINITION
         ####################################################################################################
-    elif which_model == 'CVPR' and args.mode==1.0:
+    if ('CLRNet' in which_model) and args.mode==0.0:
+        ####################################################################################################
+        # todo: Training
+        # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
+        ####################################################################################################
+        if rank<=0:
+            logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
+        latest_values = None
+        total = len(train_set)
+        print_step, return_idx = 15, 1000
+        for epoch in range(start_epoch, total_epochs + 1):
+            stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
+                                'SIMUL','RECON','RealTime'
+                                'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
+                                'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
+            # if rank <= 0:
+            #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
+            running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
+            running_CE, running_SSFW, running_SSBK = 0.0, 0.0, 0.0
+            if opt['dist']:
+                train_sampler.set_epoch(epoch)
+            for idx, train_data in enumerate(train_loader):
+                current_step += 1
+                #### training
+                model.feed_data(train_data)
+
+                logs, debug_logs = model.optimize_parameters(current_step,latest_values)
+                if 'PF' in logs:
+                    running_CE_MVSS += logs['loss']
+                    running_CE_mantra += logs['PF']
+                    running_CE_resfcn += logs['PB']
+                    running_CE += logs['CE']
+                    running_SSFW += logs['SSFW']
+                    running_SSBK += logs['SSBK']
+                    valid_idx += 1
+                if valid_idx % print_step == print_step - 1:  # print every 2000 mini-batches
+                    lr = logs['lr']
+                    print(f'[{epoch + 1},{idx*model.real_H.shape[0]} {valid_idx + 1} {rank} {lr}] '
+                          f'CE: {running_CE / valid_idx:.5f} '
+                          f'loss: {running_CE_MVSS / valid_idx:.5f} '
+                          f'Forward: {running_CE_mantra / valid_idx:.5f} '
+                          f'Backward: {running_CE_resfcn / valid_idx:.5f} '
+                          f'SSFW: {running_SSFW / valid_idx:.5f} '
+                          f'SSBK: {running_SSBK / valid_idx:.5f} '
+                          )
+                    if valid_idx>=return_idx:
+                        running_CE_MVSS, running_CE_mantra, running_CE_resfcn = 0.0, 0.0, 0.0
+                        running_CE, running_SSFW, running_SSBK = 0.0, 0.0, 0.0
+                        valid_idx = 0.0
+                # if rank <= 0:
+                #     progbar.add(len(model.real_H), values=logs)
+        ####################################################################################################
+        ## todo: END OF DEFINITION
+        ####################################################################################################
+    elif which_model == 'CLRNet' and args.mode==1.0:
         ####################################################################################################
         # todo: Eval
         # todo: the evaluation procedure should ONLY include evaluate so far

@@ -40,8 +40,8 @@ datasets:
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 3 # 4
-    GT_size: 512 # 608
+    batch_size: 12 # 4
+    GT_size: 256 # 608
     #########################
     use_flip: true
     use_rot: true

@@ -1,3 +1,45 @@
+                ## ERROR
+                # cropped_ideal = forward_image * (1 - masks_crop)
+                # error_detach1 = attacked_padded - cropped_ideal
+                # l_residual = self.l2_loss(error_detach1, torch.zeros_like(error_detach1).cuda())
+                # logs.append(('DETACH_SUM', l_residual.item()))
+                ## OLD
+                # we first directly crop-out the region of interest
+                # attacked_padded = forward_image * (1 - masks_crop)
+                # # next, we
+                # scaled_back_padded = torch.zeros_like(ideal_crop_pad_image)
+                # scaled_back = Functional.interpolate(  #
+                #     attacked_image,
+                #     size=[h_end - h_start, w_end - w_start],
+                #     mode='bicubic')
+                # scaled_back = torch.clamp(scaled_back, 0, 1)
+                # scaled_back_padded[:, :, h_start: h_end, w_start: w_end] = scaled_back
+                # dual_reshape_diff = (scaled_back_padded - ideal_crop_pad_image).clone().detach()
+                # attacked_padded = ideal_crop_pad_image + dual_reshape_diff
+
+                # attacked_image = self.benign_attacks_without_simulation(forward_image=cropped_ideal, logs=logs, quality_idx=quality_idx)
+                # attacked_image = cropped_ideal + (attacked_image-cropped_ideal).clone().detach()
+
+                # ######## REAL-WORLD DUAL RESIZING #########
+                # ## input: scaled_cropped
+                # ## process: benign->reshape->calculate diff
+                # # attacked_image = self.resize(attacked_image)
+                #
+                # attacked_on_scaled = self.benign_attacks_without_simulation(forward_image=scaled_cropped, logs=logs, quality_idx=quality_idx)
+                # attacked_on_scaled = self.resize_and_pad(locs=locs, attacked_image=attacked_on_scaled,logs=logs)
+                # ## ERROR
+                # error_detach = attacked_on_scaled - attacked_image
+                # l_residual = self.l2_loss(error_detach, torch.zeros_like(error_detach).cuda())
+                # logs.append(('DETACH', l_residual.item()))
+                # attacked_padded = attacked_image + error_detach.clone().detach()
+
+                # attacked_padded = attacked_image
+
+
+
+
+
+
                 ## old attack layer
                 attacked_forward = scaled_cropped
                 attacked_forward = torch.clamp(attacked_forward, 0, 1)
