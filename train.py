@@ -296,6 +296,7 @@ def main(args,opt):
             #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
             running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
             running_CE, running_SSFW, running_SSBK = 0.0, 0.0, 0.0
+            running_lF, running_local = 0.0, 0.0
             if opt['dist']:
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
@@ -311,11 +312,15 @@ def main(args,opt):
                     running_CE += logs['CE']
                     running_SSFW += logs['SSFW']
                     running_SSBK += logs['SSBK']
+                    running_lF += logs['lF']
+                    running_local += logs['local']
                     valid_idx += 1
                 if valid_idx % print_step == print_step - 1:  # print every 2000 mini-batches
                     lr = logs['lr']
                     print(f'[{epoch + 1},{idx*model.real_H.shape[0]} {valid_idx + 1} {rank} {lr}] '
                           f'CE: {running_CE / valid_idx:.5f} '
+                          f'lF: {running_lF / valid_idx:.5f} '
+                          f'local: {running_local / valid_idx:.5f} '
                           f'loss: {running_CE_MVSS / valid_idx:.5f} '
                           f'Forward: {running_CE_mantra / valid_idx:.5f} '
                           f'Backward: {running_CE_resfcn / valid_idx:.5f} '
@@ -325,6 +330,7 @@ def main(args,opt):
                     if valid_idx>=return_idx:
                         running_CE_MVSS, running_CE_mantra, running_CE_resfcn = 0.0, 0.0, 0.0
                         running_CE, running_SSFW, running_SSBK = 0.0, 0.0, 0.0
+                        running_lF, running_local = 0.0, 0.0
                         valid_idx = 0.0
                 # if rank <= 0:
                 #     progbar.add(len(model.real_H), values=logs)

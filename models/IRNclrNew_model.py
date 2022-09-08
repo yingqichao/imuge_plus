@@ -288,11 +288,11 @@ class IRNclrModel(BaseModel):
         # self.model_storage = '/models/COCO_4/'
         # self.model_path = str(12010)  # 29999 # FINISHED TRAINING
         ### no attack ###
-        # self.model_storage = '/models/COCO_0/'
-        # self.model_path = str(17010)  # 29999 # FINISHED TRAINING
+        # self.model_storage = '/models/COCO_1/'
+        # self.model_path = str(10010)  # 29999 # FINISHED TRAINING
         ### new attack ###
-        self.model_storage = '/models/COCO_0/'
-        self.model_path = str(6010)  # 29999 # FINISHED TRAINING
+        self.model_storage = '/models/COCO_1/'
+        self.model_path = str(1010)  # 29999 # FINISHED TRAINING
 
         load_models = True
         load_state = False
@@ -355,16 +355,16 @@ class IRNclrModel(BaseModel):
                 # todo: cropping
                 # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
                 ####################################################################################################
-                locs, cropped, scaled_cropped, masks_crop, masks_crop_GT = self.cropping_mask_generation(forward_image=forward_image, logs=logs)
+                locs, cropped, scaled_cropped, masks_crop_new, masks_crop_new_GT = self.cropping_mask_generation(forward_image=forward_image, logs=logs)
                 h_start, h_end, w_start, w_end = locs
 
-                # cropped_ideal = forward_image*(1-masks_crop)
+                # cropped_ideal = forward_image*(1-masks_crop_new)
                 ####### Attack on cropped_ideal ###############
 
                 # attacked_image = self.benign_attacks(attacked_forward=forward_image, logs=logs)
                 ## UNIT TEST
                 # attacked_image = scaled_cropped
-                consider_attack = True
+                consider_attack = False
                 if consider_attack:
                     ####################################################################################################
                     # todo: benign_attacks
@@ -390,21 +390,21 @@ class IRNclrModel(BaseModel):
                 ####################################################################################################
                 cropmask, patch_loss, mask_loss, location, apex = self.localizer_losses(locs=locs,
                                                                                         attacked_image=attacked_image.clone().detach(),
-                                                                                        masks_crop_GT=masks_crop_GT,
+                                                                                        masks_crop_GT=masks_crop_new_GT,
                                                                                         logs=logs)
 
                 crop_loss = mask_loss * 0.1 + patch_loss
 
                 cropmask, patch_loss_train, mask_loss_train, location, apex = self.localizer_losses(locs=locs,
                                                                                                     attacked_image=attacked_image,
-                                                                                                    masks_crop_GT=masks_crop_GT,
+                                                                                                    masks_crop_GT=masks_crop_new_GT,
                                                                                                     logs=logs)
                 CE = mask_loss_train * 0.01 + patch_loss_train
                 logs['CE'] = mask_loss.item()
 
                 ## PLOT PREDICTED MASK
                 h_start, h_end, w_start, w_end = location[:, 0], location[:, 1], location[:, 2], location[:, 3]
-                predicted_crop_region = torch.ones_like(masks_crop_GT)
+                predicted_crop_region = torch.ones_like(masks_crop_new_GT)
                 for idxx in range(location.shape[0]):
                     predicted_crop_region[idxx, :,
                     int(h_start[idxx] * self.width_height): int(h_end[idxx] * self.width_height),
@@ -451,7 +451,7 @@ class IRNclrModel(BaseModel):
                 # todo: resize_and_pad
                 # todo: attacked_padded: resized image according to locs
                 ####################################################################################################
-                attacked_padded = self.resize_and_pad(locs=locs, attacked_image=attacked_image, cropped=None,
+                attacked_padded = self.resize_and_pad(locs=locs, attacked_image=attacked_image, cropped=(None if consider_attack else cropped),
                                                       logs=logs)
                 # canny_input = modified_canny*(1-masks_crop_GT)
                 canny_input = torch.zeros_like(forward_null).cuda()
@@ -479,7 +479,7 @@ class IRNclrModel(BaseModel):
                 l_backward_l1_local = self.l2_loss(reversed_image_raw * masks_crop, GT_modified_input * masks_crop) / torch.mean(masks_crop)
 
                 psnr_forward = self.psnr(self.postprocess(modified_input), self.postprocess(forward_image)).item()
-                psnr_backward = self.psnr(self.postprocess(GT_modified_input), self.postprocess(reversed_image*masks_crop+GT_modified_input*(1-masks_crop))).item()
+                psnr_backward = self.psnr(self.postprocess(GT_modified_input), self.postprocess(reversed_image)).item()
                 # psnr_comp = self.psnr(self.postprocess(forward_image), self.postprocess(reversed_image)).item()
                 logs['PF'] = psnr_forward
                 logs['PB'] = psnr_backward
@@ -488,15 +488,16 @@ class IRNclrModel(BaseModel):
                 loss = 0
                 weight_not_qualified = 10 if self.real_H.shape[3]<512 else 4
                 weight_qualified = weight_not_qualified / 4
-                loss += (weight_not_qualified if psnr_forward < 32 else weight_qualified) * l_forward
+                psnr_thresh = 32.5 if consider_attack else 33.5
+                loss += (weight_not_qualified if psnr_forward < psnr_thresh else weight_qualified) * l_forward
                 loss += 20 * l_null
-                loss += 0.25*l_backward
+                loss += 1 * l_backward
                 loss += 1 * l_back_canny
                 loss += 1 * l_backward_l1_local
-                loss += 1 * CE
+                # loss += 1 * CE
 
                 l_percept_fw_ssim = - self.ssim_loss(forward_image, modified_input)
-                l_percept_bk_ssim = - self.ssim_loss(reversed_image*masks_crop+GT_modified_input*(1-masks_crop), GT_modified_input)
+                l_percept_bk_ssim = - self.ssim_loss(reversed_image, GT_modified_input)
                 # loss += 0.01 * l_percept_fw_ssim
                 # loss += 0.01 * (l_percept_bk_ssim)
                 SSFW = (-l_percept_fw_ssim).item()
@@ -517,11 +518,11 @@ class IRNclrModel(BaseModel):
                 logs['loss'] = loss.item()
                 logs['SSFW'] = SSFW
                 logs['SSBK'] = SSBK
-                # logs.append(('lF', l_forward.item()))
+                logs['lF'] = l_forward.item()
                 # logs.append(('lN', l_null.item()))
                 # logs.append(('lB', l_backward.item()))
                 # logs.append(('lBedge', l_back_canny.item()))
-                # logs.append(('local', l_backward_l1_local.item()))
+                logs['local'] = l_backward_l1_local.item()
                 # logs.append(('SF', SSFW))
                 # logs.append(('SB', SSBK))
                 # logs.append(('mask', torch.mean(masks_crop).item()))
@@ -569,7 +570,7 @@ class IRNclrModel(BaseModel):
                         # self.postprocess(10 * torch.abs(error_detach)),
                         # self.postprocess(attacked_padded),
                         # self.postprocess(10 * torch.abs(error_detach1)),
-                        self.postprocess(masks_crop_GT),
+                        self.postprocess(masks_crop_new_GT),
                         self.postprocess(cropmask),
                         self.postprocess(reversed_image),
                         self.postprocess(GT_modified_input),

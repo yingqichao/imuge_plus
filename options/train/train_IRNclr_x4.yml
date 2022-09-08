@@ -6,7 +6,7 @@ use_tb_logger: true
 model: CLRNet # CVPR
 distortion: sr
 scale: 4
-gpu_ids: [0,1,2]
+gpu_ids: [1,0,2]
 
 
 #### datasets
@@ -35,8 +35,8 @@ datasets:
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 24  # 4
-    GT_size: 256
+    batch_size: 6  # 4
+    GT_size: 512
     #########################
     use_flip: true
     use_rot: true
