@@ -8,7 +8,6 @@ class Downsampler(nn.Module):
     """
         http://www.realitypixels.com/turk/computergraphics/ResamplingFilters.pdf
     """
-    # xxhu test github
     def __init__(self, n_planes, factor, kernel_type, phase=0, kernel_width=None, support=None, sigma=None,
                  preserve_size=False):
         """
