@@ -311,7 +311,7 @@ class IRNclrModel(BaseModel):
 
         # self.netG.module.clock = 1.0
 
-    def optimize_parameters(self, step, latest_values=None, train=True, eval_dir=None):
+    def optimize_parameters(self, step=0, latest_values=None, train=True, eval_dir=None):
         self.netG.train()
         self.discriminator.train()
         self.generator.train()

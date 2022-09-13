@@ -16,6 +16,7 @@ from data import create_dataloader, create_dataset
 from models import create_model
 from torchvision import datasets, transforms
 from skimage.feature import canny
+from utils.util import var_name
 
 ####################################################################################################################
 # todo: Please notice, in order to apply this framework. Remember to customize the following:
@@ -128,10 +129,20 @@ def main(args,opt):
     #     # train_set = D(opt, dataset_opt)
     elif "ISP" in opt['model']:
         print("dataset with ISP")
-        from data.LQGT_dataset import LQGTDataset as D
-        train_set = D(opt, dataset_opt)
+        from data.fivek_dataset import FiveKDataset
+        dataset_root = '/mnd/invISP/'
+        camera_name = 'Canon_EOS_5D'
+        # data_process_npz(dataset_root, camera_name)
+        # test_image_downsample(dataset_root, camera_name)
+        # exit(0)
+        # data_process_npz(dataset_root, camera_name)
+        # exit(0)
+        train_set = FiveKDataset(dataset_root, camera_name, stage='train', patch_size=32)
+
+        # from data.LQGT_dataset import LQGTDataset as D
+        # train_set = D(opt, dataset_opt)
     else:
-        raise NotImplementedError("Dataset Not Implemented. Exit.")
+        raise NotImplementedError('大神是不是搞错了？')
 
     train_size = int(math.ceil(len(train_set) / dataset_opt['batch_size']))
     # total_iters = int(opt['train']['niter'])
@@ -177,7 +188,7 @@ def main(args,opt):
         from data.LQGT_dataset import LQGTDataset as D
         val_set = D(opt, dataset_opt)
     else:
-        raise NotImplementedError("Dataset Not Implemented. Exit.")
+        raise NotImplementedError('大神是不是搞错了？')
 
     val_size = int(math.ceil(len(val_set) / 1))
     if opt['dist']:
@@ -220,7 +231,7 @@ def main(args,opt):
         from models.Modified_invISP import Modified_invISP as M
         model = M(opt, args)
     else:
-        raise NotImplementedError('Model [{:s}] not recognized.'.format(which_model))
+        raise NotImplementedError('大神是不是搞错了？')
 
     logger.info('Model [{:s}] is created.'.format(model.__class__.__name__))
     ####################################################################################################
@@ -230,11 +241,19 @@ def main(args,opt):
     ####################################################################################################
     # todo: FUNCTIONALITIES
     # todo: we support a bunch of operations according to variables in val.
+    # todo: each instance must implement a feed_data and optimize_parameters
     ####################################################################################################
     start_epoch = 0
     current_step = opt['train']['current_step']
+    variables_list = []
+    if ('CLRNet' in which_model or 'PAMI' in which_model or 'ISP' in which_model) and args.mode==0.0:
+        if 'PAMI' in which_model:
+            variables_list = []
+        elif 'ISP' in which_model:
+            variables_list = ['CE_MVSS', 'CE_mantra', 'CE_resfcn']
+        elif 'CLRNet' in which_model:
+            variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
 
-    if ('PAMI' in which_model or 'ISP' in which_model) and args.mode==0.0:
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
@@ -245,98 +264,47 @@ def main(args,opt):
         total = len(train_set)
         print_step = 15
         for epoch in range(start_epoch, total_epochs + 1):
-            stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
-                                'SIMUL','RECON','RealTime'
-                                'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
-                                'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
+            # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
+            #                     'SIMUL','RECON','RealTime'
+            #                     'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
+            #                     'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
             # if rank <= 0:
             #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
-            running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
+            running_list = [0.0]*len(variables_list)
+            valid_idx = 0
+            # running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
             if opt['dist']:
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
                 current_step += 1
                 #### training
-                model.feed_data(train_data)
+                model.feed_data_router(batch=train_data, mode=args.mode)
 
-                logs, debug_logs = model.optimize_parameters(current_step,latest_values)
-                if 'CE_MVSS' in logs:
-                    running_CE_MVSS += logs['CE_MVSS']
-                    running_CE_mantra += logs['CE_mantra']
-                    running_CE_resfcn += logs['CE_resfcn']
+                logs, debug_logs = model.optimize_parameters_router(mode=args.mode)
+                if variables_list[0] in logs:
+                    for i in range(len(variables_list)):
+                        running_list[i] += logs[variables_list[i]]
+                        # running_CE_mantra += logs['CE_mantra']
+                        # running_CE_resfcn += logs['CE_resfcn']
                     valid_idx += 1
                 if valid_idx % print_step == print_step - 1:  # print every 2000 mini-batches
-                    print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
-                          f'running_CE_MVSS: {running_CE_MVSS / print_step:.5f} '
-                          f'running_CE_mantra: {running_CE_mantra / print_step:.5f} '
-                          f'running_CE_resfcn: {running_CE_resfcn / print_step:.5f} '
-                          )
-                    running_CE_MVSS, running_CE_mantra, running_CE_resfcn = 0.0, 0.0, 0.0
+                    # print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
+                    #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.5f} '
+                    #       f'running_CE_mantra: {running_CE_mantra / print_step:.5f} '
+                    #       f'running_CE_resfcn: {running_CE_resfcn / print_step:.5f} '
+                    #       )
+                    info_str = f'[{epoch + 1}, {valid_idx + 1} {rank}] '
+                    for i in range(len(variables_list)):
+                        info_str += f'{variables_list[i]}: {running_list[i] / print_step:.5f} '
+
+                    running_list = [0.0] * len(variables_list)
+                    valid_idx = 0
                 # if rank <= 0:
                 #     progbar.add(len(model.real_H), values=logs)
         ####################################################################################################
         ## todo: END OF DEFINITION
         ####################################################################################################
-    if ('CLRNet' in which_model) and args.mode==0.0:
-        ####################################################################################################
-        # todo: Training
-        # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
-        ####################################################################################################
-        if rank<=0:
-            logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
-        latest_values = None
-        total = len(train_set)
-        print_step, return_idx = 15, 1000
-        for epoch in range(start_epoch, total_epochs + 1):
-            stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
-                                'SIMUL','RECON','RealTime'
-                                'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
-                                'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
-            # if rank <= 0:
-            #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
-            running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
-            running_CE, running_SSFW, running_SSBK = 0.0, 0.0, 0.0
-            running_lF, running_local = 0.0, 0.0
-            if opt['dist']:
-                train_sampler.set_epoch(epoch)
-            for idx, train_data in enumerate(train_loader):
-                current_step += 1
-                #### training
-                model.feed_data(train_data)
 
-                logs, debug_logs = model.optimize_parameters(current_step,latest_values)
-                if 'PF' in logs:
-                    running_CE_MVSS += logs['loss']
-                    running_CE_mantra += logs['PF']
-                    running_CE_resfcn += logs['PB']
-                    running_CE += logs['CE']
-                    running_SSFW += logs['SSFW']
-                    running_SSBK += logs['SSBK']
-                    running_lF += logs['lF']
-                    running_local += logs['local']
-                    valid_idx += 1
-                if valid_idx % print_step == print_step - 1:  # print every 2000 mini-batches
-                    lr = logs['lr']
-                    print(f'[{epoch + 1},{idx*model.real_H.shape[0]} {valid_idx + 1} {rank} {lr}] '
-                          f'CE: {running_CE / valid_idx:.5f} '
-                          f'lF: {running_lF / valid_idx:.5f} '
-                          f'local: {running_local / valid_idx:.5f} '
-                          f'loss: {running_CE_MVSS / valid_idx:.5f} '
-                          f'Forward: {running_CE_mantra / valid_idx:.5f} '
-                          f'Backward: {running_CE_resfcn / valid_idx:.5f} '
-                          f'SSFW: {running_SSFW / valid_idx:.5f} '
-                          f'SSBK: {running_SSBK / valid_idx:.5f} '
-                          )
-                    if valid_idx>=return_idx:
-                        running_CE_MVSS, running_CE_mantra, running_CE_resfcn = 0.0, 0.0, 0.0
-                        running_CE, running_SSFW, running_SSBK = 0.0, 0.0, 0.0
-                        running_lF, running_local = 0.0, 0.0
-                        valid_idx = 0.0
-                # if rank <= 0:
-                #     progbar.add(len(model.real_H), values=logs)
-        ####################################################################################################
-        ## todo: END OF DEFINITION
-        ####################################################################################################
     elif which_model == 'CLRNet' and args.mode==1.0:
         ####################################################################################################
         # todo: Eval
@@ -393,35 +361,8 @@ def main(args,opt):
         ####################################################################################################
         ## todo: END OF DEFINITION
         ####################################################################################################
-    elif which_model == 'ISP' and args.mode==1.0:
-        ####################################################################################################
-        # todo: ISP protection
-        # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
-        ####################################################################################################
-        if rank<=0:
-            logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
-        latest_values = None
-        total = len(train_set)
-        for epoch in range(start_epoch, total_epochs + 1):
-            stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
-                                'SIMUL','RECON','RealTime'
-                                'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
-                                'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
-            if rank <= 0:
-                progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
-            if opt['dist']:
-                train_sampler.set_epoch(epoch)
-            for idx, train_data in enumerate(train_loader):
-                current_step += 1
-                #### training
-                model.feed_data(train_data)
-
-                logs, debug_logs = model.optimize_parameters(current_step,latest_values)
-                if rank <= 0:
-                    progbar.add(len(model.real_H), values=logs)
-        ####################################################################################################
-        ## todo: END OF DEFINITION
-        ####################################################################################################
+    else:
+        raise NotImplementedError('大神是不是搞错了？')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

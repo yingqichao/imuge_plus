@@ -26,7 +26,7 @@ class BaseModel():
     def feed_data(self, data):
         pass
 
-    def optimize_parameters(self, latest_values):
+    def optimize_parameters(self):
         pass
 
     def get_current_visuals(self):

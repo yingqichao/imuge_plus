@@ -347,7 +347,7 @@ class IRNpModel(BaseModel):
     def gaussian_batch(self, dims):
         return self.clamp_with_grad(torch.randn(tuple(dims)).cuda())
 
-    def optimize_parameters(self, step, latest_values=None, train=True, eval_dir=None):
+    def optimize_parameters(self, step=0, latest_values=None, train=True, eval_dir=None):
         self.netG.train()
         self.localizer.train()
         self.discriminator_mask.train()
