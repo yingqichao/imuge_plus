@@ -50,7 +50,7 @@ def main(args,opt):
     # os.environ['CUDA_VISIBLE_DEVICES'] ="3,4"
     #### create train and val dataloader
     dataset_ratio = 200  # enlarge the size of each epoch
-    # resize = opt['datasets']['train']['GT_size']
+    GT_size = opt['datasets']['train']['GT_size']
     #### distributed training settings
     # if args.launcher == 'none':  # disabled distributed training
     #     opt['dist'] = False
@@ -129,15 +129,16 @@ def main(args,opt):
     #     # train_set = D(opt, dataset_opt)
     elif "ISP" in opt['model']:
         print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset
-        dataset_root = '/mnd/invISP/'
+        from data.fivek_dataset import FiveKDataset_crop
+        dataset_root = '/ssd/invISP_crop_512/'
         camera_name = 'Canon_EOS_5D'
         # data_process_npz(dataset_root, camera_name)
         # test_image_downsample(dataset_root, camera_name)
         # exit(0)
         # data_process_npz(dataset_root, camera_name)
         # exit(0)
-        train_set = FiveKDataset(dataset_root, camera_name, stage='train', patch_size=32)
+        print(f'FiveK dataset size:{GT_size}')
+        train_set = FiveKDataset_crop(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0., patch_size=GT_size)
 
         # from data.LQGT_dataset import LQGTDataset as D
         # train_set = D(opt, dataset_opt)
@@ -246,11 +247,17 @@ def main(args,opt):
     start_epoch = 0
     current_step = opt['train']['current_step']
     variables_list = []
-    if ('CLRNet' in which_model or 'PAMI' in which_model or 'ISP' in which_model) and args.mode==0.0:
+    if ('CLRNet' in which_model or 'PAMI' in which_model or 'ISP' in which_model):
         if 'PAMI' in which_model:
             variables_list = []
-        elif 'ISP' in which_model:
+        elif 'ISP' in which_model and args.mode==0:
             variables_list = ['CE_MVSS', 'CE_mantra', 'CE_resfcn']
+        elif 'ISP' in which_model and args.mode==1:
+            variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
+            print(f"variables_list: {variables_list}")
+        elif 'ISP' in which_model and args.mode==2:
+            variables_list = ['ISP_PSNR', 'loss','CE_MVSS', 'CE_mantra', 'CE_resfcn']
+            print(f"variables_list: {variables_list}")
         elif 'CLRNet' in which_model:
             variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
 
@@ -287,16 +294,19 @@ def main(args,opt):
                         # running_CE_mantra += logs['CE_mantra']
                         # running_CE_resfcn += logs['CE_resfcn']
                     valid_idx += 1
+                else:
+                    ## which is kind of abnormal, print
+                    print(variables_list)
                 if valid_idx % print_step == print_step - 1:  # print every 2000 mini-batches
                     # print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
                     #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.5f} '
                     #       f'running_CE_mantra: {running_CE_mantra / print_step:.5f} '
                     #       f'running_CE_resfcn: {running_CE_resfcn / print_step:.5f} '
                     #       )
-                    info_str = f'[{epoch + 1}, {valid_idx + 1} {rank}] '
+                    info_str = f'[{epoch + 1}, {valid_idx + 1} {idx} {rank}] '
                     for i in range(len(variables_list)):
                         info_str += f'{variables_list[i]}: {running_list[i] / print_step:.5f} '
-
+                    print(info_str)
                     running_list = [0.0] * len(variables_list)
                     valid_idx = 0
                 # if rank <= 0:

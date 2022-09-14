@@ -76,7 +76,6 @@ class Modified_invISP(BaseModel):
         self.global_step = 0
         self.new_task = self.train_opt['new_task']
 
-
         ####################################################################################################
         # todo: losses and attack layers
         # todo: JPEG attack rescaling deblurring
@@ -125,22 +124,34 @@ class Modified_invISP(BaseModel):
         # self.adversarial_loss = AdversarialLoss(type="nsgan").cuda()
 
         ####################################################################################################
-        # todo: MAIN Networks
+        # todo: TASKS Specification
         # todo: Why the networks are named like these? because their predecessors are named like these...
-        # todo: in order to reduce modification, we let KD_JPEG_net=RAW2RAW network, generator=invISP, netG/discrimitator_mask/localizer=three detection networks
+        # todo: in order to reduce modification, we let KD_JPEG=RAW2RAW network, generator=invISP, netG/discrimitator_mask/localizer=three detection networks
         ####################################################################################################
         self.network_list = []
         self.default_ISP_networks = ['generator']
-        self.default_RAW_to_RAW_networks = ['KD_JPEG_net']
+        self.default_RAW_to_RAW_networks = ['KD_JPEG']
         self.default_detection_networks = ['netG', 'localizer','discriminator_mask']
         if self.args.mode==2: # training the full isp protection pipeline
+            ####################################################################################################
+            # todo: TASKS: args.mode==2 training the full isp protection pipeline
+            # todo:
+            ####################################################################################################
             self.network_list = self.default_ISP_networks+self.default_RAW_to_RAW_networks+self.default_detection_networks
             print(f"network list:{self.network_list}")
-        elif self.args.mode==0: # only traihing the detection networks
+        elif self.args.mode==0:
+            ####################################################################################################
+            # todo: TASKS: args.mode==0 only traihing the detection networks
+            # todo:
+            ####################################################################################################
             self.network_list = self.default_detection_networks
             print(f"network list:{self.network_list}")
-        elif self.args.mode==1: # only traihing the invISP network
-            self.network_list = self.default_ISP_networks
+        elif self.args.mode==1:
+            ####################################################################################################
+            # todo: TASKS: args.mode==1 only traihing the invISP network and train identical function on RAW2RAW
+            # todo:
+            ####################################################################################################
+            self.network_list = self.default_ISP_networks+self.default_RAW_to_RAW_networks
             print(f"network list:{self.network_list}")
         else:
             raise NotImplementedError('大神是不是搞错了？')
@@ -185,30 +196,30 @@ class Modified_invISP(BaseModel):
 
         if 'generator' in self.network_list:
             ####################################################################################################
-            # todo: Image Signal Processing networks will be loaded
+            # todo: ISP networks will be loaded
             # todo: invISP: generator
             ####################################################################################################
             from invISP_models.invISP_model import InvISPNet
-            self.generator = InvISPNet(channel_in=3, channel_out=3, block_num=8).cuda()
+            self.generator = InvISPNet(channel_in=3, channel_out=3, block_num=8, network='ResNet').cuda()
             self.generator = DistributedDataParallel(self.generator, device_ids=[torch.cuda.current_device()],
                                                      find_unused_parameters=True)
 
             self.scaler_generator = torch.cuda.amp.GradScaler()
 
-        if 'KD_JPEG_net' in self.network_list:
+        if 'KD_JPEG' in self.network_list:
             ####################################################################################################
-            # todo: Image Signal Processing protection will be loaded
+            # todo: RAW2RAW network will be loaded
             # todo:
             ####################################################################################################
             from lama_models.HWMNet import HWMNet
-            self.KD_JPEG_net = HWMNet(in_chn=3, wf=64, depth=4).cuda()
-            self.KD_JPEG_net = DistributedDataParallel(self.KD_JPEG_net, device_ids=[torch.cuda.current_device()],
+            self.KD_JPEG = HWMNet(in_chn=3, wf=64, depth=4).cuda()
+            self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
                                                      find_unused_parameters=True)
 
             self.scaler_kd_jpeg = torch.cuda.amp.GradScaler()
 
         ####################################################################################################
-        # todo: Optmizers
+        # todo: Optimizers
         # todo: invISP
         ####################################################################################################
         wd_G = train_opt['weight_decay_G'] if train_opt['weight_decay_G'] else 0
@@ -222,8 +233,8 @@ class Modified_invISP(BaseModel):
         if 'localizer' in self.network_list:
             self.optimizer_localizer = self.create_optimizer(self.localizer,
                                   lr=train_opt['lr_G'], weight_decay=wd_G)
-        if 'KD_JPEG_net' in self.network_list:
-            self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG_net,
+        if 'KD_JPEG' in self.network_list:
+            self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
                                   lr=train_opt['lr_G'], weight_decay=wd_G)
         if 'discriminator' in self.network_list:
             self.optimizer_discriminator = self.create_optimizer(self.discriminator,
@@ -252,18 +263,27 @@ class Modified_invISP(BaseModel):
         self.basic_weight_fw = 5
 
 
-        load_models = True
+        load_models = False
         load_state = False
         ####################################################################################################
-        # todo: Loading Pretrained models: Detection networks
-        # todo: invISP
+        # todo: Loading Pretrained models
+        # todo: note: these networks are supposed to be stored together. Can be further customized in the future
         ####################################################################################################
-
         # good_models: '/model/Rerun_4/29999'
-        self.out_space_storage = '/groupshare/ISP_results/tamper_results'
-        self.model_storage = f'/model/{self.task_name}_{str(self.gpu_id)}/'
-        self.model_path = str(26999) # 29999
+        if self.args.mode==0:
+            self.out_space_storage = '/groupshare/ISP_results/tamper_results'
+            self.model_storage = f'/model/{self.task_name}_{str(self.gpu_id)}/'
+            self.model_path = str(26999) # 29999
+        elif self.args.mode==1:
+            self.out_space_storage = '/groupshare/ISP_results/ISP_results'
+            self.model_storage = f'/model/{self.task_name}_{str(self.gpu_id)}/'
+            self.model_path = str(26999) # 29999
+        else:
+            self.out_space_storage = '/groupshare/ISP_results/complete_results'
+            self.model_storage = f'/model/{self.task_name}_{str(self.gpu_id)}/'
+            self.model_path = str(26999)  # 29999
 
+        print(f"loading models: {self.network_list}")
         if load_models:
             self.pretrain = self.out_space_storage + self.model_storage + self.model_path
             self.reload(self.pretrain, self.network_list)
@@ -300,6 +320,7 @@ class Modified_invISP(BaseModel):
     def gaussian_batch(self, dims):
         return self.clamp_with_grad(torch.randn(tuple(dims)).cuda())
 
+
     def feed_data_router(self, batch, mode):
         if mode==0.0:
             self.feed_data_COCO_like(batch)
@@ -318,21 +339,23 @@ class Modified_invISP(BaseModel):
 
     def optimize_parameters_router(self, mode):
         if mode==0.0:
-            self.optimize_parameters_for_detection_networks()
+            return self.optimize_parameters_for_detection_networks()
         elif mode==1.0:
-            self.optimize_parameters_for_ISP()
+            return self.optimize_parameters_for_ISP()
+        else:
+            return self.optimize_parameters_for_ISP()
 
-    def optimize_parameters_for_detection_networks(self):
+    def optimize_parameters_for_ISP(self):
         ####################################################################################################
-        # todo: The full ISP protection pipeline
+        # todo: Finetuning ISP pipeline and training identity function on RAW2RAW
         # todo: kept frozen are the networks: invISP, mantranet (+2 more)
         # todo: training: RAW2RAW network (which is denoted as KD-JPEG)
         ####################################################################################################
-        self.KD_JPEG_net.train()
-        self.generator.eval()
-        self.localizer.eval()
-        self.discriminator_mask.eval()
-        self.netG.eval()
+        self.KD_JPEG.train()
+        self.generator.train()
+        self.netG.train()
+        self.discriminator_mask.train()
+        self.localizer.train()
 
         logs, debug_logs = {}, []
 
@@ -344,34 +367,46 @@ class Modified_invISP(BaseModel):
         input_raw = self.real_H.clone().detach()
         input_raw = self.clamp_with_grad(input_raw)
 
+        gt_rgb = self.label
+
         if not (self.previous_images is None or self.previous_previous_images is None):
 
             with torch.cuda.amp.autocast():
 
-
                 ####################################################################################################
                 # todo: Generation of protected RAW
                 ####################################################################################################
-                modified_raw = self.KD_JPEG_net(input_raw)
+                # modified_raw = self.KD_JPEG(input_raw)
                 ####################################################################################################
                 # todo: RAW2RGB pipelines
                 ####################################################################################################
-                modified_input = self.generator(modified_raw)
-                ####################################################################################################
-                # todo: Tampering and Attacking
-                ####################################################################################################
-                percent_range = (0.05, 0.25)
+                modified_input = self.generator(input_raw)
+
+                # RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
+                # ISP_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
+
+                ISP_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
+                modified_input = self.clamp_with_grad(modified_input)
+                RAW_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(input_raw)).item()
+
+                loss = ISP_L1
+
+                # logs['RAW_PSNR'] = ISP_PSNR
+                logs['ISP_PSNR'] = RAW_PSNR
+                logs['loss'] = loss.item()
+
+                percent_range = (0.05, 0.30)
                 masks, masks_GT = self.mask_generation(percent_range=percent_range, logs=logs)
+
                 attacked_forward = self.tampering(
-                    forward_image=modified_input, masks=masks, masks_GT=masks_GT,
-                    modified_input=modified_input, percent_range=percent_range, logs=logs)
+                    forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
+                    modified_input=gt_rgb, percent_range=percent_range, logs=logs)
 
                 if self.global_step % 5 in {0, 1, 2}:
                     quality_idx = np.random.randint(19, 21)
                 else:
                     quality_idx = np.random.randint(12, 17)
-                attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
-                                                     quality_idx=quality_idx)
+                attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs, quality_idx=quality_idx)
 
                 ####################################################################################################
                 # todo: Image Manipulation Detection Network (Downstream task)
@@ -380,33 +415,34 @@ class Modified_invISP(BaseModel):
                 _, pred_mvss = self.netG(attacked_image.detach())
                 CE_MVSS = self.bce_with_logit_loss(pred_mvss, masks_GT)
 
-                pred_mantra = self.localizer(attacked_image.detach())
-                CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
+                # pred_mantra = self.localizer(attacked_image.detach())
+                # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
 
-                _, pred_resfcn = self.discriminator_mask(attacked_image.detach())
-                CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+                # _, pred_resfcn = self.discriminator_mask(attacked_image.detach())
+                # CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+
 
                 logs['CE_MVSS'] = CE_MVSS.item()
-                logs['CE_mantra'] = CE_mantra.item()
-                logs['CE_resfcn'] = CE_resfcn.item()
+                logs['CE_mantra'] = 0 #CE_mantra.item()
+                logs['CE_resfcn'] = 0 #CE_resfcn.item()
 
-            # ####################################################################################################
-            # # todo: STEP: ISP network
-            # # todo: invISP
-            # ####################################################################################################
-            # self.optimizer_generator.zero_grad()
-            # # loss.backward()
-            # self.scaler_generator.scale(CE_MVSS).backward()
-            # if self.train_opt['gradient_clipping']:
-            #     nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-            # # self.optimizer_G.step()
-            # self.scaler_G.step(self.optimizer_G)
-            # self.scaler_G.update()
 
             ####################################################################################################
             # todo: STEP: Image Manipulation Detection Network
             # todo: invISP
             ####################################################################################################
+            # self.optimizer_KD_JPEG.zero_grad()
+            self.optimizer_generator.zero_grad()
+            # loss.backward()
+            self.scaler_generator.scale(loss).backward()
+            if self.train_opt['gradient_clipping']:
+                # nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
+                nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+            # self.optimizer_KD_JPEG.step()
+            # self.optimizer_generator.step()
+            self.scaler_generator.step(self.optimizer_generator)
+            self.scaler_generator.update()
+
             self.optimizer_G.zero_grad()
             self.optimizer_localizer.zero_grad()
             self.optimizer_discriminator_mask.zero_grad()
@@ -418,23 +454,23 @@ class Modified_invISP(BaseModel):
             self.scaler_G.step(self.optimizer_G)
             self.scaler_G.update()
 
-            self.optimizer_localizer.zero_grad()
-            # CE_train.backward()
-            self.scaler_localizer.scale(CE_mantra).backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-            # self.optimizer_localizer.step()
-            self.scaler_localizer.step(self.optimizer_localizer)
-            self.scaler_localizer.update()
-
-            self.optimizer_discriminator_mask.zero_grad()
-            # dis_loss.backward()
-            self.scaler_discriminator_mask.scale(CE_resfcn).backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-            # self.optimizer_discriminator_mask.step()
-            self.scaler_discriminator_mask.step(self.optimizer_discriminator_mask)
-            self.scaler_discriminator_mask.update()
+            # self.optimizer_localizer.zero_grad()
+            # # CE_train.backward()
+            # self.scaler_localizer.scale(CE_mantra).backward()
+            # if self.train_opt['gradient_clipping']:
+            #     nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
+            # # self.optimizer_localizer.step()
+            # self.scaler_localizer.step(self.optimizer_localizer)
+            # self.scaler_localizer.update()
+            #
+            # self.optimizer_discriminator_mask.zero_grad()
+            # # dis_loss.backward()
+            # self.scaler_discriminator_mask.scale(CE_resfcn).backward()
+            # if self.train_opt['gradient_clipping']:
+            #     nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+            # # self.optimizer_discriminator_mask.step()
+            # self.scaler_discriminator_mask.step(self.optimizer_discriminator_mask)
+            # self.scaler_discriminator_mask.update()
 
             ####################################################################################################
             # todo: observation zone
@@ -456,10 +492,12 @@ class Modified_invISP(BaseModel):
             if anomalies or self.global_step % 200 == 3 or self.global_step <= 10:
                 images = stitch_images(
                     self.postprocess(input_raw),
+                    # self.postprocess(modified_raw),
+                    # self.postprocess(10 * torch.abs(modified_raw - input_raw)),
                     ### RAW2RGB
                     self.postprocess(modified_input),
-                    self.postprocess(input_rgb),
-                    self.postprocess(10 * torch.abs(input_rgb - modified_input)),
+                    self.postprocess(gt_rgb),
+                    self.postprocess(10 * torch.abs(gt_rgb - modified_input)),
                     ### tampering and benign attack
                     self.postprocess(attacked_forward),
                     self.postprocess(attacked_image),
@@ -467,11 +505,11 @@ class Modified_invISP(BaseModel):
                     ### tampering detection
                     self.postprocess(masks_GT),
                     self.postprocess(torch.sigmoid(pred_mvss)),
-                    self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mvss))),
-                    self.postprocess(torch.sigmoid(pred_mantra)),
-                    self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mantra))),
-                    self.postprocess(torch.sigmoid(pred_resfcn)),
-                    self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_resfcn))),
+                    # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mvss))),
+                    # self.postprocess(torch.sigmoid(pred_mantra)),
+                    # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mantra))),
+                    # self.postprocess(torch.sigmoid(pred_resfcn)),
+                    # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_resfcn))),
                     img_per_row=1
                 )
 
@@ -491,11 +529,13 @@ class Modified_invISP(BaseModel):
                 logger.info('Saving models and training states.')
                 self.save(self.global_step, folder='model', network_list=self.network_list)
         if self.real_H is not None:
-            self.previous_canny = self.canny_image
             if self.previous_images is not None:
                 self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.real_H
+            self.previous_images = self.label
         self.global_step = self.global_step + 1
+
+        # print(logs)
+        # print(debug_logs)
         return logs, debug_logs
 
 
@@ -916,7 +956,7 @@ class Modified_invISP(BaseModel):
 
     def KD_JPEG_Generator_training(self, step, latest_values=None, train=True, eval_dir=None):
         with torch.enable_grad():
-            self.KD_JPEG_net.train()
+            self.KD_JPEG.train()
             self.qf_predict_network.train()
             self.generator.train()
             self.optimizer_KD_JPEG.zero_grad()
@@ -951,7 +991,7 @@ class Modified_invISP(BaseModel):
                 ## TRAINING QF PREDICTOR
                 QF_real = self.qf_predict_network(GT_real_jpeg)
 
-                jpeg_simulated, simul_feats = self.KD_JPEG_net(self.real_H, qf_input)
+                jpeg_simulated, simul_feats = self.KD_JPEG(self.real_H, qf_input)
                 jpeg_simulated = self.clamp_with_grad(jpeg_simulated)
                 # jpeg_reconstructed, recon_feats = self.generator(GT_real_jpeg, qf_input)
                 # jpeg_reconstructed = self.clamp_with_grad(jpeg_reconstructed)
@@ -1013,7 +1053,7 @@ class Modified_invISP(BaseModel):
             # loss.backward()
             self.scaler_KD_JPEG.scale(loss_stu).backward()
             if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.KD_JPEG_net.parameters(), 1)
+                nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
             # self.optimizer_G.step()
             self.scaler_KD_JPEG.step(self.optimizer_KD_JPEG)
             self.scaler_KD_JPEG.update()
@@ -1351,7 +1391,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 logger.info('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.KD_JPEG_net, strict=False)
+                    self.load_network(load_path_G, self.KD_JPEG, strict=False)
                 else:
                     logger.info('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -1397,7 +1437,7 @@ class Modified_invISP(BaseModel):
         if 'localizer' in network_list:
             self.save_network(self.localizer,  'localizer', iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/')
         if 'KD_JPEG' in network_list:
-            self.save_network(self.KD_JPEG_net, 'KD_JPEG', iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/')
+            self.save_network(self.KD_JPEG, 'KD_JPEG', iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/')
         if 'discriminator_mask' in network_list:
             self.save_network(self.discriminator_mask, 'discriminator_mask', iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/')
         if 'qf_predict' in network_list:

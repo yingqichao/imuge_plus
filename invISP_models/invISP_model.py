@@ -47,6 +47,47 @@ def initialize_weights_xavier(net_l, scale=1):
                 init.constant_(m.weight, 1)
                 init.constant_(m.bias.data, 0.0)
 
+class ResBlock(nn.Module):
+    def __init__(self, channel_in, channel_out,init='xavier', dilation=1, clock=1):
+        super(ResBlock, self).__init__()
+        feature = 64
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(channel_in, feature, kernel_size=3, padding=1*dilation, dilation=dilation),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True)
+        )
+
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(feature, feature, kernel_size=3, padding=1 * dilation, dilation=dilation),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True)
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(feature, feature, kernel_size=3, padding=1 * dilation, dilation=dilation),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True)
+        )
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(feature, feature, kernel_size=3, padding=1 * dilation, dilation=dilation),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True)
+        )
+
+        self.conv5 = nn.Conv2d((feature+channel_in), channel_out, kernel_size=3, padding=1)
+
+        if init == 'xavier':
+            initialize_weights_xavier([self.conv1, self.conv2, self.conv3, self.conv4], 0.1)
+        else:
+            initialize_weights([self.conv1, self.conv2, self.conv3, self.conv4], 0.1)
+        initialize_weights(self.conv5, 0)
+
+    def forward(self, x):
+        global clock_global
+        residual = self.conv1(x)
+        residual = self.conv2(residual)
+        residual = self.conv3(residual)
+        residual = self.conv4(residual)
+        input = torch.cat((x, residual), dim=1)
+        out = self.conv5(input)
+
+        return out
+
 
 class DenseBlock(nn.Module):
     def __init__(self, channel_in, channel_out, init='xavier', gc=32, bias=True):
@@ -78,12 +119,15 @@ def subnet(net_structure, init='xavier'):
     def constructor(channel_in, channel_out):
         if net_structure == 'DBNet':
             if init == 'xavier':
-                return DenseBlock(channel_in, channel_out, init)
+                return DenseBlock(channel_in, channel_out, init=init)
             else:
                 return DenseBlock(channel_in, channel_out)
             # return UNetBlock(channel_in, channel_out)
-        else:
-            return None
+        elif net_structure == 'ResNet':
+            if init == 'xavier':
+                return ResBlock(channel_in, channel_out, init=init)
+            else:
+                return ResBlock(channel_in, channel_out)
 
     return constructor
 
@@ -135,10 +179,10 @@ class InvBlock(nn.Module):
 
 
 class InvISPNet(nn.Module):
-    def __init__(self, channel_in=3, channel_out=3, subnet_constructor=subnet('DBNet'), block_num=8):
+    def __init__(self, channel_in=3, channel_out=3, network='DBNet', block_num=8):
         super(InvISPNet, self).__init__()
         operations = []
-
+        subnet_constructor = subnet(network)
         current_channel = channel_in
         channel_num = channel_in
         channel_split_num = 1

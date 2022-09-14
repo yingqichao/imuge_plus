@@ -13,7 +13,7 @@ from noise_layers import *
 from noise_layers.resize import Resize
 from noise_layers.gaussian_blur import GaussianBlur
 #pytorch-lightning
-import pytorch_lightning as pl
+# import pytorch_lightning as pl
 
 device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -960,7 +960,7 @@ def F1score(predicted_binary, gt_image, thresh=0.2):
     # cv2.imwrite(save_path, predicted_binary)
     return F1, TP
 
-class ForgeryDetector(pl.LightningModule):
+class ForgeryDetector(nn.Module):
     
     # Model Initialization/Creation    
     def __init__(self,train_loader,detector=MantraNet(),lr=0.001):
