@@ -788,10 +788,10 @@ class Crop_predictor(nn.Module):
         x_pred = self.m_body_encoder_A(x4_1)
 
         img = self.to_img(x_pred)
-        img_down = F.interpolate(img, size=[32,32], mode='bilinear')
-        img_down = img_down.view(img.shape[0],32*32)
-        qf = self.qf_pred(img_down)
-        img = F.interpolate(img, size=[x.shape[2],x.shape[3]], mode='bilinear')
+        img = F.interpolate(img, size=[32,32], mode='bilinear')
+        img_view = img.view(img.shape[0],32*32)
+        qf = self.qf_pred(img_view)
+        # img = F.interpolate(img, size=[x.shape[2],x.shape[3]], mode='bilinear')
         return img,qf
 
 

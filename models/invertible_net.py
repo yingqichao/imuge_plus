@@ -412,7 +412,7 @@ class ResBlock(nn.Module):
             nn.ELU(inplace=True)
         )
         self.conv4_1 = nn.Sequential(
-            spectral_norm(nn.Conv2d(feature, feature, kernel_size=5, padding=2*dilation, dilation=dilation), use_spectral_norm),
+            spectral_norm(nn.Conv2d(feature, feature, kernel_size=5, padding=2 * dilation, dilation=dilation), use_spectral_norm),
             # nn.InstanceNorm2d(feature, track_running_stats=False),
             nn.ELU(inplace=True)
         )

@@ -1,54 +1,38 @@
 import logging
-from collections import OrderedDict
-import copy
-import torch
-import torchvision.transforms.functional_tensor as F_t
-from PIL import Image
-import torchvision.transforms.functional as F
-import torch.nn.functional as Functional
-from noise_layers.salt_pepper_noise import SaltPepper
-import torchvision.transforms.functional_pil as F_pil
-from skimage.feature import canny
-import torchvision
-import torch.nn as nn
-from torch.optim.lr_scheduler import ReduceLROnPlateau, MultiStepLR
-from torch.nn.parallel import DataParallel, DistributedDataParallel
-from skimage.color import rgb2gray
-from skimage.metrics._structural_similarity import structural_similarity
-import models.lr_scheduler as lr_scheduler
-from .base_model import BaseModel
-from models.modules.loss import ReconstructionLoss, CWLoss
-from models.modules.Quantization import Quantization, diff_round
-import torch.distributed as dist
-from utils.JPEG import DiffJPEG
-from torchvision import models
-from loss import AdversarialLoss, PerceptualLoss, StyleLoss
-import cv2
-from mbrs_models.Encoder_MP import Encoder_MP
-from metrics import PSNR, EdgeAccuracy
-from .invertible_net import Inveritible_Decolorization_PAMI, ResBlock, DenseBlock, Haar_UNet, ResBlock_light, Inveritible_Decolorization_CSVT
-from .crop_localize_net import CropLocalizeNet
-from .conditional_jpeg_generator import FBCNN, MantraNet, QF_predictor, Crop_predictor
-from utils import Progbar, create_dir, stitch_images, imsave
 import os
+from collections import OrderedDict
+
+import cv2
+import torch.distributed as dist
+import torch.nn as nn
+import torch.nn.functional as Functional
+import torchvision
+import torchvision.transforms.functional as F
+
+from PIL import Image
+from skimage.color import rgb2gray
+from skimage.feature import canny
+from torch.nn.parallel import DistributedDataParallel
+
+import models.lr_scheduler as lr_scheduler
 import pytorch_ssim
+# import matlab.engine
+from losses.fourier_loss import fft_L1_loss_color
+from metrics import PSNR
+from models.modules.Quantization import diff_round
 from noise_layers import *
+from noise_layers.crop import Crop
 from noise_layers.dropout import Dropout
 from noise_layers.gaussian import Gaussian
 from noise_layers.gaussian_blur import GaussianBlur
 from noise_layers.middle_filter import MiddleBlur
 from noise_layers.resize import Resize
-from noise_layers.jpeg_compression import JpegCompression
-from noise_layers.crop import Crop
-from models.networks import EdgeGenerator, DG_discriminator, InpaintGenerator, Discriminator, NormalGenerator, UNetDiscriminator, \
-    JPEGGenerator, Localizer
-from mbrs_models.Decoder import Decoder, Decoder_MLP
-# import matlab.engine
-from mbrs_models.baluja_networks import HidingNetwork, RevealNetwork
-from pycocotools.coco import COCO
-from models.conditional_jpeg_generator import domain_generalization_predictor
-from loss import ExclusionLoss
-from losses.fourier_loss import fft_L1_loss_color, fft_L1_loss_mask, decide_circle
+from utils import stitch_images
+from utils.JPEG import DiffJPEG
+from .base_model import BaseModel
+from .conditional_jpeg_generator import Crop_predictor
+from .invertible_net import Inveritible_Decolorization_PAMI, Inveritible_Decolorization_CSVT
+
 # print("Starting MATLAB engine...")
 # engine = matlab.engine.start_matlab()
 # print("MATLAB engine loaded successful.")
@@ -71,7 +55,6 @@ logger = logging.getLogger('base')
 
 
 """
-import lpips
 
 
 class IRNclrModel(BaseModel):
@@ -277,32 +260,40 @@ class IRNclrModel(BaseModel):
         # self.optimizers.append(self.optimizer_localizer)
 
         # ############## schedulers #########################
-        if train_opt['lr_scheme'] == 'MultiStepLR':
-            for optimizer in self.optimizers:
-                self.schedulers.append(
-                    lr_scheduler.MultiStepLR_Restart(optimizer, train_opt['lr_steps'],
-                                                     restarts=train_opt['restarts'],
-                                                     weights=train_opt['restart_weights'],
-                                                     gamma=train_opt['lr_gamma'],
-                                                     clear_state=train_opt['clear_state']))
-        elif train_opt['lr_scheme'] == 'CosineAnnealingLR_Restart':
-            for optimizer in self.optimizers:
-                self.schedulers.append(
-                    lr_scheduler.CosineAnnealingLR_Restart(
-                        optimizer, train_opt['T_period'], eta_min=train_opt['eta_min'],
-                        restarts=train_opt['restarts'], weights=train_opt['restart_weights']))
-        else:
-            raise NotImplementedError('MultiStepLR learning rate scheme is enough.')
+        # if train_opt['lr_scheme'] == 'MultiStepLR':
+        # for optimizer in self.optimizers:
+        #     self.schedulers.append(
+        #         lr_scheduler.MultiStepLR_Restart(optimizer, train_opt['lr_steps'],
+        #                                          restarts=train_opt['restarts'],
+        #                                          weights=train_opt['restart_weights'],
+        #                                          gamma=train_opt['lr_gamma'],
+        #                                          clear_state=train_opt['clear_state']))
+        num_steps = 200000
+        for optimizer in self.optimizers:
+            self.schedulers.append(
+                torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps))
+        # elif train_opt['lr_scheme'] == 'CosineAnnealingLR_Restart':
+        #     for optimizer in self.optimizers:
+        #         self.schedulers.append(
+        #             lr_scheduler.CosineAnnealingLR_Restart(
+        #                 optimizer, train_opt['T_period'], eta_min=train_opt['eta_min'],
+        #                 restarts=train_opt['restarts'], weights=train_opt['restart_weights']))
+        # else:
+        #     raise NotImplementedError('MultiStepLR learning rate scheme is enough.')
 
         ########## WELCOME BACK!!!
         ########## THE FOLLOWING MODELS SHOULD BE KEEP INTACT!!!
-        self.out_space_storage = '/home/qcying/20220106_CLRNet'
-        # pretrain = "/home/qcying/20220106_CLRNet/models/21010"
-        # self.model_storage = '/models/'
-        # self.model_path = str(21010)  # 29999
+        self.out_space_storage = '/groupshare/20220106_CLRNet'
+        ### with attack ###
+        # self.model_storage = '/models/COCO_4/'
+        # self.model_path = str(12010)  # 29999 # FINISHED TRAINING
+        ### no attack ###
+        # self.model_storage = '/models/COCO_1/'
+        # self.model_path = str(10010)  # 29999 # FINISHED TRAINING
+        ### new attack ###
+        self.model_storage = '/models/COCO_1/'
+        self.model_path = str(1010)  # 29999 # FINISHED TRAINING
 
-        self.model_storage = '/models/COCO_4/'
-        self.model_path = str(12010)  # 29999 # FINISHED TRAINING
         load_models = True
         load_state = False
         load_network_list = ['netG','discriminator']
@@ -320,14 +311,14 @@ class IRNclrModel(BaseModel):
 
         # self.netG.module.clock = 1.0
 
-    def optimize_parameters(self, step, latest_values=None, train=True, eval_dir=None):
+    def optimize_parameters(self, step=0, latest_values=None, train=True, eval_dir=None):
         self.netG.train()
         self.discriminator.train()
         self.generator.train()
         self.optimizer_G.zero_grad()
         self.optimizer_discriminator.zero_grad()
         self.optimizer_generator.zero_grad()
-        logs, debug_logs = [], []
+        logs, debug_logs = {}, []
 
         self.real_H = self.clamp_with_grad(self.real_H)
         batch_size = self.real_H.shape[0]
@@ -335,7 +326,7 @@ class IRNclrModel(BaseModel):
         psnr_thresh = 32
         save_interval = 1000
         lr = self.get_current_learning_rate()
-        logs.append(('lr', lr))
+        logs['lr'] = lr
 
         modified_input = self.real_H.clone().detach()
         modified_input = self.clamp_with_grad(modified_input)
@@ -348,7 +339,6 @@ class IRNclrModel(BaseModel):
         if not (self.previous_images is None or self.previous_previous_images is None):
 
             with torch.enable_grad():
-                distance = self.l1_loss
                 percent_range = (0.05, 0.25)
                 # mask_tamper, mask_tamper_GT = self.tampering_mask_generation(percent_range=percent_range, logs=logs)
                 # modified_input, modified_canny = self.tamper_based_augmentation(
@@ -361,81 +351,60 @@ class IRNclrModel(BaseModel):
                 forward_image = self.clamp_with_grad(forward_image_raw)
                 forward_null = self.clamp_with_grad(forward_null_raw)
 
-                ### CROPPING
-                locs, cropped, scaled_cropped, masks_crop, masks_crop_GT = self.cropping_mask_generation(forward_image=forward_image, logs=logs)
+                ####################################################################################################
+                # todo: cropping
+                # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
+                ####################################################################################################
+                locs, cropped, scaled_cropped, masks_crop_new, masks_crop_new_GT = self.cropping_mask_generation(forward_image=forward_image, logs=logs)
                 h_start, h_end, w_start, w_end = locs
 
-                # cropped_ideal = forward_image*(1-masks_crop)
+                # cropped_ideal = forward_image*(1-masks_crop_new)
                 ####### Attack on cropped_ideal ###############
 
                 # attacked_image = self.benign_attacks(attacked_forward=forward_image, logs=logs)
                 ## UNIT TEST
                 # attacked_image = scaled_cropped
-                attacked_image, quality_list = self.benign_attacks(attacked_forward=scaled_cropped, logs=logs, quality_list=[])
-                attacked_image_real, _ = self.benign_attacks_without_simulation(forward_image=scaled_cropped, logs=logs, quality_list=quality_list)
-                # ## ERROR
-                error_detach = attacked_image_real - attacked_image
-                l_residual = distance(error_detach, torch.zeros_like(error_detach).cuda())
-                logs.append(('DETACH', l_residual.item()))
-                attacked_image = attacked_image + error_detach.clone().detach()
+                consider_attack = False
+                if consider_attack:
+                    ####################################################################################################
+                    # todo: benign_attacks
+                    # todo: attacked_image: attacked image by cv2, quality_list: QF list
+                    ####################################################################################################
+                    attacked_image, quality_list = self.benign_attacks(attacked_forward=scaled_cropped, logs=logs, quality_list=[])
+                    ####################################################################################################
+                    # todo: benign_attacks_without_simulation
+                    # todo: attacked_image_real: attacked image by differentiable method
+                    ####################################################################################################
+                    attacked_image_real, _ = self.benign_attacks_without_simulation(forward_image=scaled_cropped, logs=logs, quality_list=quality_list)
+                    # ## ERROR
+                    error_detach = attacked_image_real - attacked_image
+                    l_residual = self.l2_loss(error_detach, torch.zeros_like(error_detach).cuda())
+                    logs['DETACH'] = l_residual.item()
+                    attacked_image = attacked_image + error_detach.clone().detach()
+                else:
+                    attacked_image = self.Quantization(forward_image)
 
-                ## NEW
-                attacked_padded = self.resize_and_pad(locs=locs, attacked_image=attacked_image, logs=logs)
-                ## ERROR
-                cropped_ideal = forward_image * (1 - masks_crop)
-                error_detach1 = attacked_padded - cropped_ideal
-                l_residual = distance(error_detach1, torch.zeros_like(error_detach1).cuda())
-                logs.append(('DETACH_SUM', l_residual.item()))
-                ## OLD
-                # we first directly crop-out the region of interest
-                # attacked_padded = forward_image * (1 - masks_crop)
-                # # next, we
-                # scaled_back_padded = torch.zeros_like(ideal_crop_pad_image)
-                # scaled_back = Functional.interpolate(  #
-                #     attacked_image,
-                #     size=[h_end - h_start, w_end - w_start],
-                #     mode='bicubic')
-                # scaled_back = torch.clamp(scaled_back, 0, 1)
-                # scaled_back_padded[:, :, h_start: h_end, w_start: w_end] = scaled_back
-                # dual_reshape_diff = (scaled_back_padded - ideal_crop_pad_image).clone().detach()
-                # attacked_padded = ideal_crop_pad_image + dual_reshape_diff
+                ####################################################################################################
+                # todo: train the localizer
+                # todo: attacked_padded: resized image according to locs
+                ####################################################################################################
+                cropmask, patch_loss, mask_loss, location, apex = self.localizer_losses(locs=locs,
+                                                                                        attacked_image=attacked_image.clone().detach(),
+                                                                                        masks_crop_GT=masks_crop_new_GT,
+                                                                                        logs=logs)
 
-                # attacked_image = self.benign_attacks_without_simulation(forward_image=cropped_ideal, logs=logs, quality_idx=quality_idx)
-                # attacked_image = cropped_ideal + (attacked_image-cropped_ideal).clone().detach()
+                crop_loss = mask_loss * 0.1 + patch_loss
 
-                # ######## REAL-WORLD DUAL RESIZING #########
-                # ## input: scaled_cropped
-                # ## process: benign->reshape->calculate diff
-                # # attacked_image = self.resize(attacked_image)
-                #
-                # attacked_on_scaled = self.benign_attacks_without_simulation(forward_image=scaled_cropped, logs=logs, quality_idx=quality_idx)
-                # attacked_on_scaled = self.resize_and_pad(locs=locs, attacked_image=attacked_on_scaled,logs=logs)
-                # ## ERROR
-                # error_detach = attacked_on_scaled - attacked_image
-                # l_residual = distance(error_detach, torch.zeros_like(error_detach).cuda())
-                # logs.append(('DETACH', l_residual.item()))
-                # attacked_padded = attacked_image + error_detach.clone().detach()
-
-                # attacked_padded = attacked_image
-
-                # UPDATE THE GROUND-TRUTH TO EASE TRAINING
-                GT_modified_input, _ = self.benign_attacks_without_simulation(forward_image=modified_input, logs=logs, quality_list=quality_list)
-                # GT_modified_input = modified_input
-
-                ######### TRAIN LOCALIZER #######
-                cropmask, patch_loss, mask_loss, location, apex = self.localizer_losses(locs=locs, attacked_image=attacked_image.clone().detach(),
-                                                                                        masks_crop_GT=masks_crop_GT, logs=logs)
-
-                crop_loss = patch_loss + mask_loss * 0.01
-
-                cropmask, patch_loss_train, mask_loss_train, location, apex = self.localizer_losses(locs=locs, attacked_image=attacked_image,
-                                                                                                    masks_crop_GT=masks_crop_GT, logs=logs)
-                CE = patch_loss_train + mask_loss_train * 0.01
-                logs.append(('CE', crop_loss.item()))
+                cropmask, patch_loss_train, mask_loss_train, location, apex = self.localizer_losses(locs=locs,
+                                                                                                    attacked_image=attacked_image,
+                                                                                                    masks_crop_GT=masks_crop_new_GT,
+                                                                                                    logs=logs)
+                CE = mask_loss_train * 0.01 + patch_loss_train
+                logs['CE'] = mask_loss.item()
 
                 ## PLOT PREDICTED MASK
                 h_start, h_end, w_start, w_end = location[:, 0], location[:, 1], location[:, 2], location[:, 3]
-                predicted_crop_region = torch.ones_like(masks_crop_GT)
+                predicted_crop_region = torch.ones_like(masks_crop_new_GT)
                 for idxx in range(location.shape[0]):
                     predicted_crop_region[idxx, :,
                     int(h_start[idxx] * self.width_height): int(h_end[idxx] * self.width_height),
@@ -444,10 +413,46 @@ class IRNclrModel(BaseModel):
                     .format(apex[0], apex[1], apex[2], apex[3])
                 croppred_item = "{0:.4f} {1:.4f} {2:.4f} {3:.4f}" \
                     .format(h_start[0].item(), h_end[0].item(), w_start[0].item(), w_end[0].item())
-                logs.append(('AGT', apex_item))
-                logs.append(('A', croppred_item))
+                # logs.append(('AGT', apex_item))
+                # logs.append(('A', croppred_item))
 
-                ## RECOVER THE IMAGE
+                ####################################################################################################
+                # todo: recover the image
+                # todo: we first redo the attack, and then pad and recover. using another mask
+                ####################################################################################################
+                locs, cropped, scaled_cropped, masks_crop, masks_crop_GT = self.cropping_mask_generation(forward_image=forward_image, logs=logs)
+                h_start, h_end, w_start, w_end = locs
+                if consider_attack:
+                    ####################################################################################################
+                    # todo: benign_attacks
+                    # todo: attacked_image: attacked image by cv2, quality_list: QF list
+                    ####################################################################################################
+                    attacked_image, quality_list = self.benign_attacks(attacked_forward=scaled_cropped, logs=logs, quality_list=[])
+                    ####################################################################################################
+                    # todo: benign_attacks_without_simulation
+                    # todo: attacked_image_real: attacked image by differentiable method
+                    ####################################################################################################
+                    attacked_image_real, _ = self.benign_attacks_without_simulation(forward_image=scaled_cropped, logs=logs, quality_list=quality_list)
+                    # ## ERROR
+                    error_detach = attacked_image_real - attacked_image
+                    l_residual = self.l2_loss(error_detach, torch.zeros_like(error_detach).cuda())
+                    logs['DETACH'] = l_residual.item()
+                    attacked_image = attacked_image + error_detach.clone().detach()
+                else:
+                    attacked_image = self.Quantization(forward_image)
+
+                ### UPDATE THE GROUND-TRUTH TO EASE TRAINING
+                if consider_attack:
+                    GT_modified_input, _ = self.benign_attacks_without_simulation(forward_image=modified_input, logs=logs, quality_list=quality_list)
+                else:
+                    GT_modified_input = modified_input
+
+                ####################################################################################################
+                # todo: resize_and_pad
+                # todo: attacked_padded: resized image according to locs
+                ####################################################################################################
+                attacked_padded = self.resize_and_pad(locs=locs, attacked_image=attacked_image, cropped=(None if consider_attack else cropped),
+                                                      logs=logs)
                 # canny_input = modified_canny*(1-masks_crop_GT)
                 canny_input = torch.zeros_like(forward_null).cuda()
                 # canny_input = torch.zeros_like(modified_canny).cuda()
@@ -466,61 +471,66 @@ class IRNclrModel(BaseModel):
                 reversed_image = self.clamp_with_grad(reversed_image_raw)
                 reversed_canny = self.clamp_with_grad(reversed_canny_raw)
                 ### FORWARD LOSS
-                l_forward = distance(forward_image_raw, modified_input)
-                l_null = distance(forward_null_raw, torch.zeros_like(forward_null).cuda())
+                l_forward = self.l2_loss(forward_image_raw, modified_input)
+                l_null = self.l2_loss(forward_null_raw, torch.zeros_like(forward_null).cuda())
                 ## BACKWARD LOSS
-                l_backward = distance(reversed_image_raw, GT_modified_input.clone().detach())
-                l_back_canny = distance(reversed_canny_raw, modified_canny)
-                l_backward_l1_local = distance(reversed_image_raw * masks_crop, GT_modified_input * masks_crop) / torch.mean(masks_crop)
+                l_backward = self.l2_loss(reversed_image_raw, GT_modified_input.clone().detach())
+                l_back_canny = self.l2_loss(reversed_canny_raw, modified_canny)
+                l_backward_l1_local = self.l2_loss(reversed_image_raw * masks_crop, GT_modified_input * masks_crop) / torch.mean(masks_crop)
 
                 psnr_forward = self.psnr(self.postprocess(modified_input), self.postprocess(forward_image)).item()
                 psnr_backward = self.psnr(self.postprocess(GT_modified_input), self.postprocess(reversed_image)).item()
                 # psnr_comp = self.psnr(self.postprocess(forward_image), self.postprocess(reversed_image)).item()
-                logs.append(('PF', psnr_forward))
-                logs.append(('PB', psnr_backward))
+                logs['PF'] = psnr_forward
+                logs['PB'] = psnr_backward
                 # logs.append(('Pad', psnr_comp))
 
                 loss = 0
-                loss += (2 if psnr_forward < 32 else 1)  * l_forward
-                loss += (2 if psnr_forward < 32 else 1)  * l_null
-                loss += l_backward
+                weight_not_qualified = 10 if self.real_H.shape[3]<512 else 4
+                weight_qualified = weight_not_qualified / 4
+                psnr_thresh = 32.5 if consider_attack else 33.5
+                loss += (weight_not_qualified if psnr_forward < psnr_thresh else weight_qualified) * l_forward
+                loss += 20 * l_null
+                loss += 1 * l_backward
                 loss += 1 * l_back_canny
-                # loss += 1 * l_backward_l1_local
-                loss += 1 * CE
+                loss += 1 * l_backward_l1_local
+                # loss += 1 * CE
 
-                l_percept_fw_ssim = - self.ssim_loss(forward_image_raw, modified_input)
-                l_percept_bk_ssim = - self.ssim_loss(reversed_image_raw, GT_modified_input)
-                loss += 0.01 * l_percept_fw_ssim
-                loss += 0.005 * (l_percept_bk_ssim)
+                l_percept_fw_ssim = - self.ssim_loss(forward_image, modified_input)
+                l_percept_bk_ssim = - self.ssim_loss(reversed_image, GT_modified_input)
+                # loss += 0.01 * l_percept_fw_ssim
+                # loss += 0.01 * (l_percept_bk_ssim)
                 SSFW = (-l_percept_fw_ssim).item()
                 SSBK = (-l_percept_bk_ssim).item()
 
                 #################
                 ### FREQUENY LOSS
                 ## fft does not support halftensor
-                forward_fft_loss = fft_L1_loss_color(fake_image=forward_image_raw, real_image=modified_input)
-                backward_fft_loss = fft_L1_loss_color(fake_image=reversed_image_raw, real_image=GT_modified_input)
-
-                loss += 0.1 * forward_fft_loss
-                loss += 0.05 * backward_fft_loss
-                logs.append(('F_FFT', forward_fft_loss.item()))
-                logs.append(('B_FFT', backward_fft_loss.item()))
+                # forward_fft_loss = fft_L1_loss_color(fake_image=forward_image_raw, real_image=modified_input)
+                # backward_fft_loss = fft_L1_loss_color(fake_image=reversed_image_raw, real_image=GT_modified_input)
+                #
+                # loss += 0.1 * forward_fft_loss
+                # loss += 0.05 * backward_fft_loss
+                # logs['F_FFT'] = forward_fft_loss
+                # logs['B_FFT'] = backward_fft_loss.item()
                 ##################
 
-                logs.append(('loss', loss.item()))
-                logs.append(('lF', l_forward.item()))
-                logs.append(('lN', l_null.item()))
-                logs.append(('lB', l_backward.item()))
-                logs.append(('lBedge', l_back_canny.item()))
-                logs.append(('local', l_backward_l1_local.item()))
-                logs.append(('SF', SSFW))
-                logs.append(('SB', SSBK))
-                logs.append(('mask', torch.mean(masks_crop).item()))
-                # logs.append(('pred', dg_pred.detach().cpu().numpy()))
-                # logs.append(('gt', attack_rate_tensor.detach().cpu().numpy()))
-                logs.append(('FW', psnr_forward))
-                logs.append(('BK', psnr_backward))
-                logs.append(('RealTime', l_backward_l1_local.item()))
+                logs['loss'] = loss.item()
+                logs['SSFW'] = SSFW
+                logs['SSBK'] = SSBK
+                logs['lF'] = l_forward.item()
+                # logs.append(('lN', l_null.item()))
+                # logs.append(('lB', l_backward.item()))
+                # logs.append(('lBedge', l_back_canny.item()))
+                logs['local'] = l_backward_l1_local.item()
+                # logs.append(('SF', SSFW))
+                # logs.append(('SB', SSBK))
+                # logs.append(('mask', torch.mean(masks_crop).item()))
+                # # logs.append(('pred', dg_pred.detach().cpu().numpy()))
+                # # logs.append(('gt', attack_rate_tensor.detach().cpu().numpy()))
+                # logs.append(('FW', psnr_forward))
+                # logs.append(('BK', psnr_backward))
+                # logs.append(('RealTime', l_backward_l1_local.item()))
 
                 self.optimizer_G.zero_grad()
                 self.optimizer_discriminator.zero_grad()
@@ -544,26 +554,28 @@ class IRNclrModel(BaseModel):
                 # self.scaler_discriminator.step(self.optimizer_discriminator)
                 # self.scaler_discriminator.update()
 
-                self.netG.module.update_clock()
-                logs.append(('CK', self.netG.module.clock))
+                # self.netG.module.update_clock()
+                # logs.append(('CK', self.netG.module.clock))
+
+                for scheduler in self.schedulers:
+                    scheduler.step()
 
                 if (self.global_step % 100 == 10 or self.global_step <= 5):
                     images = stitch_images(
                         self.postprocess(modified_input),
                         self.postprocess(modified_canny),
-                        self.postprocess(forward_image_raw),
-                        # self.postprocess(forward_null),
+                        self.postprocess(forward_image),
                         self.postprocess(10 * torch.abs(modified_input - forward_image)),
-                        self.postprocess(attacked_image),
-                        self.postprocess(10 * torch.abs(error_detach)),
-                        self.postprocess(attacked_padded),
-                        self.postprocess(10 * torch.abs(error_detach1)),
-                        self.postprocess(masks_crop_GT),
+                        self.postprocess(scaled_cropped),
+                        # self.postprocess(10 * torch.abs(error_detach)),
+                        # self.postprocess(attacked_padded),
+                        # self.postprocess(10 * torch.abs(error_detach1)),
+                        self.postprocess(masks_crop_new_GT),
                         self.postprocess(cropmask),
-                        # self.postprocess(canny_input),
-                        self.postprocess(reversed_image_raw),
+                        self.postprocess(reversed_image),
                         self.postprocess(GT_modified_input),
-                        self.postprocess(reversed_canny_raw),
+                        self.postprocess(10 * torch.abs(reversed_image-GT_modified_input)),
+                        self.postprocess(reversed_canny),
                         self.postprocess(modified_canny),
                         self.postprocess(10 * torch.abs(modified_canny - reversed_canny)),
 
@@ -584,18 +596,26 @@ class IRNclrModel(BaseModel):
                 self.previous_previous_images = self.previous_images.clone().detach()
             self.previous_images = self.real_H
         self.global_step = self.global_step + 1
+
         return logs, debug_logs
 
-    def resize_and_pad(self, locs, attacked_image, logs):
+    def resize_and_pad(self, locs, attacked_image, cropped=None, logs=None):
+        ####################################################################################################
+        # todo: resize_and_pad
+        # todo: attacked_padded: resized image according to locs
+        ####################################################################################################
         h_start, h_end, w_start, w_end = locs
         batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         attacked_padded = torch.zeros_like(attacked_image)
-        scaled_back = Functional.interpolate(  #
-            attacked_image,
-            size=[h_end - h_start, w_end - w_start],
-            mode='bilinear')
-        scaled_back = self.clamp_with_grad(scaled_back)
-        attacked_padded[:, :, h_start: h_end, w_start: w_end] = scaled_back
+        if cropped is None:
+            scaled_back = Functional.interpolate(  #
+                attacked_image,
+                size=[h_end - h_start, w_end - w_start],
+                mode='bilinear')
+            scaled_back = self.clamp_with_grad(scaled_back)
+            attacked_padded[:, :, h_start: h_end, w_start: w_end] = scaled_back
+        else:
+            attacked_padded[:, :, h_start: h_end, w_start: w_end] = cropped
 
         return attacked_padded
 
@@ -617,8 +637,11 @@ class IRNclrModel(BaseModel):
         labels_tensor[:, 3] = apex[3]  # int(32 * apex[3]) / 32
         # location = torch.clamp(location, 0, 1)
         patch_loss = self.l2_loss(location, labels_tensor)
-        mask_loss = self.bce_with_logit_loss(cropmask, masks_crop_GT)
 
+        masks_crop_GT_down = Functional.interpolate(masks_crop_GT, size=[32, 32], mode='bilinear')
+
+        mask_loss = self.bce_with_logit_loss(cropmask, masks_crop_GT_down)
+        cropmask = Functional.interpolate(cropmask, size=[self.real_H.shape[2], self.real_H.shape[3]], mode='bilinear')
         return cropmask, patch_loss, mask_loss, location, apex
 
     def tamper_based_augmentation(self, modified_input, modified_canny, masks, masks_GT, logs):
@@ -662,7 +685,11 @@ class IRNclrModel(BaseModel):
       
         return forward_image, forward_canny
 
-    def cropping_mask_generation(self, forward_image, min_rate=0.6, max_rate=0.9, logs=None):
+    def cropping_mask_generation(self, forward_image, min_rate=0.6, max_rate=1.0, logs=None):
+        ####################################################################################################
+        # todo: cropping
+        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
+        ####################################################################################################
         batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         masks_GT = torch.ones_like(self.canny_image)
 
@@ -713,7 +740,7 @@ class IRNclrModel(BaseModel):
                 if index % 4 in {0, 1, 2}:
                     quality_idx = np.random.randint(18, 21)
                 else:
-                    quality_idx = np.random.randint(12, 21)
+                    quality_idx = np.random.randint(14, 21)
                 quality_list.append(quality_idx)
             else:
                 quality_idx = quality_list[idx_atkimg]
@@ -736,6 +763,10 @@ class IRNclrModel(BaseModel):
         return attacked_real_jpeg, quality_list
 
     def benign_attacks_without_simulation(self, forward_image, quality_list=[], index=None, logs=None):
+        ####################################################################################################
+        # todo: benign_attacks_without_simulation
+        # todo: attacked_real_jpeg: attacked image by cv2, quality_list: QF list
+        ####################################################################################################
         batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         attacked_real_jpeg = torch.rand_like(forward_image).cuda()
 

@@ -8,12 +8,13 @@ import data.util as util
 import os
 # from turbojpeg import TurboJPEG
 from PIL import Image
-from jpeg2dct.numpy import load, loads
+# from jpeg2dct.numpy import load, loads
 from skimage.feature import canny
 from skimage.color import rgb2gray, gray2rgb
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as F
 import albumentations as A
+import copy
 
 class LQGTDataset(data.Dataset):
     '''
@@ -22,29 +23,50 @@ class LQGTDataset(data.Dataset):
     The pair is ensured by 'sorted' function, so please check the name convention.
     '''
 
-    def __init__(self, opt, dataset_opt):
+    def __init__(self, opt, dataset_opt, is_train=True):
         super(LQGTDataset, self).__init__()
-        self.transforms = A.Compose(
-            [
-                A.HorizontalFlip(p=0.5),
-                # A.VerticalFlip(p=0.1),
-                # A.RandomCrop(height=256,width=256,p=1.0),
-                # A.ColorJitter(),
-                A.RandomBrightnessContrast(p=0.2),
-                A.JpegCompression(quality_lower=70, quality_upper=100,p=0.5),
-                A.RGBShift(r_shift_limit=25,g_shift_limit=25,b_shift_limit=25,p=0.5),
-            ]
-        )
+        self.is_train = is_train
         self.opt = opt
         self.dataset_opt = dataset_opt
         self.paths_LQ, self.paths_GT = None, None
         self.sizes_LQ, self.sizes_GT = None, None
-        self.jpeg_filepath=['/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_10',
-                            '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_30',
-                            '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_50',
-                            '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_70',
-                            '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_90']
+        self.GT_size = self.dataset_opt['GT_size']
+        # self.jpeg_filepath=['/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_10',
+        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_30',
+        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_50',
+        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_70',
+        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_90']
         self.paths_GT, self.sizes_GT = util.get_image_paths(dataset_opt['dataroot_GT'])
+        self.transform = A.Compose(
+            [
+                A.HorizontalFlip(p=0.5),
+                A.ElasticTransform(p=0.5),
+                A.OneOf(
+                    [
+                        A.CLAHE(always_apply=False, p=0.25),
+                        A.RandomBrightnessContrast(always_apply=False, p=0.25),
+                        A.Equalize(always_apply=False, p=0.25),
+                        A.RGBShift(always_apply=False, p=0.25),
+                    ]
+                ),
+                A.OneOf(
+                    [
+                        A.ImageCompression(always_apply=False, quality_lower=60, quality_upper=100, p=0.25),
+                        A.MedianBlur(always_apply=False, p=0.25),
+                        A.GaussianBlur(always_apply=False, p=0.25),
+                        A.MotionBlur(always_apply=False, p=0.25),
+                        # A.GaussNoise(always_apply=False, p=0.2),
+                        # A.ISONoise(always_apply=False, p=0.2)
+                    ]
+                ),
+                A.Resize(always_apply=True, height=self.GT_size, width=self.GT_size)
+            ]
+        )
+        self.transform_just_resize = A.Compose(
+            [
+                A.Resize(always_apply=True, height=self.GT_size, width=self.GT_size)
+            ]
+        )
 
         assert self.paths_GT, 'Error: GT path is empty.'
 
@@ -55,8 +77,7 @@ class LQGTDataset(data.Dataset):
 
     def __getitem__(self, index):
 
-        scale = self.dataset_opt['scale']
-        GT_size = self.dataset_opt['GT_size']
+        # scale = self.dataset_opt['scale']
 
         # get GT image
         GT_path = self.paths_GT[index]
@@ -64,7 +85,12 @@ class LQGTDataset(data.Dataset):
         # img_GT = util.read_img(GT_path)
         img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
         img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
-        img_GT = self.transforms(image=img_GT)["image"]
+
+        if not self.is_train:
+            img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
+        else:
+            img_GT = self.transform(image=copy.deepcopy(img_GT))["image"]
+
         img_GT = img_GT.astype(np.float32) / 255.
         if img_GT.ndim == 2:
             img_GT = np.expand_dims(img_GT, axis=2)
@@ -106,11 +132,8 @@ class LQGTDataset(data.Dataset):
 
 
         ###### directly resize instead of crop
-        img_GT = cv2.resize(np.copy(img_GT), (GT_size, GT_size),
-                            interpolation=cv2.INTER_LINEAR)
-        # img_jpeg_GT = cv2.resize(np.copy(img_jpeg_GT), (GT_size, GT_size),
-        #                          interpolation=cv2.INTER_LINEAR)
-
+        # img_GT = cv2.resize(np.copy(img_GT), (GT_size, GT_size),
+        #                     interpolation=cv2.INTER_LINEAR)
 
         orig_height, orig_width, _ = img_GT.shape
         H, W, _ = img_GT.shape
@@ -118,14 +141,11 @@ class LQGTDataset(data.Dataset):
         img_gray = rgb2gray(img_GT)
         sigma = 2 #random.randint(1, 4)
 
-        if self.opt['model']=="PAMI" or self.opt['model']=="CLRNet":
-            canny_img = canny(img_gray, sigma=sigma, mask=None)
-            canny_img = canny_img.astype(np.float)
-            canny_img = self.to_tensor(canny_img)
-        # elif self.opt['model']=="ICASSP_NOWAY":
-        #     canny_img = img_gray
-        else:
-            canny_img = None
+
+        canny_img = canny(img_gray, sigma=sigma, mask=None)
+        canny_img = canny_img.astype(np.float)
+        canny_img = self.to_tensor(canny_img)
+
 
 
         # BGR to RGB, HWC to CHW, numpy to tensor

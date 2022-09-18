@@ -38,6 +38,19 @@ def OrderedYaml():
 # miscellaneous
 ####################
 
+def var_name(var,all_var=locals()):
+    return [var_name for var_name in all_var if all_var[var_name] is var][0]
+
+# aa = 11
+# bb = 22
+# cc = 33
+# dd = 44
+# print(var_name(aa))
+# print(var_name(bb))
+# print(var_name(cc))
+# print(var_name(dd))
+
+
 
 def get_timestamp():
     return datetime.now().strftime('%y%m%d-%H%M%S')
