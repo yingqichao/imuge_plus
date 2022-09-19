@@ -12,6 +12,11 @@ import time
 from pipeline_utils import get_visible_raw_image, get_metadata
 
 def my_own_pipeline(images_dir, output_dir=None):
+    ####################################################################################################
+    # todo: Finetuning ISP pipeline and training identity function on RAW2RAW
+    # todo: kept frozen are the networks: invISP, mantranet (+2 more)
+    # todo: training: RAW2RAW network (which is denoted as KD-JPEG)
+    ####################################################################################################
     params = {
         'input_stage': 'raw',  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
         'output_stage': 'gamma',  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
@@ -40,6 +45,29 @@ def my_own_pipeline(images_dir, output_dir=None):
             cv2.imwrite(output_image_path, output_image, [cv2.IMWRITE_JPEG_QUALITY, 100])
         else:
             cv2.imwrite(output_image_path, output_image)
+
+def tensor2raw(image_path,):
+    params = {
+        'input_stage': 'raw',  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
+        'output_stage': 'gamma',  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
+        'save_as': 'png',  # options: 'jpg', 'png', 'tif', etc.
+        'demosaic_type': 'EA',
+        'save_dtype': np.uint8
+    }
+
+    # render
+    output_image = run_pipeline_v2(image_path, params)
+
+    # save
+    out_image_name = os.path.basename(image_path)
+    output_image_name = out_image_name.replace('.dng', '_{}.'.format(params['output_stage']) + params['save_as'])
+    output_image_path = os.path.join(output_dir, output_image_name)
+    max_val = 2 ** 16 if params['save_dtype'] == np.uint16 else 255
+    output_image = (output_image[..., ::-1] * max_val).astype(params['save_dtype'])
+    if params['save_as'] == 'jpg':
+        cv2.imwrite(output_image_path, output_image, [cv2.IMWRITE_JPEG_QUALITY, 100])
+    else:
+        cv2.imwrite(output_image_path, output_image)
 
 def use_rawpy(images_dir, output_dir=None):
     params = {

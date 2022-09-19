@@ -2,6 +2,57 @@ import torch
 import torch.nn as nn
 # from .WT import DWT, IWT
 
+
+def dwt_init(x):
+    x01 = x[:, :, 0::2, :] / 2
+    x02 = x[:, :, 1::2, :] / 2
+    x1 = x01[:, :, :, 0::2]
+    x2 = x02[:, :, :, 0::2]
+    x3 = x01[:, :, :, 1::2]
+    x4 = x02[:, :, :, 1::2]
+    x_LL = x1 + x2 + x3 + x4
+    x_HL = -x1 - x2 + x3 + x4
+    x_LH = -x1 + x2 - x3 + x4
+    x_HH = x1 - x2 - x3 + x4
+    # print(x_HH[:, 0, :, :])
+    return torch.cat((x_LL, x_HL, x_LH, x_HH), 1)
+
+def iwt_init(x):
+    r = 2
+    in_batch, in_channel, in_height, in_width = x.size()
+    out_batch, out_channel, out_height, out_width = in_batch, int(in_channel / (r ** 2)), r * in_height, r * in_width
+    x1 = x[:, 0:out_channel, :, :] / 2
+    x2 = x[:, out_channel:out_channel * 2, :, :] / 2
+    x3 = x[:, out_channel * 2:out_channel * 3, :, :] / 2
+    x4 = x[:, out_channel * 3:out_channel * 4, :, :] / 2
+    h = torch.zeros([out_batch, out_channel, out_height, out_width]).cuda() #
+
+    h[:, :, 0::2, 0::2] = x1 - x2 - x3 + x4
+    h[:, :, 1::2, 0::2] = x1 - x2 + x3 - x4
+    h[:, :, 0::2, 1::2] = x1 + x2 - x3 - x4
+    h[:, :, 1::2, 1::2] = x1 + x2 + x3 + x4
+
+    return h
+
+
+class DWT(nn.Module):
+    def __init__(self):
+        super(DWT, self).__init__()
+        self.requires_grad = True
+
+    def forward(self, x):
+        return dwt_init(x)
+
+
+class IWT(nn.Module):
+    def __init__(self):
+        super(IWT, self).__init__()
+        self.requires_grad = True
+
+    def forward(self, x):
+        return iwt_init(x)
+
+
 ##---------- Basic Layers ----------
 def conv3x3(in_chn, out_chn, bias=True):
     layer = nn.Conv2d(in_chn, out_chn, kernel_size=3, stride=1, padding=1, bias=bias)
@@ -21,9 +72,9 @@ class UNetConvBlock(nn.Module):
         super(UNetConvBlock, self).__init__()
         self.downsample = downsample
         ### previously
-        # self.body = [HWB(n_feat=in_size, o_feat=in_size, kernel_size=3, reduction=16, bias=False, act=nn.PReLU())]# for _ in range(wab)]
+        self.body = [HWB(n_feat=in_size, o_feat=in_size, kernel_size=3, reduction=16, bias=False, act=nn.PReLU())]# for _ in range(wab)]
         ### now: FFC ResBlock from LAMA
-        self.body = [FFCResnetBlock(in_size, ratio_gin=0.5, ratio_gout=0.5)]
+        # self.body = [FFCResnetBlock(in_size, ratio_gin=0.5, ratio_gout=0.5)]
         self.body = nn.Sequential(*self.body)
 
         if downsample:

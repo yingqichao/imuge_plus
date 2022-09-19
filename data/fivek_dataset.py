@@ -12,6 +12,7 @@ import cv2
 # from imageio import imread
 from tqdm import tqdm
 import time
+from PIL import Image
 
 
 # DNG：原本的raw文件
@@ -31,6 +32,7 @@ class FiveKDataset(Dataset):
     rgb_scale：False or True 代表rgb图像norm的方式，设置为True时，rgb图像将会rescale到[-1, 1],
     npz_uint16：False or True 是否使用uint16格式存储的raw图像
     """
+
     def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
                  file_nums=10, rgb_scale=False, npz_uint16=True):
         self.dataset_root = dataset_root
@@ -155,6 +157,7 @@ class FiveKDataset(Dataset):
             img = img / float(max_value)
         return img
 
+
 class FiveKDataset_crop(Dataset):
     """
     FiveKDataset
@@ -168,6 +171,7 @@ class FiveKDataset_crop(Dataset):
     rgb_scale：False or True 代表rgb图像norm的方式，设置为True时，rgb图像将会rescale到[-1, 1],
     npz_uint16：False or True 是否使用uint16格式存储的raw图像
     """
+
     def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
                  file_nums=10, rgb_scale=False, npz_uint16=True):
         self.dataset_root = dataset_root
@@ -264,7 +268,7 @@ class FiveKDataset_crop(Dataset):
     def load(self, file_name):
         input_raws = []
         target_rgbs = []
-        sub_nums = int(1024//self.patch_size)
+        sub_nums = int(1024 // self.patch_size)
         sub_nums = sub_nums * sub_nums
 
         with open(file_name, "r") as f:
@@ -291,8 +295,128 @@ class FiveKDataset_crop(Dataset):
         else:
             img = img / float(max_value)
         return img
+
+
 # def crop_raw(image_root):
 #     pass
+
+class FiveKDataset_skip(Dataset):
+    """
+    FiveKDataset
+    dataset_root：数据集的路径,
+    camera_name：相机名,
+    stage：train or test,
+    patch_size：rgb image size // 2 (transfer raw 2*2 pattern into 1 pixel),
+    data_mode='RAW',
+    uncond_p：条件输入为空（全1图像）的概率,
+    file_nums：训练时，展示验证集图像结果的数目,
+    rgb_scale：False or True 代表rgb图像norm的方式，设置为True时，rgb图像将会rescale到[-1, 1],
+    npz_uint16：False or True 是否使用uint16格式存储的raw图像
+    """
+
+    def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
+                 file_nums=10, rgb_scale=False, npz_uint16=True):
+        self.dataset_root = dataset_root
+        self.camera_name = camera_name
+        self.data_mode = data_mode
+        self.uncond_p = uncond_p
+        self.rgb_scale = rgb_scale
+        self.npz_uint16 = npz_uint16
+        dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
+        self.raw_files, self.rgb_files = self.load(dataset_file)
+        self.stage = stage
+        if stage != 'train':
+            self.raw_files = self.raw_files[:file_nums]
+            self.rgb_files = self.rgb_files[:file_nums]
+        assert len(self.raw_files) == len(self.rgb_files)
+        self.patch_size = patch_size
+        self.gamma = True
+
+    def pack_raw(self, raw):
+        # 两个相机都是RGGB
+        H, W = raw.shape[0], raw.shape[1]
+        raw = np.expand_dims(raw, axis=2)
+        R = raw[0:H:2, 0:W:2, :]
+        Gr = raw[0:H:2, 1:W:2, :]
+        Gb = raw[1:H:2, 0:W:2, :]
+        B = raw[1:H:2, 1:W:2, :]
+        G_avg = (Gr + Gb) / 2
+        out = np.concatenate((R, G_avg, B), axis=2)
+        return out
+
+    def __getitem__(self, index):
+        raw_path = self.raw_files[index]
+        rgb_path = self.rgb_files[index]
+        # print(raw_path)
+        target_rgb_img = imageio.imread(rgb_path)
+        assert self.data_mode == 'RAW'
+        raw = np.load(raw_path)
+        raw_img = raw['raw']
+        if self.npz_uint16:
+            raw_img = self.pack_raw(raw_img)
+        wb = raw['wb']
+        wb = wb / wb.max()
+        input_raw_img = raw_img * wb[:-1]
+
+        input_raw_img, target_rgb_img = random_crop(self.patch_size//2, input_raw_img, target_rgb_img, not self.npz_uint16)
+        input_raw_img = cv2.resize(input_raw_img, (self.patch_size, self.patch_size), interpolation=cv2.INTER_LINEAR)
+        input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
+        if self.gamma:
+            norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
+            input_raw_img = np.power(input_raw_img, 1 / 2.2)
+        else:
+            norm_value = 4095 if self.camera_name == 'Canon_EOS_5D' else 16383
+
+        # show_images = np.hstack([(input_raw_img/norm_value*255).astype(np.uint8), target_rgb_img.astype(np.uint8)])
+        #
+        # Image.fromarray(show_images).save(f'./test_{index}.png')
+        # return {'file_name':'test'}
+        target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
+        input_raw_img = self.norm_img(input_raw_img, max_value=norm_value)
+
+        # input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, 128, 4)
+        input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
+        target_rgb_img = torch.Tensor(target_rgb_img).permute(2, 0, 1)
+
+        if random.random() < self.uncond_p:
+            # null label
+            input_raw_img = torch.ones_like(input_raw_img)
+
+        sample = {'input_raw': input_raw_img, 'target_rgb': target_rgb_img,
+                  'file_name': raw_path.split("/")[-1].split(".")[0]}
+        return sample
+
+    def __len__(self):
+        return len(self.raw_files)
+
+    # 这个函数用来通过文件载入数据集
+    def load(self, file_name):
+        input_raws = []
+        target_rgbs = []
+
+        with open(file_name, "r") as f:
+            valid_camera_list = [line.strip() for line in f.readlines()]
+
+        for i, name in enumerate(valid_camera_list):
+            full_name = os.path.join(self.dataset_root, self.camera_name)
+            if self.data_mode == 'RAW':
+                raw_folder_name = 'RAW_UINT16' if self.npz_uint16 else 'RAW'
+                input_raws.append(os.path.join(full_name, raw_folder_name, name + '.npz'))
+            else:
+                input_raws.append(os.path.join(full_name, 'DNG', name + '.dng'))
+            target_rgbs.append(os.path.join(full_name, 'RGB_PNG', name + '.png'))
+
+        return input_raws, target_rgbs
+
+    def norm_img(self, img, max_value, scale_minus1=False):
+        if scale_minus1:
+            half_value = max_value / 2
+            img = img / half_value - 1
+            # scaled to [-1, 1]
+        else:
+            img = img / float(max_value)
+        return img
+
 
 # np.rot90(img, k):将矩阵逆时针旋转90*k度以后返回，k取负数时表示顺时针旋转
 def flip(raw_img, flip):
@@ -537,7 +661,7 @@ def load_data(
     if not data_dir:
         raise ValueError('unspecified data directory')
     dataset = FiveKDataset_crop(data_dir, camera_name, stage, patch_size, data_mode, uncond_p, file_nums, rgb_scale,
-                           npz_uint16)
+                                npz_uint16)
     # print(len(dataset))
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=deterministic, num_workers=num_workers,
                             drop_last=True,
@@ -571,9 +695,11 @@ def data_process_npz(dataset_root, camera_name):
 
         np.savez(output_npz_path, raw=raw_image, wb=cwb)
 
+
 class test_crop():
     def __init__(self):
         pass
+
     def center_crop(self, input_raw, target_rgb, patch_size):
         """
         input_raw: [H, W, 1]
@@ -581,20 +707,21 @@ class test_crop():
         return: [patch_size, patch_size, 1], [patch_size, patch_size, 3]
         """
         h, w = input_raw.shape
-        new_h, new_w = h//2, w//2
+        new_h, new_w = h // 2, w // 2
         patch_size = patch_size // 2
         x1 = int(round((new_w - patch_size) / 2.))
         y1 = int(round((new_h - patch_size) / 2.))
-        patch_input_raw = input_raw[y1*2:y1*2 + patch_size*2, x1*2:x1*2 + patch_size*2]
+        patch_input_raw = input_raw[y1 * 2:y1 * 2 + patch_size * 2, x1 * 2:x1 * 2 + patch_size * 2]
 
-        patch_target_rgb = target_rgb[y1*2:y1*2 + patch_size*2, x1*2: x1*2 + patch_size*2, :]
+        patch_target_rgb = target_rgb[y1 * 2:y1 * 2 + patch_size * 2, x1 * 2: x1 * 2 + patch_size * 2, :]
         return self.get_sub_images(patch_input_raw, patch_target_rgb)
+
     def get_sub_images(self, input_raw, target_rgb):
         nums = 2
         patch_size = 512
         raws = []
         rgbs = []
-        idx_list = [i for i in range(nums*nums)]
+        idx_list = [i for i in range(nums * nums)]
         for idx in idx_list:
             i = int(idx // nums)
             j = int(idx % nums)
@@ -636,27 +763,69 @@ def data_process_crop_npz(dataset_root, camera_name, new_root):
             imageio.imwrite(os.path.join(output_rgb_path, subrgb_filename), subrgb)
 
 
+# 这个函数用来跳着采样，来降低数据集里图像的大小
+def data_process_skip(dataset_root, camera_name, new_root):
+    def pack_raw(raw):
+        # 两个相机都是RGGB
+        H, W = raw.shape[0], raw.shape[1]
+        raw = np.expand_dims(raw, axis=2)
+        R = raw[0:H:2, 0:W:2, :]
+        Gr = raw[0:H:2, 1:W:2, :]
+        Gb = raw[1:H:2, 0:W:2, :]
+        B = raw[1:H:2, 1:W:2, :]
+        out = np.concatenate((R, Gr, Gb, B), axis=2)
+        return out
+
+    camera_raw_path = os.path.join(dataset_root, camera_name, 'RAW_UINT16')
+    npz_paths = sorted(glob.glob(camera_raw_path + '/*.npz'))
+    output_raw_path = os.path.join(new_root, camera_name, 'RAW_UINT16')
+    if not os.path.exists(output_raw_path):
+        os.makedirs(output_raw_path, exist_ok=True)
+    output_rgb_path = os.path.join(new_root, camera_name, 'RGB_PNG')
+    if not os.path.exists(output_rgb_path):
+        os.makedirs(output_rgb_path, exist_ok=True)
+    # crop_util = test_crop()
+    for path in tqdm(npz_paths):
+        file_name = os.path.basename(path)
+        rgb_name = file_name.replace('.npz', '.png')
+        rgb_path = os.path.join(dataset_root, camera_name, 'RGB_PNG', rgb_name)
+
+        raw = np.load(path)
+        raw_img = raw['raw']
+        wb = raw['wb']
+        rgb = imageio.imread(rgb_path)
+        rgb_h, rgb_w, _ = rgb.shape
+        raw_h, raw_w = raw_img.shape
+        assert raw_h == rgb_h and raw_w == rgb_w
+        rgb_h = rgb_h - (rgb_h % 8)
+        rgb_w = rgb_w - (rgb_w % 8)
+        rgb_resize = rgb[0:rgb_h:4, 0:rgb_w:4, :]
+        raw_img = raw_img[0:rgb_h, 0:rgb_w]
+        imageio.imwrite(os.path.join(output_rgb_path, rgb_name), rgb_resize)
+        p_raw = pack_raw(raw_img)
+        raw_resize = p_raw[0:rgb_h:4, 0:rgb_w:4, :]
+        new_H, new_W = raw_resize.shape[0], raw_resize.shape[1]
+        v_im = np.zeros([new_H * 2, new_W * 2], dtype=np.uint16)
+        v_im[0:new_H * 2:2, 0:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 0]
+        v_im[0:new_H * 2:2, 1:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 1]
+        v_im[1:new_H * 2:2, 0:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 2]
+        v_im[1:new_H * 2:2, 1:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 3]
+        np.savez(os.path.join(output_raw_path, file_name), raw=v_im, wb=wb)
 
 
-
-
-
-def test_image_downsample(dataset_root, camera_name):
-    # data_process_npz(dataset_root, camera_name)
-    # exit(0)
+def test_skip_downsample(dataset_root, camera_name):
     stage = 'test'
-    # dataset = FiveKDataset(dataset_root, camera_name, stage, 256, data_mode='RAW')
-    # for i in range(len(dataset)):
-    #     item = dataset[i]
     dataset = FiveKDataset(dataset_root, camera_name, stage, 32, 'RAW', 0, 10, True, True)
-    raw_files = dataset.raw_files
-    # camera_path = os.path.join(dataset_root, camera_name)
-    for raw_file in raw_files:
-        data = np.load(raw_file)
-        raw = data['raw']
-        raw = dataset.pack_raw(raw)
-
-        # raw_path = os.path.join(camera_path, 'RAW_UINT16', raw_file)
+    rgb_path = os.path.join(dataset_root, camera_name, 'RGB')
+    for i in range(len(dataset)):
+        item = dataset[i]
+        file_name = item['file_name']
+        rgb_file_path = os.path.join(rgb_path, file_name + '.jpg')
+        rgb = imageio.imread(rgb_file_path)
+        H, W, _ = rgb.shape
+        print(H, W)
+        Resize = rgb[1:H:4, 1:W:4, :]
+        imageio.imwrite(f'./test_{i}.jpg', Resize)
 
 
 # 这里用来处理数据集 如裁剪等
@@ -671,11 +840,12 @@ if __name__ == '__main__':
     # print('h')
     # test = np.power(-91, 1/2.2)
     dataset_root = '/ssd/invISP'
-    camera_name = 'NIKON_D700'
-    new_root = '/ssd/invISP_crop_512/'
-    # data_process_crop_npz(dataset_root, camera_name, new_root)
-    # exit(0)
-
+    camera_name = 'Canon_EOS_5D'
+    new_root = '/ssd/invISP_skip/'
+    dataset = FiveKDataset_skip(new_root, camera_name, 'test', 512, 'RAW', 0, 10, True, True)
+    for i in range(len(dataset)):
+        print(dataset[i]['file_name'])
+    exit(0)
     dataloader = load_data(
         data_dir=new_root,
         camera_name=camera_name,

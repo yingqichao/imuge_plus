@@ -129,8 +129,8 @@ def main(args,opt):
     #     # train_set = D(opt, dataset_opt)
     elif "ISP" in opt['model']:
         print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset_crop
-        dataset_root = '/ssd/invISP_crop_512/'
+        from data.fivek_dataset import FiveKDataset_skip
+        dataset_root = '/hotdata/invISP_skip/'
         camera_name = 'Canon_EOS_5D'
         # data_process_npz(dataset_root, camera_name)
         # test_image_downsample(dataset_root, camera_name)
@@ -138,7 +138,7 @@ def main(args,opt):
         # data_process_npz(dataset_root, camera_name)
         # exit(0)
         print(f'FiveK dataset size:{GT_size}')
-        train_set = FiveKDataset_crop(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0., patch_size=GT_size)
+        train_set = FiveKDataset_skip(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0., patch_size=GT_size)
 
         # from data.LQGT_dataset import LQGTDataset as D
         # train_set = D(opt, dataset_opt)
@@ -251,12 +251,12 @@ def main(args,opt):
         if 'PAMI' in which_model:
             variables_list = []
         elif 'ISP' in which_model and args.mode==0:
-            variables_list = ['CE_MVSS', 'CE_mantra', 'CE_resfcn']
-        elif 'ISP' in which_model and args.mode==1:
-            variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
-            print(f"variables_list: {variables_list}")
+            variables_list = ['loss', 'CE_MVSS', 'CE_mantra', 'CE_resfcn','ISP_PSNR']
+        # elif 'ISP' in which_model and args.mode==1:
+        #     variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
+        #     print(f"variables_list: {variables_list}")
         elif 'ISP' in which_model and args.mode==2:
-            variables_list = ['ISP_PSNR', 'loss','CE_MVSS', 'CE_mantra', 'CE_resfcn']
+            variables_list = ['loss', 'ISP_PSNR', 'CYCLE_PSNR', 'RAW_PSNR', 'CE_MVSS', 'CE_mantra', 'CE_resfcn', 'ISP_PSNR_NOW']
             print(f"variables_list: {variables_list}")
         elif 'CLRNet' in which_model:
             variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
@@ -269,7 +269,7 @@ def main(args,opt):
             logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
         latest_values = None
         total = len(train_set)
-        print_step = 15
+        print_step, restart_step = 15, 1000
         for epoch in range(start_epoch, total_epochs + 1):
             # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
             #                     'SIMUL','RECON','RealTime'
@@ -290,7 +290,8 @@ def main(args,opt):
                 logs, debug_logs = model.optimize_parameters_router(mode=args.mode)
                 if variables_list[0] in logs:
                     for i in range(len(variables_list)):
-                        running_list[i] += logs[variables_list[i]]
+                        if variables_list[i] in logs:
+                            running_list[i] += logs[variables_list[i]]
                         # running_CE_mantra += logs['CE_mantra']
                         # running_CE_resfcn += logs['CE_resfcn']
                     valid_idx += 1
@@ -303,12 +304,14 @@ def main(args,opt):
                     #       f'running_CE_mantra: {running_CE_mantra / print_step:.5f} '
                     #       f'running_CE_resfcn: {running_CE_resfcn / print_step:.5f} '
                     #       )
-                    info_str = f'[{epoch + 1}, {valid_idx + 1} {idx} {rank}] '
+                    lr = logs['lr']
+                    info_str = f'[{epoch + 1}, {valid_idx + 1} {idx} {rank} {lr}] '
                     for i in range(len(variables_list)):
-                        info_str += f'{variables_list[i]}: {running_list[i] / print_step:.5f} '
+                        info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.5f} '
                     print(info_str)
-                    running_list = [0.0] * len(variables_list)
-                    valid_idx = 0
+                    if valid_idx>=restart_step:
+                        running_list = [0.0] * len(variables_list)
+                        valid_idx = 0
                 # if rank <= 0:
                 #     progbar.add(len(model.real_H), values=logs)
         ####################################################################################################

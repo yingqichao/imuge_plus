@@ -9,8 +9,14 @@ def run_pipeline_v2(image_or_path, params=None, metadata=None, fix_orient=True):
     if type(image_or_path) == str:
         image_path = image_or_path
         # raw image data
+        ####################################################################################################
+        # todo: raw_image should be a tensor
+        ####################################################################################################
         raw_image = get_visible_raw_image(image_path)
         # metadata
+        ####################################################################################################
+        # todo: metadata will be loaded from pickle
+        ####################################################################################################
         metadata = get_metadata(image_path)
     else:
         raw_image = image_or_path.copy()

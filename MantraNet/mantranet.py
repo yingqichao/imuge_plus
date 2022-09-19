@@ -550,7 +550,7 @@ class MantraNet(nn.Module):
                 self.GlobalPool = nn.AvgPool2d((H, W), stride=1)
 
         # Normalization
-        x = x / 255. * 2 - 1
+        # x = x / 255. * 2 - 1
 
         ## Image Manipulation Trace Feature Extractor
 
@@ -702,7 +702,7 @@ class MantraNet_GRU(nn.Module):
                 self.GlobalPool = nn.AvgPool2d((H, W), stride=1)
 
         # Normalization
-        x = x / 255. * 2 - 1
+        # x = x / 255. * 2 - 1
 
         ## Image Manipulation Trace Feature Extractor
 
