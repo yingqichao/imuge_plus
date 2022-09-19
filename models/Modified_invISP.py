@@ -3,7 +3,6 @@ import logging
 import os
 
 import cv2
-import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torchvision
@@ -18,7 +17,6 @@ from MVSS.models.mvssnet import get_mvss
 from MVSS.models.resfcn import ResFCN
 from metrics import PSNR
 from models.modules.Quantization import diff_round
-from models.networks import UNetDiscriminator
 from noise_layers import *
 from noise_layers.crop import Crop
 from noise_layers.dropout import Dropout
@@ -29,8 +27,7 @@ from noise_layers.resize import Resize
 from utils import stitch_images
 from utils.JPEG import DiffJPEG
 from .base_model import BaseModel
-from .invertible_net import Inveritible_Decolorization_PAMI, ResBlock
-
+from data.pipeline import pipeline_tensor2image
 # import matlab.engine
 
 # print("Starting MATLAB engine...")
@@ -303,7 +300,7 @@ class Modified_invISP(BaseModel):
 
             self.load_space_storage = '/groupshare/ISP_results/complete_results'
             self.load_storage = f'/model/{self.task_name}_{3}/'
-            self.model_path = str(17999)  # 29999
+            self.model_path = str(6999)  # 29999
 
             print(f"loading tampering/ISP models: {self.network_list}")
             if load_models:
@@ -312,7 +309,7 @@ class Modified_invISP(BaseModel):
 
             self.load_space_storage = '/groupshare/ISP_results/complete_results'
             self.load_storage = f'/model/{self.task_name}_{3}/'
-            self.model_path = str(17999)  # 29999
+            self.model_path = str(6999)  # 29999
 
             print(f"loading models: {self.network_list}")
             if load_models:
@@ -617,27 +614,34 @@ class Modified_invISP(BaseModel):
 
                 ISP_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
 
-            self.optimizer_generator.zero_grad()
+            ####################################################################################################
+            # todo: Grad Accumulation
+            # todo: added 20220919, steo==0, do not update, step==1 update
+            ####################################################################################################
             # self.optimizer_generator.zero_grad()
             # ISP_L1.backward()
             self.scaler_generator.scale(ISP_L1).backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-            # self.optimizer_generator.step()
-            self.scaler_generator.step(self.optimizer_generator)
-            self.scaler_generator.update()
+            if self.global_step%2==1:
+                if self.train_opt['gradient_clipping']:
+                    nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                # self.optimizer_generator.step()
+                self.scaler_generator.step(self.optimizer_generator)
+                self.scaler_generator.update()
+                self.optimizer_generator.zero_grad()
 
-            self.optimizer_qf.zero_grad()
+
             # self.optimizer_generator.zero_grad()
             # ISP_L1.backward()
             self.scaler_qf.scale(CYCLE_L1).backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-                # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-            # self.optimizer_generator.step()
-            self.scaler_qf.step(self.optimizer_qf)
-            self.scaler_qf.update()
+            if self.global_step % 2 == 1:
+                if self.train_opt['gradient_clipping']:
+                    nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                # self.optimizer_generator.step()
+                self.scaler_qf.step(self.optimizer_qf)
+                self.scaler_qf.update()
+                self.optimizer_qf.zero_grad()
 
             with torch.cuda.amp.autocast():
                 ####################################################################################################
@@ -651,11 +655,14 @@ class Modified_invISP(BaseModel):
                 ####################################################################################################
                 # todo: RAW2RGB pipelines
                 ####################################################################################################
-                if self.global_step%2==0:
+                if self.global_step%3==0:
                     ######## we use invISP ########
                     modified_input = self.generator(modified_raw)
-                else: # if self.global_step%2==1:
+                elif self.global_step%3==1:
                     modified_input = self.qf_predict_network(rgb=gt_rgb, raw=modified_raw)
+                else:
+                    modified_numpy = pipeline_tensor2image(modified_raw, metadata)
+
 
                 ISP_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
                 ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(gt_rgb)).item()
@@ -705,31 +712,33 @@ class Modified_invISP(BaseModel):
                 logs['loss'] = loss.item()
 
             ####################################################################################################
-            # todo: STEP: Image Manipulation Detection Network
-            # todo: invISP
+            # todo: Grad Accumulation
+            # todo: added 20220919, steo==0, do not update, step==1 update
             ####################################################################################################
-            self.optimizer_KD_JPEG.zero_grad()
-            self.optimizer_G.zero_grad()
-            self.optimizer_localizer.zero_grad()
-            self.optimizer_discriminator_mask.zero_grad()
 
             self.scaler_kd_jpeg.scale(loss).backward()
-            # self.optimizer_generator.zero_grad()
-            # loss.backward()
-            # self.scaler_generator.scale(loss).backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
-                # nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-                # nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-                nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-            # self.optimizer_KD_JPEG.step()
-            # self.optimizer_generator.step()
-            self.scaler_kd_jpeg.step(self.optimizer_KD_JPEG)
-            # self.scaler_kd_jpeg.step(self.optimizer_G)
-            # self.scaler_kd_jpeg.step(self.optimizer_localizer)
-            self.scaler_kd_jpeg.step(self.optimizer_discriminator_mask)
-            self.scaler_kd_jpeg.update()
+            if self.global_step % 2 == 1:
+                # self.optimizer_generator.zero_grad()
+                # loss.backward()
+                # self.scaler_generator.scale(loss).backward()
+                if self.train_opt['gradient_clipping']:
+                    nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
+                    # nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
+                    # nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
+                    nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                # self.optimizer_KD_JPEG.step()
+                # self.optimizer_generator.step()
+                self.scaler_kd_jpeg.step(self.optimizer_KD_JPEG)
+                # self.scaler_kd_jpeg.step(self.optimizer_G)
+                # self.scaler_kd_jpeg.step(self.optimizer_localizer)
+                self.scaler_kd_jpeg.step(self.optimizer_discriminator_mask)
+                self.scaler_kd_jpeg.update()
+
+                self.optimizer_KD_JPEG.zero_grad()
+                self.optimizer_G.zero_grad()
+                self.optimizer_localizer.zero_grad()
+                self.optimizer_discriminator_mask.zero_grad()
 
             # self.optimizer_G.zero_grad()
             # # loss.backward()

@@ -13,7 +13,7 @@ params = {
 }
 
 # processing a directory
-images_dir = '../data/'
+images_dir = '/'
 image_paths = glob.glob(os.path.join(images_dir, '*.dng'))
 for image_path in image_paths:
     output_image = run_pipeline(image_path, params)

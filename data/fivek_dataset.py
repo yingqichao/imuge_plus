@@ -4,15 +4,12 @@ import rawpy
 import glob
 import os
 import numpy as np
-import colour_demosaicing
-from PIL import Image
 import random
 import imageio
 import cv2
 # from imageio import imread
 from tqdm import tqdm
 import time
-from PIL import Image
 
 
 # DNG：原本的raw文件
@@ -315,13 +312,14 @@ class FiveKDataset_skip(Dataset):
     """
 
     def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
-                 file_nums=10, rgb_scale=False, npz_uint16=True):
+                 file_nums=100, rgb_scale=False, npz_uint16=True, use_metadata=True):
         self.dataset_root = dataset_root
         self.camera_name = camera_name
         self.data_mode = data_mode
         self.uncond_p = uncond_p
         self.rgb_scale = rgb_scale
         self.npz_uint16 = npz_uint16
+        self.use_metadata = use_metadata
         dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
         self.raw_files, self.rgb_files = self.load(dataset_file)
         self.stage = stage
@@ -331,6 +329,16 @@ class FiveKDataset_skip(Dataset):
         assert len(self.raw_files) == len(self.rgb_files)
         self.patch_size = patch_size
         self.gamma = True
+        if self.use_metadata:
+            self.load_metadata(dataset_file)
+
+    def load_metadata(self, dataset_file):
+        import pickle
+        with open(os.path.join(self.dataset_root, self.camera_name, 'metadata.pickle'), 'rb') as fin:
+            data = pickle.load(fin)
+        with open(dataset_file, "r") as f:
+            valid_camera_list = [line.strip() for line in f.readlines()]
+        self.metadata_list = dict([(key, data[key]) for key in valid_camera_list])
 
     def pack_raw(self, raw):
         # 两个相机都是RGGB
@@ -357,7 +365,6 @@ class FiveKDataset_skip(Dataset):
         wb = raw['wb']
         wb = wb / wb.max()
         input_raw_img = raw_img * wb[:-1]
-
         input_raw_img, target_rgb_img = random_crop(self.patch_size//2, input_raw_img, target_rgb_img, not self.npz_uint16)
         input_raw_img = cv2.resize(input_raw_img, (self.patch_size, self.patch_size), interpolation=cv2.INTER_LINEAR)
         input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
@@ -381,9 +388,34 @@ class FiveKDataset_skip(Dataset):
         if random.random() < self.uncond_p:
             # null label
             input_raw_img = torch.ones_like(input_raw_img)
+        file_name = raw_path.split("/")[-1].split(".")[0]
+        if self.use_metadata:
+            meta = self.metadata_list[file_name]
+            # print(meta)
+            # todo:取出要用的metadata
+            sample = {'input_raw': input_raw_img,
+                      'target_rgb': target_rgb_img,
+                      'file_name': file_name,
+                      'color_matrix':meta['color_matrix'],
+                      # example:
+                      # array([[1.8083024, -0.9273899, 0.1190875, 0.],
+                      #        [-0.01726297, 1.3148121, -0.29754913, 0.],
+                      #        [0.05812025, -0.34984493, 1.2917247, 0.]], dtype=float32), '
+                      'rgb_xyz_matrix': meta['rgb_xyz_matrix'],
+                      # example:
+                      # tensor([[[0.6347, -0.0479, -0.0972],
+                      #          [-0.8297, 1.5954, 0.2480],
+                      #          [-0.1968, 0.2131, 0.7649],
+                      #          [0.0000, 0.0000, 0.0000]]])
+                      'camera_whitebalance': meta['camera_whitebalance'],
+                      # example (batch size=2):
+                      # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000], dtype=torch.float64), tensor([0., 0.], dtype=torch.fl
+                      }
 
-        sample = {'input_raw': input_raw_img, 'target_rgb': target_rgb_img,
-                  'file_name': raw_path.split("/")[-1].split(".")[0]}
+        else:
+            sample = {'input_raw': input_raw_img,
+                      'target_rgb': target_rgb_img,
+                      'file_name': file_name,}
         return sample
 
     def __len__(self):
@@ -660,7 +692,7 @@ def load_data(
     # deterministic 代表是否打乱数据集
     if not data_dir:
         raise ValueError('unspecified data directory')
-    dataset = FiveKDataset_crop(data_dir, camera_name, stage, patch_size, data_mode, uncond_p, file_nums, rgb_scale,
+    dataset = FiveKDataset_skip(data_dir, camera_name, stage, patch_size, data_mode, uncond_p, file_nums, rgb_scale,
                                 npz_uint16)
     # print(len(dataset))
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=deterministic, num_workers=num_workers,
@@ -827,10 +859,64 @@ def test_skip_downsample(dataset_root, camera_name):
         Resize = rgb[1:H:4, 1:W:4, :]
         imageio.imwrite(f'./test_{i}.jpg', Resize)
 
-
+# from wand.image import Image as WandImage
+# from wand.api import library as wandlibrary
+# from scipy.ndimage import zoom as scizoom
+# from io import BytesIO
+# import wand.color as WandColor
+# # Extend wand.image.Image class to include method signature
+# class MotionImage(WandImage):
+#     def motion_blur(self, radius=0.0, sigma=0.0, angle=0.0):
+#         wandlibrary.MagickMotionBlurImage(self.wand, radius, sigma, angle)
+#
+# def clipped_zoom(img, zoom_factor):
+#     h = img.shape[0]
+#     # ceil crop height(= crop width)
+#     # np.ceil 向上取整
+#     ch = int(np.ceil(h / float(zoom_factor)))
+#
+#     top = (h - ch) // 2
+#     img = scizoom(img[top:top + ch, top:top + ch], (zoom_factor, zoom_factor, 1), order=1)
+#     # trim off any extra pixels
+#     trim_top = (img.shape[0] - h) // 2
+#
+#     return img[trim_top:trim_top + h, trim_top:trim_top + h]
+#
+# def snow(x, severity=1):
+#     c = [(0.1, 0.3, 3, 0.5, 10, 4, 0.8),
+#          (0.2, 0.3, 2, 0.5, 12, 4, 0.7),
+#          (0.55, 0.3, 4, 0.9, 12, 8, 0.7),
+#          (0.55, 0.3, 4.5, 0.85, 12, 8, 0.65),
+#          (0.55, 0.3, 2.5, 0.85, 12, 12, 0.55)][severity - 1]
+#
+#     x = np.array(x, dtype=np.float32) / 255.
+#     snow_layer = np.random.normal(size=x.shape[:2], loc=c[0], scale=c[1])  # [:2] for monochrome
+#     # np.newaxis 在该位置新增一个维度
+#     snow_layer = clipped_zoom(snow_layer[..., np.newaxis], c[2])
+#     snow_layer[snow_layer < c[3]] = 0
+#
+#     snow_layer = Image.fromarray((np.clip(snow_layer.squeeze(), 0, 1) * 255).astype(np.uint8), mode='L')
+#     output = BytesIO()
+#     snow_layer.save(output, format='PNG')
+#     snow_layer = MotionImage(blob=output.getvalue())
+#
+#     snow_layer.motion_blur(radius=c[4], sigma=c[5], angle=np.random.uniform(-135, -45))
+#
+#     snow_layer = cv2.imdecode(np.fromstring(snow_layer.make_blob(), np.uint8),
+#                               cv2.IMREAD_UNCHANGED) / 255.
+#     snow_layer = snow_layer[..., np.newaxis]
+#
+#     x = c[6] * x + (1 - c[6]) * np.maximum(x, cv2.cvtColor(x, cv2.COLOR_RGB2GRAY).reshape(512, 512, 1) * 1.5 + 0.5)
+#     return np.clip(x + snow_layer + np.rot90(snow_layer, k=2), 0, 1) * 255
 # 这里用来处理数据集 如裁剪等
 # 数据集可用 data_mode=RAW表明是对插值后的图像
 if __name__ == '__main__':
+    # file_name = 'test_5.png'
+    # test_image = imageio.imread(file_name)
+    # out = snow(test_image[:, :512, :])
+    # imageio.imwrite('./ttt.png', out)
+    # exit(0)
+
     # crop_image()
     # test = np.zeros([3, 3])
     # test[0, :] = [0.8642, -0.3058, -0.0243]
@@ -839,30 +925,32 @@ if __name__ == '__main__':
     # c = np.linalg.inv(test)
     # print('h')
     # test = np.power(-91, 1/2.2)
-    dataset_root = '/ssd/invISP'
+    from pipeline import pipeline_tensor2image
+    dataset_root = '/ssd/invISP_skip/'
     camera_name = 'Canon_EOS_5D'
-    new_root = '/ssd/invISP_skip/'
-    dataset = FiveKDataset_skip(new_root, camera_name, 'test', 512, 'RAW', 0, 10, True, True)
-    for i in range(len(dataset)):
-        print(dataset[i]['file_name'])
-    exit(0)
-    dataloader = load_data(
-        data_dir=new_root,
-        camera_name=camera_name,
-        stage='train',
-        batch_size=6,
-        patch_size=512,
-        data_mode='RAW',
-        uncond_p=0.1,
-        deterministic=False,
-        num_workers=1,
-        rgb_scale=True
-    )
+    # data_process_npz(dataset_root, camera_name)
+    # test_image_downsample(dataset_root, camera_name)
+    # exit(0)
+    # data_process_npz(dataset_root, camera_name)
+    # exit(0)
+    train_set = FiveKDataset_skip(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0.,
+                                  patch_size=512, use_metadata=True)
+    dataloader = DataLoader(train_set, batch_size=2, shuffle=False, num_workers=1,
+                            drop_last=True,
+                            pin_memory=False)
     start = time.time()
     for i, value in enumerate(dataloader):
-        print(value['file_name'])
-        print(value['target_rgb'].shape)
-        print(value['input_raw'].shape)
+        # print(value)
+        file_name = value['file_name']
+        metadata = train_set.metadata_list[file_name]
+
+        print(f"value:{file_name}")
+        print(f"camera_whitebalance:{value['camera_whitebalance']}")
+        print(f"rgb_xyz_matrix:{value['rgb_xyz_matrix']}")
+        numpy_rgb = pipeline_tensor2image(value['input_raw'],metadata=metadata)
+        print()
+        if i>10:
+            break
 
     end_time = time.time()
     print((end_time - start))

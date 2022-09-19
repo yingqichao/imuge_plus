@@ -9,7 +9,7 @@ metadata: load from pickle, the key is "metadata"
 return: rgb image, numpy variable
 """
 # todo: normalize returned rgb image with np format
-def tensor2image(raw_image, metadata):
+def pipeline_tensor2image(raw_image, metadata):
     params = {
         'input_stage': 'normal',  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
         'output_stage': 'gamma',  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
