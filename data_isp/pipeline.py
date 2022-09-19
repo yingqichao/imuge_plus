@@ -3,6 +3,25 @@ from pipeline_utils import get_visible_raw_image, get_metadata, normalize, white
     apply_color_space_transform, transform_xyz_to_srgb, apply_gamma, apply_tone_map, fix_orientation, \
     lens_shading_correction
 
+"""
+raw_image: raw2raw network output, torch.tensor
+metadata: load from pickle, the key is "metadata"
+return: rgb image, numpy variable
+"""
+# todo: normalize returned rgb image with np format
+def tensor2image(raw_image, metadata):
+    params = {
+        'input_stage': 'normal',  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
+        'output_stage': 'gamma',  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
+        'save_as': 'png',  # options: 'jpg', 'png', 'tif', etc.
+        'demosaic_type': 'EA',
+        'save_dtype': np.uint8
+    }
+    # first: transfer the torch into numpy variable
+    raw_image = raw_image.cpu().numpy()
+    final_rgb = run_pipeline_v2(raw_image, params, metadata, False)
+    return final_rgb
+
 
 def run_pipeline_v2(image_or_path, params=None, metadata=None, fix_orient=True):
     params_ = params.copy()
