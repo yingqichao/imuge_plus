@@ -935,19 +935,21 @@ if __name__ == '__main__':
     # exit(0)
     train_set = FiveKDataset_skip(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0.,
                                   patch_size=512, use_metadata=True)
-    dataloader = DataLoader(train_set, batch_size=2, shuffle=False, num_workers=1,
+    dataloader = DataLoader(train_set, batch_size=1, shuffle=False, num_workers=1,
                             drop_last=True,
                             pin_memory=False)
     start = time.time()
     for i, value in enumerate(dataloader):
         # print(value)
         file_name = value['file_name']
-        metadata = train_set.metadata_list[file_name]
+        metadata = train_set.metadata_list[file_name[0]]
+        # print(metadata)
 
-        print(f"value:{file_name}")
-        print(f"camera_whitebalance:{value['camera_whitebalance']}")
-        print(f"rgb_xyz_matrix:{value['rgb_xyz_matrix']}")
-        numpy_rgb = pipeline_tensor2image(value['input_raw'],metadata=metadata)
+        # print(f"value:{file_name}")
+        # print(f"camera_whitebalance:{value['camera_whitebalance']}")
+        # print(f"rgb_xyz_matrix:{value['rgb_xyz_matrix']}")
+        numpy_rgb = pipeline_tensor2image(value['input_raw'],metadata=metadata['metadata'])
+        print(f"numpy_rgb:{numpy_rgb}")
         print()
         if i>10:
             break
