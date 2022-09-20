@@ -1,5 +1,5 @@
 import numpy as np
-from pipeline_utils import get_visible_raw_image, get_metadata, normalize, white_balance, demosaic, \
+from .pipeline_utils import get_visible_raw_image, get_metadata, normalize, white_balance, demosaic, \
     apply_color_space_transform, transform_xyz_to_srgb, apply_gamma, apply_tone_map, fix_orientation, \
     lens_shading_correction
 
@@ -9,10 +9,10 @@ metadata: load from pickle, the key is "metadata"
 return: rgb image, numpy variable
 """
 # todo: normalize returned rgb image with np format
-def pipeline_tensor2image(raw_image, metadata):
+def pipeline_tensor2image(*, raw_image, metadata, input_stage='normal', output_stage='gamma'):
     params = {
-        'input_stage': 'normal',  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
-        'output_stage': 'gamma',  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
+        'input_stage': input_stage,  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
+        'output_stage': output_stage,  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
         'save_as': 'png',  # options: 'jpg', 'png', 'tif', etc.
         'demosaic_type': 'EA',
         'save_dtype': np.uint8
@@ -23,7 +23,7 @@ def pipeline_tensor2image(raw_image, metadata):
     return final_rgb
 
 
-def run_pipeline_v2(image_or_path, params=None, metadata=None, fix_orient=True):
+def run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_1384.dng', params=None, metadata=None, fix_orient=True):
     params_ = params.copy()
     if type(image_or_path) == str:
         image_path = image_or_path
@@ -195,3 +195,6 @@ def run_pipeline(image_path, params):
 
     output_image = None
     return output_image
+
+if __name__ == '__main__':
+    run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_1384.dng')

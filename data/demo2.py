@@ -6,7 +6,7 @@ import rawpy
 from PIL import Image
 import imageio
 
-from pipeline import run_pipeline_v2
+from .pipeline import run_pipeline_v2
 import colour_demosaicing
 import time
 from pipeline_utils import get_visible_raw_image, get_metadata

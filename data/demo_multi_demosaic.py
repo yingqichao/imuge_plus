@@ -3,7 +3,7 @@ import os
 import cv2
 import numpy as np
 
-from pipeline import run_pipeline
+from .pipeline import run_pipeline
 
 params = {
     'output_stage': 'tone',  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'

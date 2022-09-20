@@ -943,14 +943,19 @@ if __name__ == '__main__':
         # print(value)
         file_name = value['file_name']
         metadata = train_set.metadata_list[file_name[0]]
+        input_raw = value['input_raw'][0].permute(1,2,0)
+        print(input_raw.shape)
         # print(metadata)
 
         # print(f"value:{file_name}")
         # print(f"camera_whitebalance:{value['camera_whitebalance']}")
         # print(f"rgb_xyz_matrix:{value['rgb_xyz_matrix']}")
-        numpy_rgb = pipeline_tensor2image(value['input_raw'],metadata=metadata['metadata'])
-        print(f"numpy_rgb:{numpy_rgb}")
-        print()
+        numpy_rgb = pipeline_tensor2image(raw_image=input_raw,
+                                          metadata=metadata['metadata'],
+                                          input_stage='demosaic')
+
+        numpy_rgb = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).float()
+        print(f"numpy_rgb:{numpy_rgb.shape}")
         if i>10:
             break
 

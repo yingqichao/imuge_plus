@@ -130,7 +130,7 @@ def main(args,opt):
     elif "ISP" in opt['model']:
         print("dataset with ISP")
         from data.fivek_dataset import FiveKDataset_skip
-        dataset_root = '/hotdata/invISP_skip/'
+        dataset_root = '/ssd/invISP_skip/'
         camera_name = 'Canon_EOS_5D'
         # data_process_npz(dataset_root, camera_name)
         # test_image_downsample(dataset_root, camera_name)
@@ -230,7 +230,7 @@ def main(args,opt):
         model = M(opt, args)
     elif which_model == 'ISP':
         from models.Modified_invISP import Modified_invISP as M
-        model = M(opt, args)
+        model = M(opt, args, train_set)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
@@ -256,7 +256,10 @@ def main(args,opt):
         #     variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
         #     print(f"variables_list: {variables_list}")
         elif 'ISP' in which_model and args.mode==2:
-            variables_list = ['loss', 'ISP_PSNR', 'CYCLE_PSNR', 'RAW_PSNR', 'CE_MVSS', 'CE_mantra', 'CE_resfcn', 'ISP_PSNR_NOW']
+            variables_list = ['loss', 'ISP_PSNR', 'CYCLE_PSNR', 'PIPE_PSNR',
+                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra', 'CE_resfcn', 'ISP_PSNR_NOW',
+                              'ERROR'
+                              ]
             print(f"variables_list: {variables_list}")
         elif 'CLRNet' in which_model:
             variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
