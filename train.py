@@ -130,8 +130,8 @@ def main(args,opt):
     elif "ISP" in opt['model']:
         print("dataset with ISP")
         from data.fivek_dataset import FiveKDataset_skip
-        dataset_root = '/ssd/invISP_skip/'
-        camera_name = 'Canon_EOS_5D'
+        dataset_root = ['/ssd/invISP_skip/', '/ssd/invISP_skip/']
+        camera_name = ['Canon_EOS_5D', 'NIKON_D700']
         # data_process_npz(dataset_root, camera_name)
         # test_image_downsample(dataset_root, camera_name)
         # exit(0)
@@ -186,18 +186,26 @@ def main(args,opt):
     #     # train_set = D(opt, dataset_opt)
     elif "ISP" in opt['model']:
         print("dataset with ISP")
-        from data.LQGT_dataset import LQGTDataset as D
-        val_set = D(opt, dataset_opt)
+        from data.fivek_dataset import FiveKDataset_skip
+        dataset_root = ['/ssd/invISP_skip/','/ssd/invISP_skip/']
+        camera_name = ['Canon_EOS_5D', 'NIKON_D700']
+        # data_process_npz(dataset_root, camera_name)
+        # test_image_downsample(dataset_root, camera_name)
+        # exit(0)
+        # data_process_npz(dataset_root, camera_name)
+        # exit(0)
+        print(f'FiveK dataset size:{GT_size}')
+        val_set = FiveKDataset_skip(dataset_root, camera_name, stage='test', rgb_scale=False, uncond_p=0.,
+                                      patch_size=GT_size)
+
+        # from data.LQGT_dataset import LQGTDataset as D
+        # val_set = D(opt, dataset_opt)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
     val_size = int(math.ceil(len(val_set) / 1))
-    if opt['dist']:
-        val_sampler = DistIterSampler(val_set, world_size, rank, dataset_ratio, seed=seed)
-    else:
-        val_sampler = None
     # val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
-    val_loader = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=False, num_workers=1,
+    val_loader = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=False, num_workers=0,
                                 pin_memory=True)
 
     if rank <= 0:
@@ -244,8 +252,7 @@ def main(args,opt):
     # todo: we support a bunch of operations according to variables in val.
     # todo: each instance must implement a feed_data and optimize_parameters
     ####################################################################################################
-    start_epoch = 0
-    current_step = opt['train']['current_step']
+    start_epoch, current_step = 0,  opt['train']['current_step']
     variables_list = []
     if ('CLRNet' in which_model or 'PAMI' in which_model or 'ISP' in which_model):
         if 'PAMI' in which_model:
@@ -274,6 +281,8 @@ def main(args,opt):
         total = len(train_set)
         print_step, restart_step = 15, 1000
         for epoch in range(start_epoch, total_epochs + 1):
+            current_step = 0
+            val_generator = iter(val_loader)
             # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
             #                     'SIMUL','RECON','RealTime'
             #                     'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
@@ -286,11 +295,19 @@ def main(args,opt):
             if opt['dist']:
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
-                current_step += 1
+                if current_step%10==9:
+                    try:
+                        val_item = next(val_generator)
+                    except StopIteration as e:
+                        print("The end of val set is reached. Refreshing...")
+                        val_generator = iter(val_loader)
+                        val_item = next(val_generator)
+                    model.feed_data_val_router(batch=val_item, mode=args.mode)
+
                 #### training
                 model.feed_data_router(batch=train_data, mode=args.mode)
 
-                logs, debug_logs = model.optimize_parameters_router(mode=args.mode)
+                logs, debug_logs = model.optimize_parameters_router(mode=args.mode, step=current_step)
                 if variables_list[0] in logs:
                     for i in range(len(variables_list)):
                         if variables_list[i] in logs:
@@ -315,6 +332,8 @@ def main(args,opt):
                     if valid_idx>=restart_step:
                         running_list = [0.0] * len(variables_list)
                         valid_idx = 0
+
+                current_step += 1
                 # if rank <= 0:
                 #     progbar.add(len(model.real_H), values=logs)
         ####################################################################################################

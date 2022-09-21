@@ -30,7 +30,7 @@ from utils.JPEG import DiffJPEG
 from .base_model import BaseModel
 from data.pipeline import pipeline_tensor2image
 # import matlab.engine
-
+import torch.nn.functional as Functional
 # print("Starting MATLAB engine...")
 # engine = matlab.engine.start_matlab()
 # print("MATLAB engine loaded successful.")
@@ -301,7 +301,7 @@ class Modified_invISP(BaseModel):
 
             self.load_space_storage = '/groupshare/ISP_results/complete_results'
             self.load_storage = f'/model/{self.task_name}_{3}/'
-            self.model_path = str(6999)  # 29999
+            self.model_path = str(3999)  # 29999
 
             print(f"loading tampering/ISP models: {self.network_list}")
             if load_models:
@@ -310,7 +310,7 @@ class Modified_invISP(BaseModel):
 
             self.load_space_storage = '/groupshare/ISP_results/complete_results'
             self.load_storage = f'/model/{self.task_name}_{3}/'
-            self.model_path = str(6999)  # 29999
+            self.model_path = str(3999)  # 29999
 
             print(f"loading models: {self.network_list}")
             if load_models:
@@ -351,34 +351,47 @@ class Modified_invISP(BaseModel):
 
     def feed_data_router(self, batch, mode):
         if mode == 0.0:
-            self.feed_data_ISP(batch)  # feed_data_COCO_like(batch)
+            self.feed_data_ISP(batch, mode='train') # feed_data_COCO_like(batch)
         else:
-            self.feed_data_ISP(batch)
+            self.feed_data_ISP(batch, mode='train')
 
-    def feed_data_ISP(self, batch):
-        filename = batch['file_name']
-        self.real_H = batch['input_raw'].cuda()
-        self.label = batch['target_rgb'].cuda()
-        self.file_name = batch['file_name']
+    def feed_data_val_router(self, batch, mode):
+        if mode == 0.0:
+            self.feed_data_ISP(batch, mode='val')  # feed_data_COCO_like(batch)
+        else:
+            self.feed_data_ISP(batch, mode='val')
+
+    def feed_data_ISP(self, batch, mode='train'):
+        if mode=='train':
+            self.real_H = batch['input_raw'].cuda()
+            self.label = batch['target_rgb'].cuda()
+            self.file_name = batch['file_name']
+        else:
+            self.real_H_val = batch['input_raw'].cuda()
+            self.label_val = batch['target_rgb'].cuda()
+            self.file_name_val = batch['file_name']
 
     def feed_data_COCO_like(self, batch):
         img, label, canny_image = batch
         self.real_H = img.cuda()
         self.canny_image = canny_image.cuda()
 
-    def optimize_parameters_router(self, mode):
+    def optimize_parameters_router(self, mode, step=None):
         if mode == 0.0:
-            return self.optimize_parameters_prepare()
+            return self.optimize_parameters_prepare(step=step)
         # elif mode==1.0:
         #     return self.optimize_parameters_main()
         else:
-            return self.optimize_parameters_main()
+            return self.optimize_parameters_main(step=step)
 
-    def optimize_parameters_main(self):
+    def optimize_parameters_main(self, step=None):
         ####################################################################################################
         # todo: Image Manipulation Detection Network (Downstream task)
         # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
         ####################################################################################################
+        if step is not None:
+            self.global_step = step
+
         self.KD_JPEG.train()
         self.generator.train()
         self.netG.train()
@@ -397,71 +410,91 @@ class Modified_invISP(BaseModel):
         # input_raw = self.clamp_with_grad(input_raw)
 
         gt_rgb = self.label
-        step_acumulate = 1
+        step_acumulate = 4
+        train_isp_networks = False
 
         if not (self.previous_images is None or self.previous_previous_images is None):
             modified_input_transform_free = None
+            if train_isp_networks:
+                with torch.cuda.amp.autocast():
+                    ####################################################################################################
+                    # todo: Image pipeline training
+                    # todo: we first train several nn-based ISP networks
+                    ####################################################################################################
 
-            with torch.cuda.amp.autocast():
+                    modified_input_cycle = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
+                    CYCLE_L1 = self.l1_loss(input=modified_input_cycle, target=gt_rgb)
+                    modified_input_cycle = self.clamp_with_grad(modified_input_cycle.detach())
+                    ISP_PSNR_CYCLE = self.psnr(self.postprocess(modified_input_cycle), self.postprocess(gt_rgb)).item()
+                    logs['CYCLE_PSNR'] = ISP_PSNR_CYCLE
+
+                    modified_input_transform_free = self.generator(input_raw)
+                    ISP_L1 = self.l1_loss(input=modified_input_transform_free, target=gt_rgb)
+                    modified_input_transform_free = self.clamp_with_grad(modified_input_transform_free.detach())
+                    ISP_PSNR = self.psnr(self.postprocess(modified_input_transform_free), self.postprocess(gt_rgb)).item()
+                    logs['ISP_PSNR'] = ISP_PSNR
+
                 ####################################################################################################
-                # todo: Image pipeline training
-                # todo: we first train several nn-based ISP networks
+                # todo: Grad Accumulation
+                # todo: added 20220919, steo==0, do not update, step==1 update
                 ####################################################################################################
+                # self.optimizer_generator.zero_grad()
+                # ISP_L1.backward()
+                self.scaler_generator.scale(ISP_L1).backward()
+                if self.global_step % step_acumulate==step_acumulate-1:
+                    if self.train_opt['gradient_clipping']:
+                        nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                        # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                    # self.optimizer_generator.step()
+                    self.scaler_generator.step(self.optimizer_generator)
+                    self.scaler_generator.update()
+                    self.optimizer_generator.zero_grad()
 
-                modified_input_cycle = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
-                CYCLE_L1 = self.l1_loss(input=modified_input_cycle, target=gt_rgb)
-                modified_input_cycle = self.clamp_with_grad(modified_input_cycle.detach())
-                ISP_PSNR_CYCLE = self.psnr(self.postprocess(modified_input_cycle), self.postprocess(gt_rgb)).item()
-                logs['CYCLE_PSNR'] = ISP_PSNR_CYCLE
 
-                modified_input_transform_free = self.generator(input_raw)
-                ISP_L1 = self.l1_loss(input=modified_input_transform_free, target=gt_rgb)
-                modified_input_transform_free = self.clamp_with_grad(modified_input_transform_free.detach())
-                ISP_PSNR = self.psnr(self.postprocess(modified_input_transform_free), self.postprocess(gt_rgb)).item()
-                logs['ISP_PSNR'] = ISP_PSNR
+                # self.optimizer_generator.zero_grad()
+                # ISP_L1.backward()
+                self.scaler_qf.scale(CYCLE_L1).backward()
+                if self.global_step % step_acumulate == step_acumulate-1:
+                    if self.train_opt['gradient_clipping']:
+                        nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+                        # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                    # self.optimizer_generator.step()
+                    self.scaler_qf.step(self.optimizer_qf)
+                    self.scaler_qf.update()
+                    self.optimizer_qf.zero_grad()
+            else:
+                with torch.no_grad():
+                    self.qf_predict_network.eval()
+                    self.generator.eval()
+                    modified_input_cycle = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
+                    modified_input_cycle = self.clamp_with_grad(modified_input_cycle.detach())
+                    ISP_PSNR_CYCLE = self.psnr(self.postprocess(modified_input_cycle), self.postprocess(gt_rgb)).item()
+                    logs['CYCLE_PSNR'] = ISP_PSNR_CYCLE
 
-                modified_input_pipeline = torch.zeros_like(gt_rgb)
-                for img_idx in range(batch_size):
-                    numpy_rgb = input_raw[img_idx].clone().detach().permute(1, 2, 0)
-                    file_name = self.file_name[img_idx]
-                    metadata = self.train_set.metadata_list[file_name]
-                    numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
-                                                      metadata=metadata['metadata'],
-                                                      input_stage='demosaic')
+                    modified_input_transform_free = self.generator(input_raw)
+                    modified_input_transform_free = self.clamp_with_grad(modified_input_transform_free.detach())
+                    ISP_PSNR = self.psnr(self.postprocess(modified_input_transform_free),
+                                         self.postprocess(gt_rgb)).item()
+                    logs['ISP_PSNR'] = ISP_PSNR
 
-                    modified_input_pipeline[img_idx] = torch.from_numpy(
-                        np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).float()
-
-                ISP_PSNR_PIPE = self.psnr(self.postprocess(modified_input_pipeline), self.postprocess(gt_rgb)).item()
-                logs['PIPE_PSNR'] = ISP_PSNR_PIPE
             ####################################################################################################
-            # todo: Grad Accumulation
-            # todo: added 20220919, steo==0, do not update, step==1 update
+            # todo: Image pipeline using my_own_pipeline
+            # todo: the result is not so good
             ####################################################################################################
-            # self.optimizer_generator.zero_grad()
-            # ISP_L1.backward()
-            self.scaler_generator.scale(ISP_L1).backward()
-            if self.global_step % step_acumulate==step_acumulate-1:
-                if self.train_opt['gradient_clipping']:
-                    nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                # self.optimizer_generator.step()
-                self.scaler_generator.step(self.optimizer_generator)
-                self.scaler_generator.update()
-                self.optimizer_generator.zero_grad()
+            modified_input_pipeline = torch.zeros_like(gt_rgb)
+            for img_idx in range(batch_size):
+                numpy_rgb = input_raw[img_idx].clone().detach().permute(1, 2, 0).contiguous()
+                file_name = self.file_name[img_idx]
+                metadata = self.train_set.metadata_list[file_name]
+                numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
+                                                  metadata=metadata['metadata'],
+                                                  input_stage='demosaic')
 
+                modified_input_pipeline[img_idx] = torch.from_numpy(
+                    np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
 
-            # self.optimizer_generator.zero_grad()
-            # ISP_L1.backward()
-            self.scaler_qf.scale(CYCLE_L1).backward()
-            if self.global_step % step_acumulate == step_acumulate-1:
-                if self.train_opt['gradient_clipping']:
-                    nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                # self.optimizer_generator.step()
-                self.scaler_qf.step(self.optimizer_qf)
-                self.scaler_qf.update()
-                self.optimizer_qf.zero_grad()
+            ISP_PSNR_PIPE = self.psnr(self.postprocess(modified_input_pipeline), self.postprocess(gt_rgb)).item()
+            logs['PIPE_PSNR'] = ISP_PSNR_PIPE
 
             with torch.cuda.amp.autocast():
                 ####################################################################################################
@@ -479,27 +512,40 @@ class Modified_invISP(BaseModel):
                 # todo: note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
                 # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
                 ####################################################################################################
-                if self.global_step%3==0:
-                    ######## we use invISP ########
-                    modified_input = self.generator(modified_raw)
-                    tamper_source = modified_input_transform_free
-                elif self.global_step%3==1:
-                    modified_input = self.qf_predict_network(rgb=gt_rgb, raw=modified_raw)
-                    tamper_source = modified_input_cycle
-                else:
-                    modified_input = torch.zeros_like(gt_rgb)
-                    for img_idx in range(batch_size):
-                        numpy_rgb = modified_raw[img_idx].clone().detach().permute(1, 2, 0)
-                        file_name = self.file_name[img_idx]
-                        metadata = self.train_set.metadata_list[file_name]
-                        numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
-                                                          metadata=metadata['metadata'],
-                                                          input_stage='demosaic')
+                # if self.global_step%3==0:
+                ######## we use invISP ########
+                modified_input_0 = self.generator(modified_raw)
+                tamper_source_0 = modified_input_transform_free
+                # elif self.global_step%3==1:
+                modified_input_1 = self.qf_predict_network(rgb=gt_rgb, raw=modified_raw)
+                tamper_source_1 = modified_input_cycle
+                # else:
+                modified_input_2 = torch.zeros_like(gt_rgb)
+                for img_idx in range(batch_size):
+                    numpy_rgb = modified_raw[img_idx].clone().detach().permute(1, 2, 0).contiguous()
+                    file_name = self.file_name[img_idx]
+                    metadata = self.train_set.metadata_list[file_name]
+                    numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
+                                                      metadata=metadata['metadata'],
+                                                      input_stage='demosaic')
 
-                        modified_input[img_idx] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).float()
+                    modified_input_2[img_idx] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
 
-                    modified_input = modified_raw + (modified_input-modified_raw).detach()
-                    tamper_source = modified_input_pipeline
+                modified_input_2 = modified_raw + (modified_input_2-modified_raw).detach()
+                tamper_source_2 = modified_input_pipeline
+
+                ####################################################################################################
+                # todo: doing mixup on the images
+                # todo: note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
+                # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
+                ####################################################################################################
+                alpha_0 = np.random.rand()*0.66
+                alpha_1 = np.random.rand()*0.66
+                alpha_1 = min(alpha_1,1-alpha_0)
+                alpha_2 = max(0,1-alpha_0-alpha_1)
+
+                modified_input = alpha_0*modified_input_0+alpha_1*modified_input_1+alpha_2*modified_input_2
+                tamper_source = alpha_0*tamper_source_0+alpha_1*tamper_source_1+alpha_2*tamper_source_2
 
                 ISP_L1 = self.l1_loss(input=modified_input, target=tamper_source)
                 ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(tamper_source)).item()
@@ -511,28 +557,37 @@ class Modified_invISP(BaseModel):
                 # todo:
                 ####################################################################################################
 
+                ####################################################################################################
+                # todo: cropping
+                # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
+                ####################################################################################################
+                locs, cropped, scaled_cropped = self.cropping_mask_generation(
+                    forward_image=modified_input, logs=logs)
+                h_start, h_end, w_start, w_end = locs
+                _, _, tamper_source = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
+
                 percent_range = (0.05, 0.30)
                 masks, masks_GT = self.mask_generation(percent_range=percent_range, logs=logs)
 
 
                 attacked_forward = self.tampering(
                     forward_image=tamper_source, masks=masks, masks_GT=masks_GT,
-                    modified_input=modified_input, percent_range=percent_range, logs=logs)
+                    modified_input=scaled_cropped, percent_range=percent_range, logs=logs)
 
                 consider_robost = True
                 if consider_robost:
                     if self.global_step % 5 in {0, 1, 2}:
-                        quality_idx = np.random.randint(19, 21)
+                        quality_idx = np.random.randint(17, 21)
                     else:
-                        quality_idx = np.random.randint(12, 17)
+                        quality_idx = np.random.randint(10, 17)
                     attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
                                                          quality_idx=quality_idx)
                 else:
                     attacked_image = attacked_forward
 
-                ERROR = attacked_image-attacked_forward
-                error_l1 = self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-                logs['ERROR'] = error_l1.item()
+                # ERROR = attacked_image-attacked_forward
+                error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_forward)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+                logs['ERROR'] = error_l1
                 ####################################################################################################
                 # todo: Image Manipulation Detection Network (Downstream task)
                 # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
@@ -612,13 +667,6 @@ class Modified_invISP(BaseModel):
             # self.scaler_discriminator_mask.update()
 
             ####################################################################################################
-            # todo: observation zone
-            # todo: invISP
-            ####################################################################################################
-            # with torch.no_grad():
-            #     pass
-
-            ####################################################################################################
             # todo: printing the images
             # todo: invISP
             ####################################################################################################
@@ -652,12 +700,105 @@ class Modified_invISP(BaseModel):
                     img_per_row=1
                 )
 
-                name = self.out_space_storage + '/images/' + self.task_name + '_' + str(self.gpu_id) + '/' \
-                       + str(self.global_step).zfill(5) + "_ " + str(self.gpu_id) + "_ " + str(self.rank) \
-                       + ("" if not anomalies else "_anomaly") + ".png"
+                name = f"{self.out_space_storage}/images/{self.task_name}_{str(self.gpu_id)}/{str(self.global_step).zfill(5)}" \
+                           f"_{str(self.gpu_id)}_ {str(self.rank)}.png"
                 print('\nsaving sample ' + name)
                 images.save(name)
 
+            ####################################################################################################
+            # todo: observation zone
+            # todo: invISP
+            ####################################################################################################
+            if self.global_step % 199 == 3 or self.global_step <= 10:
+                with torch.no_grad():
+                    self.KD_JPEG.eval()
+                    modified_raw = self.KD_JPEG(input_raw)
+                    RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
+                    modified_raw = self.clamp_with_grad(modified_raw)
+
+                    if self.global_step % 3 == 0:
+                        self.generator.eval()
+                        ######## we use invISP ########
+                        modified_input = self.generator(modified_raw)
+                        tamper_source = modified_input_transform_free
+                    elif self.global_step%3==1:
+                        self.qf_predict_network.eval()
+                        modified_input = self.qf_predict_network(rgb=gt_rgb, raw=modified_raw)
+                        tamper_source = modified_input_cycle
+                    else:
+                        modified_input = torch.zeros_like(gt_rgb)
+                        for img_idx in range(batch_size):
+                            numpy_rgb = modified_raw[img_idx].clone().detach().permute(1, 2, 0).contiguous()
+                            file_name = self.file_name[img_idx]
+                            metadata = self.train_set.metadata_list[file_name]
+                            numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
+                                                              metadata=metadata['metadata'],
+                                                              input_stage='demosaic')
+
+                            modified_input[img_idx] = torch.from_numpy(
+                                np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+
+                        tamper_source = modified_input_pipeline
+
+
+                    ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(tamper_source)).item()
+                    modified_input = self.clamp_with_grad(modified_input)
+
+                    locs, cropped, scaled_cropped = self.cropping_mask_generation(
+                        forward_image=modified_input, logs=logs)
+                    h_start, h_end, w_start, w_end = locs
+                    _, _, tamper_source = self.cropping_mask_generation(forward_image=tamper_source, locs=locs,
+                                                                        logs=logs)
+
+                    percent_range = (0.05, 0.30)
+                    masks, masks_GT = self.mask_generation(percent_range=percent_range, logs=logs)
+
+                    attacked_forward = self.tampering(
+                        forward_image=tamper_source, masks=masks, masks_GT=masks_GT,
+                        modified_input=scaled_cropped, percent_range=percent_range, logs=logs)
+
+                    consider_robost = True
+                    if consider_robost:
+                        if self.global_step % 5 in {0, 1, 2}:
+                            quality_idx = np.random.randint(17, 21)
+                        else:
+                            quality_idx = np.random.randint(10, 17)
+                        attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
+                                                             quality_idx=quality_idx)
+                    else:
+                        attacked_image = attacked_forward
+
+                    self.discriminator_mask.eval()
+                    _, pred_resfcn = self.discriminator_mask(attacked_image)
+                    CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+
+                    info_str = f'[Eval result: RAW_PSNR: {RAW_PSNR}, ISP_PSNR: {ISP_PSNR} CE: {CE_resfcn.item()} ] '
+                    print(info_str)
+
+                    images = stitch_images(
+                        self.postprocess(input_raw),
+                        self.postprocess(gt_rgb),
+                        ### RAW2RAW
+                        self.postprocess(modified_raw),
+                        self.postprocess(10 * torch.abs(modified_raw - input_raw)),
+                        ### RAW2RGB
+                        self.postprocess(modified_input),
+                        self.postprocess(tamper_source),
+                        self.postprocess(10 * torch.abs(modified_input - tamper_source)),
+                        ### tampering and benign attack
+                        self.postprocess(attacked_forward),
+                        self.postprocess(attacked_image),
+                        self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
+                        ### tampering detection
+                        self.postprocess(masks_GT),
+                        self.postprocess(torch.sigmoid(pred_resfcn)),
+                        img_per_row=1
+                    )
+
+                    name = f"{self.out_space_storage}/images/{self.task_name}_{str(self.gpu_id)}/{str(self.global_step).zfill(5)}" \
+                           f"_{str(self.gpu_id)}_ {str(self.rank)}_eval.png"
+                    print('\nsaving sample ' + name)
+                    images.save(name)
         ####################################################################################################
         # todo: updating the training stage
         # todo:
@@ -676,6 +817,39 @@ class Modified_invISP(BaseModel):
         # print(logs)
         # print(debug_logs)
         return logs, debug_logs
+
+    def cropping_mask_generation(self, forward_image, locs=None, min_rate=0.6, max_rate=1.0, logs=None):
+        ####################################################################################################
+        # todo: cropping
+        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
+        ####################################################################################################
+        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # masks_GT = torch.ones_like(self.canny_image)
+
+        self.height_ratio = min_rate + (max_rate - min_rate) * np.random.rand()
+        self.width_ratio = min_rate + (max_rate - min_rate) * np.random.rand()
+
+        self.height_ratio = min(self.height_ratio, self.width_ratio + 0.2)
+        self.width_ratio = min(self.width_ratio, self.height_ratio + 0.2)
+
+        if locs==None:
+            h_start, h_end, w_start, w_end = self.crop.get_random_rectangle_inside(forward_image.shape,
+                                                                                   self.height_ratio,
+                                                                                   self.width_ratio)
+        else:
+            h_start, h_end, w_start, w_end = locs
+        # masks_GT[:, :, h_start: h_end, w_start: w_end] = 0
+        # masks = masks_GT.repeat(1, 3, 1, 1)
+
+        cropped = forward_image[:, :, h_start: h_end, w_start: w_end]
+
+        scaled_cropped = Functional.interpolate(
+            cropped,
+            size=[forward_image.shape[2], forward_image.shape[3]],
+            mode='bilinear')
+        scaled_cropped = self.clamp_with_grad(scaled_cropped)
+
+        return (h_start, h_end, w_start, w_end), cropped, scaled_cropped #, masks, masks_GT
 
     def tamper_based_augmentation(self, modified_input, modified_canny, masks, masks_GT, logs):
         # tamper-based data augmentation
@@ -725,77 +899,77 @@ class Modified_invISP(BaseModel):
         ####### Tamper ###############
         attacked_forward = torch.zeros_like(modified_input)
         for img_idx in range(batch_size):
-            way_tamper = img_idx % 4
+            way_tamper = self.global_step%3 #img_idx % 4
 
-            # if way_tamper == 0:
-            #     ####################################################################################################
-            #     # todo: splicing
-            #     # todo: invISP
-            #     ####################################################################################################
-            #     attacked_forward[img_idx:img_idx + 1] = modified_input[img_idx:img_idx + 1] * (1 - masks[img_idx:img_idx + 1]) \
-            #                                             + self.previous_previous_images[img_idx:img_idx + 1] * masks[img_idx:img_idx + 1]
-            #     # attack_name = "splicing"
-            #
-            # elif way_tamper == 1:
-            #     ####################################################################################################
-            #     # todo: copy-move
-            #     # todo: invISP
-            #     ####################################################################################################
-            #     lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
-            #     tamper = modified_input[img_idx:img_idx+1].clone().detach()
-            #     x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
-            #     while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
-            #         x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
-            #         y_shift = int((modified_input.shape[3]) * (np.random.rand() - 0.5))
-            #
-            #         ### two times padding ###
-            #         mask_buff = torch.zeros((masks[img_idx:img_idx+1].shape[0], masks.shape[1],
-            #                                     masks.shape[2] + abs(2 * x_shift),
-            #                                     masks.shape[3] + abs(2 * y_shift))).cuda()
-            #
-            #         mask_buff[:, :,
-            #         abs(x_shift) + x_shift:abs(x_shift) + x_shift + modified_input.shape[2],
-            #         abs(y_shift) + y_shift:abs(y_shift) + y_shift + modified_input.shape[3]] = masks[img_idx:img_idx+1]
-            #
-            #         mask_buff = mask_buff[:, :,
-            #                             abs(x_shift):abs(x_shift) + modified_input.shape[2],
-            #                             abs(y_shift):abs(y_shift) + modified_input.shape[3]]
-            #
-            #         valid = torch.mean(mask_buff)
-            #         retried += 1
-            #         if valid>=max_valid:
-            #             max_valid = valid
-            #             self.mask_shifted = mask_buff
-            #             self.x_shift, self.y_shift = x_shift, y_shift
-            #
-            #     self.tamper_shifted = torch.zeros((modified_input[img_idx:img_idx+1].shape[0], modified_input.shape[1],
-            #                                        modified_input.shape[2] + abs(2 * self.x_shift),
-            #                                        modified_input.shape[3] + abs(2 * self.y_shift))).cuda()
-            #     self.tamper_shifted[:, :, abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + modified_input.shape[2],
-            #     abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + modified_input.shape[3]] = tamper
-            #
-            #
-            #     self.tamper_shifted = self.tamper_shifted[:, :,
-            #                      abs(self.x_shift): abs(self.x_shift) + modified_input.shape[2],
-            #                      abs(self.y_shift): abs(self.y_shift) + modified_input.shape[3]]
-            #
-            #     masks[img_idx:img_idx+1] = self.mask_shifted.clone().detach()
-            #     masks[img_idx:img_idx+1] = self.clamp_with_grad(masks[img_idx:img_idx+1])
-            #     valid = torch.mean(masks[img_idx:img_idx+1])
-            #
-            #     masks_GT[img_idx:img_idx+1] = masks[img_idx:img_idx+1, :1, :, :]
-            #     attacked_forward[img_idx:img_idx+1] = modified_input[img_idx:img_idx+1] * (1 - masks[img_idx:img_idx+1]) + self.tamper_shifted.clone().detach() * masks[img_idx:img_idx+1]
-            #     del self.tamper_shifted
-            #     del self.mask_shifted
-            #
-            # else: #if way_tamper == 0:
-            ####################################################################################################
-            # todo: simulated inpainting
-            # todo: it is important, without protection, though the tampering can be close, it should also be detected.
-            ####################################################################################################
-            attacked_forward[img_idx:img_idx + 1] = modified_input[img_idx:img_idx + 1] * (
-                        1 - masks[img_idx:img_idx + 1]) \
-                                                    + forward_image[img_idx:img_idx + 1] * masks[img_idx:img_idx + 1]
+            if way_tamper == 0:
+                ####################################################################################################
+                # todo: splicing
+                # todo: invISP
+                ####################################################################################################
+                attacked_forward[img_idx:img_idx + 1] = modified_input[img_idx:img_idx + 1] * (1 - masks[img_idx:img_idx + 1]) \
+                                                        + self.previous_previous_images[img_idx:img_idx + 1] * masks[img_idx:img_idx + 1]
+                # attack_name = "splicing"
+
+            elif way_tamper == 1:
+                ####################################################################################################
+                # todo: copy-move
+                # todo: invISP
+                ####################################################################################################
+                lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
+                tamper = modified_input[img_idx:img_idx+1].clone().detach()
+                x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
+                while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
+                    x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
+                    y_shift = int((modified_input.shape[3]) * (np.random.rand() - 0.5))
+
+                    ### two times padding ###
+                    mask_buff = torch.zeros((masks[img_idx:img_idx+1].shape[0], masks.shape[1],
+                                                masks.shape[2] + abs(2 * x_shift),
+                                                masks.shape[3] + abs(2 * y_shift))).cuda()
+
+                    mask_buff[:, :,
+                    abs(x_shift) + x_shift:abs(x_shift) + x_shift + modified_input.shape[2],
+                    abs(y_shift) + y_shift:abs(y_shift) + y_shift + modified_input.shape[3]] = masks[img_idx:img_idx+1]
+
+                    mask_buff = mask_buff[:, :,
+                                        abs(x_shift):abs(x_shift) + modified_input.shape[2],
+                                        abs(y_shift):abs(y_shift) + modified_input.shape[3]]
+
+                    valid = torch.mean(mask_buff)
+                    retried += 1
+                    if valid>=max_valid:
+                        max_valid = valid
+                        self.mask_shifted = mask_buff
+                        self.x_shift, self.y_shift = x_shift, y_shift
+
+                self.tamper_shifted = torch.zeros((modified_input[img_idx:img_idx+1].shape[0], modified_input.shape[1],
+                                                   modified_input.shape[2] + abs(2 * self.x_shift),
+                                                   modified_input.shape[3] + abs(2 * self.y_shift))).cuda()
+                self.tamper_shifted[:, :, abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + modified_input.shape[2],
+                abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + modified_input.shape[3]] = tamper
+
+
+                self.tamper_shifted = self.tamper_shifted[:, :,
+                                 abs(self.x_shift): abs(self.x_shift) + modified_input.shape[2],
+                                 abs(self.y_shift): abs(self.y_shift) + modified_input.shape[3]]
+
+                masks[img_idx:img_idx+1] = self.mask_shifted.clone().detach()
+                masks[img_idx:img_idx+1] = self.clamp_with_grad(masks[img_idx:img_idx+1])
+                valid = torch.mean(masks[img_idx:img_idx+1])
+
+                masks_GT[img_idx:img_idx+1] = masks[img_idx:img_idx+1, :1, :, :]
+                attacked_forward[img_idx:img_idx+1] = modified_input[img_idx:img_idx+1] * (1 - masks[img_idx:img_idx+1]) + self.tamper_shifted.clone().detach() * masks[img_idx:img_idx+1]
+                del self.tamper_shifted
+                del self.mask_shifted
+
+            else: #if way_tamper == 0:
+                ####################################################################################################
+                # todo: simulated inpainting
+                # todo: it is important, without protection, though the tampering can be close, it should also be detected.
+                ####################################################################################################
+                attacked_forward[img_idx:img_idx + 1] = modified_input[img_idx:img_idx + 1] * (
+                            1 - masks[img_idx:img_idx + 1]) \
+                                                        + forward_image[img_idx:img_idx + 1] * masks[img_idx:img_idx + 1]
 
         attacked_forward = self.clamp_with_grad(attacked_forward)
         # attacked_forward = self.Quantization(attacked_forward)
@@ -856,7 +1030,7 @@ class Modified_invISP(BaseModel):
             index = self.global_step % 5
         if index == 0:
             grid = self.resize(grid.unsqueeze(0))[0]
-        ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+        ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
         if index == 1:
             kernel_list = [3,5,7]
             kernel = random.choice(kernel_list)
@@ -877,7 +1051,7 @@ class Modified_invISP(BaseModel):
         #                               interpolation=cv2.INTER_LINEAR)
         realworld_attack = realworld_attack.astype(np.float32) / 255.
         realworld_attack = torch.from_numpy(
-            np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).float()
+            np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).contiguous().float()
         realworld_attack = realworld_attack.unsqueeze(0).cuda()
         return realworld_attack
 
@@ -946,7 +1120,7 @@ class Modified_invISP(BaseModel):
         dis_loss = (dis_real_loss + dis_fake_loss) / 2
         return dis_loss
 
-    def optimize_parameters_prepare(self):
+    def optimize_parameters_prepare(self, step=None):
         ####################################################################################################
         # todo: Finetuning ISP pipeline and training identity function on RAW2RAW
         # todo: kept frozen are the networks: invISP, mantranet (+2 more)
@@ -1007,7 +1181,7 @@ class Modified_invISP(BaseModel):
                     if self.global_step % 5 in {0, 1, 2}:
                         quality_idx = np.random.randint(19, 21)
                     else:
-                        quality_idx = np.random.randint(12, 17)
+                        quality_idx = np.random.randint(12, 21)
                     attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
                                                          quality_idx=quality_idx)
                 else:
@@ -1364,7 +1538,7 @@ class Modified_invISP(BaseModel):
         if not grayscale:
             img_GT = img_GT[:, :, [2, 1, 0]]
             img_GT = torch.from_numpy(
-                np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
+                np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).contiguous().float()
         else:
             img_GT = self.image_to_tensor(img_GT)
 

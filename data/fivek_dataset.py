@@ -311,34 +311,76 @@ class FiveKDataset_skip(Dataset):
     npz_uint16：False or True 是否使用uint16格式存储的raw图像
     """
 
-    def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
+    def __init__(self, dataset_roots: list, camera_names: list, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
                  file_nums=100, rgb_scale=False, npz_uint16=True, use_metadata=True):
-        self.dataset_root = dataset_root
-        self.camera_name = camera_name
+        ####################################################################################################
+        # todo: Settings
+        # todo:
+        ####################################################################################################
         self.data_mode = data_mode
         self.uncond_p = uncond_p
         self.rgb_scale = rgb_scale
         self.npz_uint16 = npz_uint16
         self.use_metadata = use_metadata
-        dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
-        self.raw_files, self.rgb_files = self.load(dataset_file)
         self.stage = stage
-        if stage != 'train':
-            self.raw_files = self.raw_files[:file_nums]
-            self.rgb_files = self.rgb_files[:file_nums]
-        assert len(self.raw_files) == len(self.rgb_files)
         self.patch_size = patch_size
         self.gamma = True
-        if self.use_metadata:
-            self.load_metadata(dataset_file)
+        ####################################################################################################
+        # todo: Adding support of reading multiple camera settings
+        # todo:
+        ####################################################################################################
+        self.metadata_list = {}
+        self.raw_files, self.rgb_files, self.camera_name_per_image = [], [], []
+        for idx in range(len(dataset_roots)):
+            dataset_root = dataset_roots[idx]
+            camera_name = camera_names[idx]
+            # self.dataset_root = dataset_root
+            # self.camera_name = camera_name
 
-    def load_metadata(self, dataset_file):
+            dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
+            new_raw_files, new_rgb_files = self.load(dataset_root=dataset_root, file_name=dataset_file, camera_name=camera_name)
+            if stage != 'train':
+                new_raw_files = new_raw_files[:file_nums]
+                new_rgb_files = new_rgb_files[:file_nums]
+            # else:
+            #     new_raw_files = new_raw_files[file_nums:]
+            #     new_rgb_files = new_rgb_files[file_nums:]
+            assert len(new_raw_files) == len(new_rgb_files)
+
+            self.raw_files = self.raw_files + new_raw_files
+            self.rgb_files = self.rgb_files + new_rgb_files
+            self.camera_name_per_image = self.camera_name_per_image + ([camera_name]*len(new_raw_files))
+
+            if self.use_metadata:
+                new_metadata_dict = self.load_metadata(dataset_root=dataset_root, dataset_file=dataset_file, camera_name=camera_name)
+                self.metadata_list.update(new_metadata_dict)
+
+    # 这个函数用来通过文件载入数据集
+    def load(self, *, dataset_root, file_name, camera_name):
+        input_raws = []
+        target_rgbs = []
+
+        with open(file_name, "r") as f:
+            valid_camera_list = [line.strip() for line in f.readlines()]
+
+        for i, name in enumerate(valid_camera_list):
+            full_name = os.path.join(dataset_root, camera_name)
+            if self.data_mode == 'RAW':
+                raw_folder_name = 'RAW_UINT16' if self.npz_uint16 else 'RAW'
+                input_raws.append(os.path.join(full_name, raw_folder_name, name + '.npz'))
+            else:
+                input_raws.append(os.path.join(full_name, 'DNG', name + '.dng'))
+            target_rgbs.append(os.path.join(full_name, 'RGB_PNG', name + '.png'))
+
+        return input_raws, target_rgbs
+
+    def load_metadata(self, *, dataset_root, dataset_file, camera_name):
         import pickle
-        with open(os.path.join(self.dataset_root, self.camera_name, 'metadata.pickle'), 'rb') as fin:
+        with open(os.path.join(dataset_root, camera_name, 'metadata.pickle'), 'rb') as fin:
             data = pickle.load(fin)
         with open(dataset_file, "r") as f:
             valid_camera_list = [line.strip() for line in f.readlines()]
-        self.metadata_list = dict([(key, data[key]) for key in valid_camera_list])
+        return dict([(key, data[key]) for key in valid_camera_list])
 
     def pack_raw(self, raw):
         # 两个相机都是RGGB
@@ -355,6 +397,7 @@ class FiveKDataset_skip(Dataset):
     def __getitem__(self, index):
         raw_path = self.raw_files[index]
         rgb_path = self.rgb_files[index]
+        camera_name = self.camera_name_per_image[index]
         # print(raw_path)
         target_rgb_img = imageio.imread(rgb_path)
         assert self.data_mode == 'RAW'
@@ -369,10 +412,10 @@ class FiveKDataset_skip(Dataset):
         input_raw_img = cv2.resize(input_raw_img, (self.patch_size, self.patch_size), interpolation=cv2.INTER_LINEAR)
         input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
         if self.gamma:
-            norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
+            norm_value = np.power(4095, 1 / 2.2) if camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
             input_raw_img = np.power(input_raw_img, 1 / 2.2)
         else:
-            norm_value = 4095 if self.camera_name == 'Canon_EOS_5D' else 16383
+            norm_value = 4095 if camera_name == 'Canon_EOS_5D' else 16383
 
         # show_images = np.hstack([(input_raw_img/norm_value*255).astype(np.uint8), target_rgb_img.astype(np.uint8)])
         #
@@ -421,24 +464,6 @@ class FiveKDataset_skip(Dataset):
     def __len__(self):
         return len(self.raw_files)
 
-    # 这个函数用来通过文件载入数据集
-    def load(self, file_name):
-        input_raws = []
-        target_rgbs = []
-
-        with open(file_name, "r") as f:
-            valid_camera_list = [line.strip() for line in f.readlines()]
-
-        for i, name in enumerate(valid_camera_list):
-            full_name = os.path.join(self.dataset_root, self.camera_name)
-            if self.data_mode == 'RAW':
-                raw_folder_name = 'RAW_UINT16' if self.npz_uint16 else 'RAW'
-                input_raws.append(os.path.join(full_name, raw_folder_name, name + '.npz'))
-            else:
-                input_raws.append(os.path.join(full_name, 'DNG', name + '.dng'))
-            target_rgbs.append(os.path.join(full_name, 'RGB_PNG', name + '.png'))
-
-        return input_raws, target_rgbs
 
     def norm_img(self, img, max_value, scale_minus1=False):
         if scale_minus1:
@@ -933,7 +958,7 @@ if __name__ == '__main__':
     # exit(0)
     # data_process_npz(dataset_root, camera_name)
     # exit(0)
-    train_set = FiveKDataset_skip(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0.,
+    train_set = FiveKDataset_skip([dataset_root], [camera_name], stage='train', rgb_scale=False, uncond_p=0.,
                                   patch_size=512, use_metadata=True)
     dataloader = DataLoader(train_set, batch_size=1, shuffle=False, num_workers=1,
                             drop_last=True,

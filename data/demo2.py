@@ -1,15 +1,14 @@
 import glob
 import os
+
 import cv2
+import imageio
 import numpy as np
 import rawpy
 from PIL import Image
-import imageio
 
 from .pipeline import run_pipeline_v2
-import colour_demosaicing
-import time
-from pipeline_utils import get_visible_raw_image, get_metadata
+
 
 def my_own_pipeline(images_dir, output_dir=None):
     ####################################################################################################
@@ -135,14 +134,14 @@ def save_raw_npz(images_dir, output_dir=None):
         np.savez(new_path, raw=raw_image)
         # imageio.imwrite(new_path, png_image)
 
-def test_read(images_dir):
-    file_names = os.listdir(images_dir)
-    for file_name in file_names:
-        file_path = os.path.join(images_dir, file_name)
-        # test = np.load(file_path)
-        test = imageio.imread(file_path)
-        # test = test.raw_image_visible
-        print(test[0][0])
+# def test_read(images_dir):
+#     file_names = os.listdir(images_dir)
+#     for file_name in file_names:
+#         file_path = os.path.join(images_dir, file_name)
+#         # test = np.load(file_path)
+#         test = imageio.imread(file_path)
+#         # test = test.raw_image_visible
+#         print(test[0][0])
 
 def pack_raw(raw):
     # 两个相机都是RGGB
@@ -166,37 +165,37 @@ def down(images_dir, out_dir):
         dst_image = cv2.resize(image, (w//scale_factor, h//scale_factor), None, 0, 0, cv2.INTER_LINEAR)
         out_path = os.path.join(out_dir, file)
         cv2.imwrite(out_path, dst_image)
-
-
-def test_down(images_dir):
-    files = os.listdir(images_dir)
-    norm_value = 4095
-    scale_factor = 10
-    for file in files:
-        path = os.path.join(images_dir, file)
-        data = np.load(path)['raw']
-        data = data / norm_value * 255
-        data_packed, h, w = pack_raw(data)
-        down_lists = []
-        for j in range(4):
-            dst = cv2.resize(data_packed[:, :, j], (w//scale_factor, h//scale_factor), None, 0, 0, cv2.INTER_LINEAR)
-            dst = np.expand_dims(dst, axis=2)
-            down_lists.append(dst)
-        test_lists = [down_lists[0]]
-        test_lists.append((down_lists[1]+down_lists[2])/2)
-        test_lists.append(down_lists[-1])
-        out = np.concatenate(test_lists, axis=2)
-        out_path = os.path.join('./test', file.replace('.npz', '.png'))
-        out = out[:, :, ::-1]
-        cv2.imwrite(out_path, out)
+#
+#
+# def test_down(images_dir):
+#     files = os.listdir(images_dir)
+#     norm_value = 4095
+#     scale_factor = 10
+#     for file in files:
+#         path = os.path.join(images_dir, file)
+#         data = np.load(path)['raw']
+#         data = data / norm_value * 255
+#         data_packed, h, w = pack_raw(data)
+#         down_lists = []
+#         for j in range(4):
+#             dst = cv2.resize(data_packed[:, :, j], (w//scale_factor, h//scale_factor), None, 0, 0, cv2.INTER_LINEAR)
+#             dst = np.expand_dims(dst, axis=2)
+#             down_lists.append(dst)
+#         test_lists = [down_lists[0]]
+#         test_lists.append((down_lists[1]+down_lists[2])/2)
+#         test_lists.append(down_lists[-1])
+#         out = np.concatenate(test_lists, axis=2)
+#         out_path = os.path.join('./test', file.replace('.npz', '.png'))
+#         out = out[:, :, ::-1]
+#         cv2.imwrite(out_path, out)
 
 
 if __name__ == '__main__':
     # test = np.load('./data_raw_npz/a0004-jmac_MG_1384.npz')
-    images_dir = './data_raw_rgb/'
-    output_dir = './down_rgb/'
-    down(images_dir, output_dir)
-    # use_rawpy(images_dir, output_dir)
+    images_dir = 'D://DNG//'
+    output_dir = 'D://DNG//'
+    # down(images_dir, output_dir)
+    use_rawpy(images_dir, output_dir)
     # save_raw_npz(images_dir, output_dir)
     # test_down(output_dir)
     # if not os.path.exists(output_dir):
