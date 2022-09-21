@@ -63,26 +63,26 @@ def main(args,opt):
 
     #### mkdir and loggers
 
-    util.mkdirs((path for key, path in opt['path'].items() if not key == 'experiments_root'
-                 and 'pretrain_model' not in key and 'resume' not in key))
-
-    # config loggers. Before it, the log will not work
-    util.setup_logger('base', opt['path']['log'], 'train_' + opt['name'], level=logging.INFO,
-                      screen=True, tofile=True)
-    util.setup_logger('val', opt['path']['log'], 'val_' + opt['name'], level=logging.INFO,
-                      screen=True, tofile=True)
-    logger = logging.getLogger('base')
-    # logger.info(option.dict2str(opt))
+    # util.mkdirs((path for key, path in opt['path'].items() if not key == 'experiments_root'
+    #              and 'pretrain_model' not in key and 'resume' not in key))
+    # 
+    # # config loggers. Before it, the log will not work
+    # util.setup_logger('base', opt['path']['log'], 'train_' + opt['name'], level=logging.INFO,
+    #                   screen=True, tofile=True)
+    # util.setup_logger('val', opt['path']['log'], 'val_' + opt['name'], level=logging.INFO,
+    #                   screen=True, tofile=True)
+    # logger = logging.getLogger('base')
+    # print(option.dict2str(opt))
     # tensorboard logger
-    if opt['use_tb_logger'] and 'debug' not in opt['name']:
-        version = float(torch.__version__[0:3])
-        if version >= 1.1:  # PyTorch 1.1
-            from torch.utils.tensorboard import SummaryWriter
-        else:
-            logger.info(
-                'You are using PyTorch {}. Tensorboard will use [tensorboardX]'.format(version))
-            from tensorboardX import SummaryWriter
-        tb_logger = SummaryWriter(log_dir='../tb_logger/' + opt['name'])
+    # if opt['use_tb_logger'] and 'debug' not in opt['name']:
+    #     version = float(torch.__version__[0:3])
+    #     if version >= 1.1:  # PyTorch 1.1
+    #         from torch.utils.tensorboard import SummaryWriter
+    #     else:
+    #         # print(
+    #         #     'You are using PyTorch {}. Tensorboard will use [tensorboardX]'.format(version))
+    #         from tensorboardX import SummaryWriter
+    #     tb_logger = SummaryWriter(log_dir='../tb_logger/' + opt['name'])
 
     # convert to NoneDict, which returns None for missing keys
     opt = option.dict_to_nonedict(opt)
@@ -98,7 +98,7 @@ def main(args,opt):
     # if seed is None:
     seed = random.randint(1, 100)
     if rank <= 0:
-        logger.info('Random seed: {}'.format(seed))
+        print('Random seed: {}'.format(seed))
     util.set_random_seed(seed)
     ## Slower but more reproducible
     # torch.backends.cudnn.deterministic = True
@@ -106,9 +106,7 @@ def main(args,opt):
     ## Faster but less reproducible
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
-    ####################################################################################################
-    ## todo: END OF DEFINITION
-    ####################################################################################################
+    
 
     ####################################################################################################
     # todo: TRAINING DATASET DEFINITION
@@ -163,9 +161,9 @@ def main(args,opt):
                                 num_workers=num_workers, sampler=train_sampler, drop_last=True,
                                 pin_memory=True)
     if rank <= 0:
-        logger.info('Number of train images: {:,d}, iters: {:,d}'.format(
+        print('Number of train images: {:,d}, iters: {:,d}'.format(
             len(train_set), train_size))
-        # logger.info('Total epochs needed: {:d} for iters {:,d}'.format(
+        # print('Total epochs needed: {:d} for iters {:,d}'.format(
         #     total_epochs, total_iters))
     ####################################################################################################
     # todo: TEST DATASET DEFINITION
@@ -209,11 +207,9 @@ def main(args,opt):
                                 pin_memory=True)
 
     if rank <= 0:
-        logger.info('Number of val images: {:,d}, iters: {:,d}'.format(
+        print('Number of val images: {:,d}, iters: {:,d}'.format(
             len(val_set), val_size))
-    ####################################################################################################
-    ## todo: END OF DEFINITION
-    ####################################################################################################
+    
 
     ####################################################################################################
     # todo: MODEL DEFINITION
@@ -242,10 +238,8 @@ def main(args,opt):
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
-    logger.info('Model [{:s}] is created.'.format(model.__class__.__name__))
-    ####################################################################################################
-    ## todo: END OF DEFINITION
-    ####################################################################################################
+    print('Model [{:s}] is created.'.format(model.__class__.__name__))
+
 
     ####################################################################################################
     # todo: FUNCTIONALITIES
@@ -276,7 +270,7 @@ def main(args,opt):
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
         ####################################################################################################
         if rank<=0:
-            logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
+            print('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
         latest_values = None
         total = len(train_set)
         print_step, restart_step = 15, 1000
@@ -346,7 +340,7 @@ def main(args,opt):
         # todo: the evaluation procedure should ONLY include evaluate so far
         ####################################################################################################
         if rank<=0:
-            logger.info('Start evaluating... ')
+            print('Start evaluating... ')
             if 'COCO' in opt['eval_dataset']:
                 root = '/home/qcying/real_world_test_images'
             elif 'ILSVRC' in opt['eval_dataset']:
@@ -373,7 +367,7 @@ def main(args,opt):
         # todo: customized for PAMI, KD_JPEG_Generator_training
         ####################################################################################################
         if rank<=0:
-            logger.info('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
+            print('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
         latest_values = None
         total = len(train_set)
         for epoch in range(start_epoch, total_epochs + 1):
@@ -406,6 +400,9 @@ if __name__ == '__main__':
                         help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
     parser.add_argument('-mode', type=int, default=0, help='validate or not.')
+    parser.add_argument('-task_name', type=str, default="COCO_base", help='will determine the name of the folder.')
+    parser.add_argument('-loading_from', type=str, default="COCO_base", help='loading checkpoints from?')
+    parser.add_argument('-load_models', type=int, default=1, help='load checkpoint or not.')
     args = parser.parse_args()
     opt = option.parse(args.opt, is_train=True)
 

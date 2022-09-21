@@ -1,5 +1,10 @@
 import numpy as np
+import os
 
+def create_folder(file_name):
+    if not os.path.exists(file_name):
+        os.mkdir(file_name)
+        print(f"File made: {file_name}")
 
 def denorm(img, max_value):
     img = img * float(max_value)
