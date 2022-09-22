@@ -252,8 +252,11 @@ class HWB(nn.Module):
 ##########################################################################
 ##---------- HWMNet-LOL ----------
 class HWMNet(nn.Module):
-    def __init__(self, in_chn=3, wf=64, depth=4):
+    def __init__(self, in_chn=3, out_chn=None, wf=64, depth=4):
         super(HWMNet, self).__init__()
+        if out_chn is None:
+            out_chn = in_chn
+        self.apply_res = in_chn==out_chn
         self.depth = depth
         self.down_path = nn.ModuleList()
         self.bili_down = bili_resize(0.5)
@@ -280,7 +283,7 @@ class HWMNet(nn.Module):
             prev_channels = (2 ** i) * wf
 
         self.final_ff = SKFF(in_channels=wf, height=depth)
-        self.last = conv3x3(prev_channels, in_chn, bias=True)
+        self.last = conv3x3(prev_channels, out_chn, bias=True)
 
     def forward(self, x):
         img = x
@@ -316,8 +319,10 @@ class HWMNet(nn.Module):
         msff_result = self.final_ff(ms_result)
 
         ##### Reconstruct #####
-        out_1 = self.last(msff_result) + img
-
+        if self.apply_res:
+            out_1 = self.last(msff_result) + img
+        else:
+            out_1 = self.last(msff_result)
         return out_1
 
 import torch.nn.functional as F

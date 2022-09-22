@@ -212,7 +212,7 @@ class ResFCN(ResNet50):
             outputs.append(x1)
             outputs.append(x2)
 
-        return 0, x0
+        return x0
 
 
 class _PositionAttentionModule(nn.Module):

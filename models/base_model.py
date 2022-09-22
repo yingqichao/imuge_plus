@@ -23,6 +23,7 @@ class BaseModel():
         self.localizer = None
         self.discriminator = None
         self.global_step = 0
+        self.updated_step = 0
         ####################################################################################################
         # todo: constants
         ####################################################################################################
@@ -45,11 +46,11 @@ class BaseModel():
     def using_weak_jpeg_plus_blurring_etc(self):
         return self.global_step % 5 in {0, 1, 2}
     def using_simulated_inpainting(self):
-        return self.global_step % 3 == 2
+        return self.global_step % 2 == 0
     def using_splicing(self):
-        return self.global_step % 3 == 0
+        return False #self.global_step % 3 == 0
     def using_copy_move(self):
-        return self.global_step % 3 == 1
+        return self.global_step % 2 == 1
     def using_gaussian_blur(self):
         return self.global_step % 5 == 1
     def using_median_blur(self):
