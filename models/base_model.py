@@ -6,7 +6,7 @@ from torch.nn.parallel import DistributedDataParallel
 
 
 class BaseModel():
-    def __init__(self, opt):
+    def __init__(self, opt,  args, train_set):
         self.opt = opt
         self.device = torch.device('cuda' if opt['gpu_ids'] is not None else 'cpu')
         self.is_train = opt['is_train']
@@ -26,6 +26,12 @@ class BaseModel():
         ####################################################################################################
         # todo: constants
         ####################################################################################################
+        self.width_height = opt['datasets']['train']['GT_size']
+        self.kernel_RAW = torch.tensor([[[1, 0], [0, 0]],[[0, 1], [1, 0]],[[0, 0], [0, 1]]],device="cuda", requires_grad=False)
+        expand_times = int(self.width_height//2)
+        self.kernel_RAW = self.kernel_RAW.repeat(1,expand_times,expand_times)
+
+
 
         self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
 
