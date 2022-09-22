@@ -430,7 +430,6 @@ class Modified_invISP(BaseModel):
         if not (self.previous_images is None or self.previous_previous_images is None):
             modified_input_transform_free = None
 
-
             if train_isp_networks:
                 with torch.cuda.amp.autocast():
                     ####################################################################################################
@@ -444,18 +443,23 @@ class Modified_invISP(BaseModel):
                     ISP_PSNR_CYCLE = self.psnr(self.postprocess(modified_input_cycle), self.postprocess(gt_rgb)).item()
                     logs['CYCLE_PSNR'] = ISP_PSNR_CYCLE
 
-                    modified_input_transform_free = self.generator(input_raw)
-                    ISP_L1 = self.l1_loss(input=modified_input_transform_free, target=gt_rgb)
-                    modified_input_transform_free = self.clamp_with_grad(modified_input_transform_free.detach())
-                    ISP_PSNR = self.psnr(self.postprocess(modified_input_transform_free), self.postprocess(gt_rgb)).item()
-                    logs['ISP_PSNR'] = ISP_PSNR
-
                     modified_input_pipeline = self.netG(input_raw)
                     THIRD_L1 = self.l1_loss(input=modified_input_pipeline, target=gt_rgb)
                     modified_input_pipeline = self.clamp_with_grad(modified_input_pipeline.detach())
                     PIPE_PSNR = self.psnr(self.postprocess(modified_input_pipeline),
                                          self.postprocess(gt_rgb)).item()
                     logs['PIPE_PSNR'] = PIPE_PSNR
+
+                    modified_input_transform_free = self.generator(input_raw)
+                    ISP_L1 = self.l1_loss(input=modified_input_transform_free, target=gt_rgb)
+                    modified_input_transform_free = self.clamp_with_grad(modified_input_transform_free)
+
+                    # input_raw_rev = self.generator(modified_input_transform_free, rev=True)
+                    # ISP_L1_REV = self.l1_loss(input=input_raw_rev, target=input_raw)
+                    # ISP_L1 += ISP_L1_REV
+                    ISP_PSNR = self.psnr(self.postprocess(modified_input_transform_free), self.postprocess(gt_rgb)).item()
+                    logs['ISP_PSNR'] = ISP_PSNR
+                    modified_input_transform_free = modified_input_transform_free.detach()
 
                 ####################################################################################################
                 # todo: Grad Accumulation
