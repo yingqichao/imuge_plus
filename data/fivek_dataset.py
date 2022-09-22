@@ -17,286 +17,284 @@ import time
 # RAW: 去马赛克之后的raw文件
 # RGB：ISP管道输出的RGB图像
 # stage: train 或 test
-class FiveKDataset(Dataset):
-    """
-    FiveKDataset
-    dataset_root：数据集的路径,
-    camera_name：相机名,
-    stage：train or test,
-    patch_size：rgb image size // 2 (transfer raw 2*2 pattern into 1 pixel),
-    data_mode='RAW',
-    uncond_p：条件输入为空（全1图像）的概率,
-    file_nums：训练时，展示验证集图像结果的数目,
-    rgb_scale：False or True 代表rgb图像norm的方式，设置为True时，rgb图像将会rescale到[-1, 1],
-    npz_uint16：False or True 是否使用uint16格式存储的raw图像
-    """
-
-    def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
-                 file_nums=10, rgb_scale=False, npz_uint16=True):
-        self.dataset_root = dataset_root
-        self.camera_name = camera_name
-        self.data_mode = data_mode
-        self.uncond_p = uncond_p
-        self.rgb_scale = rgb_scale
-        self.npz_uint16 = npz_uint16
-        dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
-        self.raw_files, self.rgb_files = self.load(dataset_file)
-        self.stage = stage
-        if stage != 'train':
-            self.raw_files = self.raw_files[:file_nums]
-            self.rgb_files = self.rgb_files[:file_nums]
-        assert len(self.raw_files) == len(self.rgb_files)
-        # 每张图采样的个数
-        self.selected_samples = 2 if self.stage == 'train' else 1
-        self.patch_size = patch_size
-        self.gamma = True
-
-    def visualize_raw(self, raw):
-        # 两个相机都是RGGB
-        # im = np.expand_dims(raw, axis=2)
-        H, W = raw.shape[0], raw.shape[1]
-        v_im = np.zeros([H, W, 3], dtype=np.uint16)
-        v_im[0:H:2, 0:W:2, 0] = raw[0:H:2, 0:W:2]
-        v_im[0:H:2, 1:W:2, 1] = raw[0:H:2, 1:W:2]
-        v_im[1:H:2, 0:W:2, 1] = raw[1:H:2, 0:W:2]
-        v_im[1:H:2, 1:W:2, 2] = raw[1:H:2, 1:W:2]
-        return v_im
-
-    def pack_raw(self, raw):
-        # 两个相机都是RGGB
-        H, W = raw.shape[0], raw.shape[1]
-        raw = np.expand_dims(raw, axis=2)
-        R = raw[0:H:2, 0:W:2, :]
-        Gr = raw[0:H:2, 1:W:2, :]
-        Gb = raw[1:H:2, 0:W:2, :]
-        B = raw[1:H:2, 1:W:2, :]
-        G_avg = (Gr + Gb) / 2
-        out = np.concatenate((R, G_avg, B), axis=2)
-        return out
-
-    def __getitem__(self, index):
-        raw_path = self.raw_files[index]
-        rgb_path = self.rgb_files[index]
-        # print(raw_path)
-        target_rgb_img = imageio.imread(rgb_path)
-        if self.data_mode == 'RAW':
-            # print(raw_path)
-            # print(raw_path)
-            raw = np.load(raw_path)
-            raw_img = raw['raw']
-            if self.npz_uint16:
-                raw_img = self.pack_raw(raw_img)
-            wb = raw['wb']
-            wb = wb / wb.max()
-            input_raw_img = raw_img * wb[:-1]
-        else:
-            raw = rawpy.imread(raw_path)
-            input_raw_img = raw.raw_image_visible
-            flip_val = raw.sizes.flip
-            input_raw_img = flip(input_raw_img, flip_val)
-            if self.camera_name == 'Canon_EOS_5D':
-                input_raw_img = np.maximum(input_raw_img - 127.0, 0)
-            input_raw_img = self.visualize_raw(input_raw_img)
-
-        # input_raw_img, target_rgb_img = aug(self.patch_size, input_raw_img, target_rgb_img, self.npz_uint16)
-        # 默认中间的1024 1024
-
-        input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, self.patch_size, 4,
-                                                     select_samples=self.selected_samples, flow=not self.npz_uint16)
-        input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
-        if self.gamma:
-            norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
-            input_raw_img = np.power(input_raw_img, 1 / 2.2)
-        else:
-            norm_value = 4095 if self.camera_name == 'Canon_EOS_5D' else 16383
-        target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
-        input_raw_img = self.norm_img(input_raw_img, max_value=norm_value)
-
-        # input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, 128, 4)
-        input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
-        target_rgb_img = torch.Tensor(target_rgb_img).permute(2, 0, 1)
-
-        if random.random() < self.uncond_p:
-            # null label
-            input_raw_img = torch.ones_like(input_raw_img)
-
-        sample = {'input_raw': input_raw_img, 'target_rgb': target_rgb_img,
-                  'file_name': raw_path.split("/")[-1].split(".")[0]}
-        return sample
-
-    def __len__(self):
-        return len(self.raw_files)
-
-    # 这个函数用来通过文件载入数据集
-    def load(self, file_name):
-        input_raws = []
-        target_rgbs = []
-
-        with open(file_name, "r") as f:
-            valid_camera_list = [line.strip() for line in f.readlines()]
-
-        for i, name in enumerate(valid_camera_list):
-            full_name = os.path.join(self.dataset_root, self.camera_name)
-            if self.data_mode == 'RAW':
-                raw_folder_name = 'RAW_UINT16' if self.npz_uint16 else 'RAW'
-                input_raws.append(os.path.join(full_name, raw_folder_name, name + '.npz'))
-            else:
-                input_raws.append(os.path.join(full_name, 'DNG', name + '.dng'))
-            target_rgbs.append(os.path.join(full_name, 'RGB', name + '.jpg'))
-
-        return input_raws, target_rgbs
-
-    def norm_img(self, img, max_value, scale_minus1=False):
-        if scale_minus1:
-            half_value = max_value / 2
-            img = img / half_value - 1
-            # scaled to [-1, 1]
-        else:
-            img = img / float(max_value)
-        return img
-
-
-class FiveKDataset_crop(Dataset):
-    """
-    FiveKDataset
-    dataset_root：数据集的路径,
-    camera_name：相机名,
-    stage：train or test,
-    patch_size：rgb image size // 2 (transfer raw 2*2 pattern into 1 pixel),
-    data_mode='RAW',
-    uncond_p：条件输入为空（全1图像）的概率,
-    file_nums：训练时，展示验证集图像结果的数目,
-    rgb_scale：False or True 代表rgb图像norm的方式，设置为True时，rgb图像将会rescale到[-1, 1],
-    npz_uint16：False or True 是否使用uint16格式存储的raw图像
-    """
-
-    def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
-                 file_nums=10, rgb_scale=False, npz_uint16=True):
-        self.dataset_root = dataset_root
-        self.camera_name = camera_name
-        self.data_mode = data_mode
-        self.uncond_p = uncond_p
-        self.rgb_scale = rgb_scale
-        self.npz_uint16 = npz_uint16
-        self.patch_size = patch_size
-        dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
-        self.raw_files, self.rgb_files = self.load(dataset_file)
-        self.stage = stage
-        if stage != 'train':
-            self.raw_files = self.raw_files[:file_nums]
-            self.rgb_files = self.rgb_files[:file_nums]
-        assert len(self.raw_files) == len(self.rgb_files)
-        self.gamma = True
-
-    def visualize_raw(self, raw):
-        # 两个相机都是RGGB
-        # im = np.expand_dims(raw, axis=2)
-        H, W = raw.shape[0], raw.shape[1]
-        v_im = np.zeros([H, W, 3], dtype=np.uint16)
-        v_im[0:H:2, 0:W:2, 0] = raw[0:H:2, 0:W:2]
-        v_im[0:H:2, 1:W:2, 1] = raw[0:H:2, 1:W:2]
-        v_im[1:H:2, 0:W:2, 1] = raw[1:H:2, 0:W:2]
-        v_im[1:H:2, 1:W:2, 2] = raw[1:H:2, 1:W:2]
-        return v_im
-
-    def pack_raw(self, raw):
-        # 两个相机都是RGGB
-        H, W = raw.shape[0], raw.shape[1]
-        raw = np.expand_dims(raw, axis=2)
-        R = raw[0:H:2, 0:W:2, :]
-        Gr = raw[0:H:2, 1:W:2, :]
-        Gb = raw[1:H:2, 0:W:2, :]
-        B = raw[1:H:2, 1:W:2, :]
-        G_avg = (Gr + Gb) / 2
-        out = np.concatenate((R, G_avg, B), axis=2)
-        return out
-
-    def __getitem__(self, index):
-        raw_path = self.raw_files[index]
-        rgb_path = self.rgb_files[index]
-        # print(raw_path)
-        target_rgb_img = imageio.imread(rgb_path)
-        if self.data_mode == 'RAW':
-            # print(raw_path)
-            # print(raw_path)
-            raw = np.load(raw_path)
-            raw_img = raw['raw']
-            if self.npz_uint16:
-                raw_img = self.pack_raw(raw_img)
-            wb = raw['wb']
-            wb = wb / wb.max()
-            input_raw_img = raw_img * wb[:-1]
-        else:
-            raw = rawpy.imread(raw_path)
-            input_raw_img = raw.raw_image_visible
-            flip_val = raw.sizes.flip
-            input_raw_img = flip(input_raw_img, flip_val)
-            if self.camera_name == 'Canon_EOS_5D':
-                input_raw_img = np.maximum(input_raw_img - 127.0, 0)
-            input_raw_img = self.visualize_raw(input_raw_img)
-
-        # input_raw_img, target_rgb_img = aug(self.patch_size, input_raw_img, target_rgb_img, self.npz_uint16)
-        # 默认中间的1024 1024
-        input_raw_img = cv2.resize(input_raw_img, (self.patch_size, self.patch_size), interpolation=cv2.INTER_LINEAR)
-        input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
-        if self.gamma:
-            norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
-            input_raw_img = np.power(input_raw_img, 1 / 2.2)
-        else:
-            norm_value = 4095 if self.camera_name == 'Canon_EOS_5D' else 16383
-        target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
-        input_raw_img = self.norm_img(input_raw_img, max_value=norm_value)
-
-        # input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, 128, 4)
-        input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
-        target_rgb_img = torch.Tensor(target_rgb_img).permute(2, 0, 1)
-
-        if random.random() < self.uncond_p:
-            # null label
-            input_raw_img = torch.ones_like(input_raw_img)
-
-        sample = {'input_raw': input_raw_img, 'target_rgb': target_rgb_img,
-                  'file_name': raw_path.split("/")[-1].split(".")[0]}
-        return sample
-
-    def __len__(self):
-        return len(self.raw_files)
-
-    # 这个函数用来通过文件载入数据集
-    def load(self, file_name):
-        input_raws = []
-        target_rgbs = []
-        sub_nums = int(1024 // self.patch_size)
-        sub_nums = sub_nums * sub_nums
-
-        with open(file_name, "r") as f:
-            valid_camera_list = [line.strip() for line in f.readlines()]
-
-        for i, name in enumerate(valid_camera_list):
-            full_name = os.path.join(self.dataset_root, self.camera_name)
-            if self.data_mode == 'RAW':
-                raw_folder_name = 'RAW_UINT16' if self.npz_uint16 else 'RAW'
-                for j in range(sub_nums):
-                    input_raws.append(os.path.join(full_name, raw_folder_name, name + f'_{j}.npz'))
-            else:
-                input_raws.append(os.path.join(full_name, 'DNG', name + '.dng'))
-            for j in range(sub_nums):
-                target_rgbs.append(os.path.join(full_name, 'RGB', name + f'_{j}.jpg'))
-
-        return input_raws, target_rgbs
-
-    def norm_img(self, img, max_value, scale_minus1=False):
-        if scale_minus1:
-            half_value = max_value / 2
-            img = img / half_value - 1
-            # scaled to [-1, 1]
-        else:
-            img = img / float(max_value)
-        return img
+# class FiveKDataset(Dataset):
+#     """
+#     FiveKDataset
+#     dataset_root：数据集的路径,
+#     camera_name：相机名,
+#     stage：train or test,
+#     patch_size：rgb image size // 2 (transfer raw 2*2 pattern into 1 pixel),
+#     data_mode='RAW',
+#     uncond_p：条件输入为空（全1图像）的概率,
+#     file_nums：训练时，展示验证集图像结果的数目,
+#     rgb_scale：False or True 代表rgb图像norm的方式，设置为True时，rgb图像将会rescale到[-1, 1],
+#     npz_uint16：False or True 是否使用uint16格式存储的raw图像
+#     """
+#
+#     def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
+#                  file_nums=10, rgb_scale=False, npz_uint16=True):
+#         self.dataset_root = dataset_root
+#         self.camera_name = camera_name
+#         self.data_mode = data_mode
+#         self.uncond_p = uncond_p
+#         self.rgb_scale = rgb_scale
+#         self.npz_uint16 = npz_uint16
+#         dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
+#         self.raw_files, self.rgb_files = self.load(dataset_file)
+#         self.stage = stage
+#         if stage != 'train':
+#             self.raw_files = self.raw_files[:file_nums]
+#             self.rgb_files = self.rgb_files[:file_nums]
+#         assert len(self.raw_files) == len(self.rgb_files)
+#         # 每张图采样的个数
+#         self.selected_samples = 2 if self.stage == 'train' else 1
+#         self.patch_size = patch_size
+#         self.gamma = True
+#
+#     def visualize_raw(self, raw):
+#         # 两个相机都是RGGB
+#         # im = np.expand_dims(raw, axis=2)
+#         H, W = raw.shape[0], raw.shape[1]
+#         v_im = np.zeros([H, W, 3], dtype=np.uint16)
+#         v_im[0:H:2, 0:W:2, 0] = raw[0:H:2, 0:W:2]
+#         v_im[0:H:2, 1:W:2, 1] = raw[0:H:2, 1:W:2]
+#         v_im[1:H:2, 0:W:2, 1] = raw[1:H:2, 0:W:2]
+#         v_im[1:H:2, 1:W:2, 2] = raw[1:H:2, 1:W:2]
+#         return v_im
+#
+#     def pack_raw(self, raw):
+#         # 两个相机都是RGGB
+#         H, W = raw.shape[0], raw.shape[1]
+#         raw = np.expand_dims(raw, axis=2)
+#         R = raw[0:H:2, 0:W:2, :]
+#         Gr = raw[0:H:2, 1:W:2, :]
+#         Gb = raw[1:H:2, 0:W:2, :]
+#         B = raw[1:H:2, 1:W:2, :]
+#         G_avg = (Gr + Gb) / 2
+#         out = np.concatenate((R, G_avg, B), axis=2)
+#         return out
+#
+#     def __getitem__(self, index):
+#         raw_path = self.raw_files[index]
+#         rgb_path = self.rgb_files[index]
+#         # print(raw_path)
+#         target_rgb_img = imageio.imread(rgb_path)
+#         if self.data_mode == 'RAW':
+#             # print(raw_path)
+#             # print(raw_path)
+#             raw = np.load(raw_path)
+#             raw_img = raw['raw']
+#             if self.npz_uint16:
+#                 raw_img = self.pack_raw(raw_img)
+#             wb = raw['wb']
+#             wb = wb / wb.max()
+#             input_raw_img = raw_img * wb[:-1]
+#         else:
+#             raw = rawpy.imread(raw_path)
+#             input_raw_img = raw.raw_image_visible
+#             flip_val = raw.sizes.flip
+#             input_raw_img = flip(input_raw_img, flip_val)
+#             if self.camera_name == 'Canon_EOS_5D':
+#                 input_raw_img = np.maximum(input_raw_img - 127.0, 0)
+#             input_raw_img = self.visualize_raw(input_raw_img)
+#
+#         # input_raw_img, target_rgb_img = aug(self.patch_size, input_raw_img, target_rgb_img, self.npz_uint16)
+#         # 默认中间的1024 1024
+#
+#         input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, self.patch_size, 4,
+#                                                      select_samples=self.selected_samples, flow=not self.npz_uint16)
+#         input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
+#         if self.gamma:
+#             norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
+#             input_raw_img = np.power(input_raw_img, 1 / 2.2)
+#         else:
+#             norm_value = 4095 if self.camera_name == 'Canon_EOS_5D' else 16383
+#         target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
+#         input_raw_img = self.norm_img(input_raw_img, max_value=norm_value)
+#
+#         # input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, 128, 4)
+#         input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
+#         target_rgb_img = torch.Tensor(target_rgb_img).permute(2, 0, 1)
+#
+#         if random.random() < self.uncond_p:
+#             # null label
+#             input_raw_img = torch.ones_like(input_raw_img)
+#
+#         sample = {'input_raw': input_raw_img, 'target_rgb': target_rgb_img,
+#                   'file_name': raw_path.split("/")[-1].split(".")[0]}
+#         return sample
+#
+#     def __len__(self):
+#         return len(self.raw_files)
+#
+#     # 这个函数用来通过文件载入数据集
+#     def load(self, file_name):
+#         input_raws = []
+#         target_rgbs = []
+#
+#         with open(file_name, "r") as f:
+#             valid_camera_list = [line.strip() for line in f.readlines()]
+#
+#         for i, name in enumerate(valid_camera_list):
+#             full_name = os.path.join(self.dataset_root, self.camera_name)
+#             if self.data_mode == 'RAW':
+#                 raw_folder_name = 'RAW_UINT16' if self.npz_uint16 else 'RAW'
+#                 input_raws.append(os.path.join(full_name, raw_folder_name, name + '.npz'))
+#             else:
+#                 input_raws.append(os.path.join(full_name, 'DNG', name + '.dng'))
+#             target_rgbs.append(os.path.join(full_name, 'RGB', name + '.jpg'))
+#
+#         return input_raws, target_rgbs
+#
+#     def norm_img(self, img, max_value, scale_minus1=False):
+#         if scale_minus1:
+#             half_value = max_value / 2
+#             img = img / half_value - 1
+#             # scaled to [-1, 1]
+#         else:
+#             img = img / float(max_value)
+#         return img
 
 
-# def crop_raw(image_root):
-#     pass
+# class FiveKDataset_crop(Dataset):
+#     """
+#     FiveKDataset
+#     dataset_root：数据集的路径,
+#     camera_name：相机名,
+#     stage：train or test,
+#     patch_size：rgb image size // 2 (transfer raw 2*2 pattern into 1 pixel),
+#     data_mode='RAW',
+#     uncond_p：条件输入为空（全1图像）的概率,
+#     file_nums：训练时，展示验证集图像结果的数目,
+#     rgb_scale：False or True 代表rgb图像norm的方式，设置为True时，rgb图像将会rescale到[-1, 1],
+#     npz_uint16：False or True 是否使用uint16格式存储的raw图像
+#     """
+#
+#     def __init__(self, dataset_root, camera_name, stage, patch_size=256, data_mode='RAW', uncond_p=0.2,
+#                  file_nums=10, rgb_scale=False, npz_uint16=True):
+#         self.dataset_root = dataset_root
+#         self.camera_name = camera_name
+#         self.data_mode = data_mode
+#         self.uncond_p = uncond_p
+#         self.rgb_scale = rgb_scale
+#         self.npz_uint16 = npz_uint16
+#         self.patch_size = patch_size
+#         dataset_file = os.path.join(dataset_root, camera_name + '_' + stage + '.txt')
+#         self.raw_files, self.rgb_files = self.load(dataset_file)
+#         self.stage = stage
+#         if stage != 'train':
+#             self.raw_files = self.raw_files[:file_nums]
+#             self.rgb_files = self.rgb_files[:file_nums]
+#         assert len(self.raw_files) == len(self.rgb_files)
+#         self.gamma = True
+#
+#     def visualize_raw(self, raw):
+#         # 两个相机都是RGGB
+#         # im = np.expand_dims(raw, axis=2)
+#         H, W = raw.shape[0], raw.shape[1]
+#         v_im = np.zeros([H, W, 3], dtype=np.uint16)
+#         v_im[0:H:2, 0:W:2, 0] = raw[0:H:2, 0:W:2]
+#         v_im[0:H:2, 1:W:2, 1] = raw[0:H:2, 1:W:2]
+#         v_im[1:H:2, 0:W:2, 1] = raw[1:H:2, 0:W:2]
+#         v_im[1:H:2, 1:W:2, 2] = raw[1:H:2, 1:W:2]
+#         return v_im
+#
+#     def pack_raw(self, raw):
+#         # 两个相机都是RGGB
+#         H, W = raw.shape[0], raw.shape[1]
+#         raw = np.expand_dims(raw, axis=2)
+#         R = raw[0:H:2, 0:W:2, :]
+#         Gr = raw[0:H:2, 1:W:2, :]
+#         Gb = raw[1:H:2, 0:W:2, :]
+#         B = raw[1:H:2, 1:W:2, :]
+#         G_avg = (Gr + Gb) / 2
+#         out = np.concatenate((R, G_avg, B), axis=2)
+#         return out
+#
+#     def __getitem__(self, index):
+#         raw_path = self.raw_files[index]
+#         rgb_path = self.rgb_files[index]
+#         # print(raw_path)
+#         target_rgb_img = imageio.imread(rgb_path)
+#         if self.data_mode == 'RAW':
+#             # print(raw_path)
+#             # print(raw_path)
+#             raw = np.load(raw_path)
+#             raw_img = raw['raw']
+#             if self.npz_uint16:
+#                 raw_img = self.pack_raw(raw_img)
+#             wb = raw['wb']
+#             wb = wb / wb.max()
+#             input_raw_img = raw_img * wb[:-1]
+#         else:
+#             raw = rawpy.imread(raw_path)
+#             input_raw_img = raw.raw_image_visible
+#             flip_val = raw.sizes.flip
+#             input_raw_img = flip(input_raw_img, flip_val)
+#             if self.camera_name == 'Canon_EOS_5D':
+#                 input_raw_img = np.maximum(input_raw_img - 127.0, 0)
+#             input_raw_img = self.visualize_raw(input_raw_img)
+#
+#         # input_raw_img, target_rgb_img = aug(self.patch_size, input_raw_img, target_rgb_img, self.npz_uint16)
+#         # 默认中间的1024 1024
+#         input_raw_img = cv2.resize(input_raw_img, (self.patch_size, self.patch_size), interpolation=cv2.INTER_LINEAR)
+#         input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
+#         if self.gamma:
+#             norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
+#             input_raw_img = np.power(input_raw_img, 1 / 2.2)
+#         else:
+#             norm_value = 4095 if self.camera_name == 'Canon_EOS_5D' else 16383
+#         target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
+#         input_raw_img = self.norm_img(input_raw_img, max_value=norm_value)
+#
+#         # input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, 128, 4)
+#         input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
+#         target_rgb_img = torch.Tensor(target_rgb_img).permute(2, 0, 1)
+#
+#         if random.random() < self.uncond_p:
+#             # null label
+#             input_raw_img = torch.ones_like(input_raw_img)
+#
+#         sample = {'input_raw': input_raw_img, 'target_rgb': target_rgb_img,
+#                   'file_name': raw_path.split("/")[-1].split(".")[0]}
+#         return sample
+#
+#     def __len__(self):
+#         return len(self.raw_files)
+#
+#     # 这个函数用来通过文件载入数据集
+#     def load(self, file_name):
+#         input_raws = []
+#         target_rgbs = []
+#         sub_nums = int(1024 // self.patch_size)
+#         sub_nums = sub_nums * sub_nums
+#
+#         with open(file_name, "r") as f:
+#             valid_camera_list = [line.strip() for line in f.readlines()]
+#
+#         for i, name in enumerate(valid_camera_list):
+#             full_name = os.path.join(self.dataset_root, self.camera_name)
+#             if self.data_mode == 'RAW':
+#                 raw_folder_name = 'RAW_UINT16' if self.npz_uint16 else 'RAW'
+#                 for j in range(sub_nums):
+#                     input_raws.append(os.path.join(full_name, raw_folder_name, name + f'_{j}.npz'))
+#             else:
+#                 input_raws.append(os.path.join(full_name, 'DNG', name + '.dng'))
+#             for j in range(sub_nums):
+#                 target_rgbs.append(os.path.join(full_name, 'RGB', name + f'_{j}.jpg'))
+#
+#         return input_raws, target_rgbs
+#
+#     def norm_img(self, img, max_value, scale_minus1=False):
+#         if scale_minus1:
+#             half_value = max_value / 2
+#             img = img / half_value - 1
+#             # scaled to [-1, 1]
+#         else:
+#             img = img / float(max_value)
+#         return img
+
+
 
 class FiveKDataset_skip(Dataset):
     """
@@ -897,19 +895,19 @@ def data_process_skip(dataset_root, camera_name, new_root):
         np.savez(os.path.join(output_raw_path, file_name), raw=v_im, wb=wb)
 
 
-def test_skip_downsample(dataset_root, camera_name):
-    stage = 'test'
-    dataset = FiveKDataset(dataset_root, camera_name, stage, 32, 'RAW', 0, 10, True, True)
-    rgb_path = os.path.join(dataset_root, camera_name, 'RGB')
-    for i in range(len(dataset)):
-        item = dataset[i]
-        file_name = item['file_name']
-        rgb_file_path = os.path.join(rgb_path, file_name + '.jpg')
-        rgb = imageio.imread(rgb_file_path)
-        H, W, _ = rgb.shape
-        print(H, W)
-        Resize = rgb[1:H:4, 1:W:4, :]
-        imageio.imwrite(f'./test_{i}.jpg', Resize)
+# def test_skip_downsample(dataset_root, camera_name):
+#     stage = 'test'
+#     dataset = FiveKDataset(dataset_root, camera_name, stage, 32, 'RAW', 0, 10, True, True)
+#     rgb_path = os.path.join(dataset_root, camera_name, 'RGB')
+#     for i in range(len(dataset)):
+#         item = dataset[i]
+#         file_name = item['file_name']
+#         rgb_file_path = os.path.join(rgb_path, file_name + '.jpg')
+#         rgb = imageio.imread(rgb_file_path)
+#         H, W, _ = rgb.shape
+#         print(H, W)
+#         Resize = rgb[1:H:4, 1:W:4, :]
+#         imageio.imwrite(f'./test_{i}.jpg', Resize)
 
 # from wand.image import Image as WandImage
 # from wand.api import library as wandlibrary
@@ -983,6 +981,9 @@ if __name__ == '__main__':
 
         input_raw = value['input_raw'][0]
         print(input_raw.shape)
+
+        target_rgb = value['target_rgb'][0]
+        print(target_rgb.shape)
         # print(metadata)
 
         # print(f"value:{file_name}")

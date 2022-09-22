@@ -1,3 +1,4 @@
+import torch
 
 def dwt_init(x):
     x01 = x[:, :, 0::2, :] / 2
