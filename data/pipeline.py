@@ -1,7 +1,34 @@
+import os
+
 import numpy as np
 from .pipeline_utils import get_visible_raw_image, get_metadata, normalize, white_balance, demosaic, \
     apply_color_space_transform, transform_xyz_to_srgb, apply_gamma, apply_tone_map, fix_orientation, \
     lens_shading_correction
+import rawpy
+
+def unflip(raw_img, flip):
+    if flip == 3:
+        raw_img = np.rot90(raw_img, k=2)
+    elif flip == 5:
+        raw_img = np.rot90(raw_img, k=3)
+    elif flip == 6:
+        raw_img = np.rot90(raw_img, k=1)
+    else:
+        pass
+    return raw_img
+
+# np.rot90(img, k):将矩阵逆时针旋转90*k度以后返回，k取负数时表示顺时针旋转
+def flip(raw_img, flip):
+    if flip == 3:
+        raw_img = np.rot90(raw_img, k=2)
+    elif flip == 5:
+        raw_img = np.rot90(raw_img, k=1)
+    elif flip == 6:
+        raw_img = np.rot90(raw_img, k=3)
+    else:
+        pass
+    return raw_img
+
 
 """
 raw_image: raw2raw network output, torch.tensor
@@ -21,6 +48,38 @@ def pipeline_tensor2image(*, raw_image, metadata, input_stage='normal', output_s
     raw_image = raw_image.cpu().numpy()
     final_rgb = run_pipeline_v2(raw_image, params, metadata, False)
     return final_rgb
+
+
+"""
+raw_image: raw2raw network output, torch.tensor [C H W] C = 1
+template: the result of rawpy load template.dng
+return: rgb image, numpy variable
+"""
+def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
+    if type(template) == str:
+        # 传入的template参数s
+        default_root = '/ssd/invISP/'
+        dng_path = os.path.join(default_root, camera_name, 'DNG', template+'.dng')
+        template = rawpy.imread(dng_path)
+    flip_val = template.sizes.flip
+    print(patch_size)
+    raw_image = raw_image.permute(1, 2, 0)
+    raw_image = raw_image.cpu().numpy()
+    raw_image = np.squeeze(raw_image, axis=2)
+    raw_image = np.ascontiguousarray(unflip(raw_image, flip_val))
+
+    if camera_name == 'Canon_EOS_5D':
+        max_value = 4095
+    else:
+        max_value = 16383
+    tmp_raw = raw_image * float(max_value)
+    # tmp_raw = np.squeeze(origin_raw, axis=2)
+    if camera_name == 'Canon_EOS_5D':
+        tmp_raw = tmp_raw + 127.0
+    template.raw_image_visible[:patch_size, :patch_size] = tmp_raw.astype(np.uint16)
+    im = template.postprocess(use_camera_wb=True,no_auto_bright=True)
+    im = unflip(im, flip_val)
+    return flip(im[:patch_size, :patch_size, :], flip_val)
 
 
 def run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_1384.dng', params=None, metadata=None, fix_orient=True):
