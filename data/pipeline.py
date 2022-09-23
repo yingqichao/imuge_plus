@@ -77,7 +77,7 @@ def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
     if camera_name == 'Canon_EOS_5D':
         tmp_raw = tmp_raw + 127.0
     template.raw_image_visible[:patch_size, :patch_size] = tmp_raw.astype(np.uint16)
-    im = template.postprocess(use_camera_wb=True,no_auto_bright=True)
+    im = template.postprocess(use_camera_wb=True, no_auto_bright=True)
     im = unflip(im, flip_val)
     return flip(im[:patch_size, :patch_size, :], flip_val)
 

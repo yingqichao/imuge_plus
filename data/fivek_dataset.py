@@ -393,16 +393,50 @@ class FiveKDataset_skip(Dataset):
         out = np.concatenate((R, G_avg, B), axis=2)
         return out
 
-    def visualize_raw(self, raw):
+    def visualize_raw(self, raw, bayer_pattern, wb):
+        # 不同bayer pattern对应的坐标
+        coords = [
+            [[0, 0], [0, 1], [1, 0], [1, 1]],
+            [[1, 0], [0, 0], [1, 1], [0, 1]],
+            [[1, 1], [0, 1], [1, 0], [0, 0]],
+            [[0, 1], [0, 0], [1, 1], [1, 0]]
+        ]
+        cur_coords = coords[bayer_pattern]
+        wb = wb[:3]
+        wb = wb / wb.max()
+        wb_inv = [1/i for i in wb]
         # 两个相机都是RGGB
         # im = np.expand_dims(raw, axis=2)
         H, W = raw.shape[0], raw.shape[1]
-        v_im = np.zeros([H, W, 3], dtype=np.uint16)
-        v_im[0:H:2, 0:W:2, 0] = raw[0:H:2, 0:W:2]
-        v_im[0:H:2, 1:W:2, 1] = raw[0:H:2, 1:W:2]
-        v_im[1:H:2, 0:W:2, 1] = raw[1:H:2, 0:W:2]
-        v_im[1:H:2, 1:W:2, 2] = raw[1:H:2, 1:W:2]
+        v_im = np.zeros([H, W, 1], dtype=np.float64)
+        v_im[0:H:2, 0:W:2, 0] = raw[cur_coords[0][0]:H:2, cur_coords[0][1]:W:2] * wb[0] * wb_inv[0]
+        v_im[0:H:2, 1:W:2, 0] = raw[cur_coords[1][0]:H:2, cur_coords[1][1]:W:2] * wb[1] * wb_inv[1]
+        v_im[1:H:2, 0:W:2, 0] = raw[cur_coords[2][0]:H:2, cur_coords[2][1]:W:2] * wb[1] * wb_inv[1]
+        v_im[1:H:2, 1:W:2, 0] = raw[cur_coords[3][0]:H:2, cur_coords[3][1]:W:2] * wb[2] * wb_inv[2]
+        # v_im = np.zeros([H, W, 3], dtype=np.uint16)
+        # v_im[0:H:2, 0:W:2, 0] = raw[cur_coords[0][0]:H:2, cur_coords[0][1]:W:2]
+        # v_im[0:H:2, 1:W:2, 1] = raw[cur_coords[1][0]:H:2, cur_coords[1][1]:W:2]
+        # v_im[1:H:2, 0:W:2, 1] = raw[cur_coords[2][0]:H:2, cur_coords[2][1]:W:2]
+        # v_im[1:H:2, 1:W:2, 2] = raw[cur_coords[3][0]:H:2, cur_coords[3][1]:W:2]
         return v_im
+
+    def get_bayer_pattern(self, flip_val):
+        """
+        Args: flip_val
+        Returns:
+            0 means RGGB
+            1 means GBRG
+            2 means BGGR
+            3 means GRBG
+        """
+        bayer_pattern = 0
+        if flip_val == 5:
+            bayer_pattern = 1
+        elif flip_val == 3:
+            bayer_pattern = 2
+        elif flip_val == 6:
+            bayer_pattern = 3
+        return bayer_pattern
 
     def __getitem__(self, index):
         raw_path = self.raw_files[index]
@@ -417,6 +451,7 @@ class FiveKDataset_skip(Dataset):
 
         target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
         input_raw_img = self.norm_img(input_raw_img, max_value=norm_value)
+        # visualize_raw = input_raw_img.copy()
         input_raw_img = np.expand_dims(input_raw_img, axis=2)
 
         input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
@@ -429,11 +464,18 @@ class FiveKDataset_skip(Dataset):
         if self.use_metadata:
             meta = self.metadata_list[file_name]
             # print(meta)
+            flip_val = meta['flip_val']
+            wb = raw['wb']
+            wb = wb[:3]
+            wb = wb / wb.max()
+            bayer_pattern = self.get_bayer_pattern(flip_val)
+            # visualize_raw = self.visualize_raw(visualize_raw, bayer_pattern, wb)
+            # visualize_raw = torch.Tensor(visualize_raw).permute(2, 0, 1)
             # todo:取出要用的metadata
             sample = {'input_raw': input_raw_img,
                       'target_rgb': target_rgb_img,
                       'file_name': file_name,
-                      'color_matrix':meta['color_matrix'],
+                      'color_matrix': meta['color_matrix'],
                       # example:
                       # array([[1.8083024, -0.9273899, 0.1190875, 0.],
                       #        [-0.01726297, 1.3148121, -0.29754913, 0.],
@@ -445,9 +487,12 @@ class FiveKDataset_skip(Dataset):
                       #          [-0.1968, 0.2131, 0.7649],
                       #          [0.0000, 0.0000, 0.0000]]])
                       # 'camera_whitebalance': meta['camera_whitebalance'],
-                      'camera_whitebalance': raw['wb']
+                      'camera_whitebalance': wb,
                       # example (batch size=2):
-                      # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000], dtype=torch.float64), tensor([0., 0.], dtype=torch.fl
+                      # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000],
+                      # dtype=torch.float64), tensor([0., 0.], dtype=torch.fl
+                      'bayer_pattern': bayer_pattern,
+                      # 'visualize_raw': visualize_raw
                       }
 
         else:
@@ -887,6 +932,18 @@ def data_process_skip(dataset_root, camera_name, new_root):
         v_im[1:new_H * 2:2, 1:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 3]
         np.savez(os.path.join(output_raw_path, file_name), raw=v_im, wb=wb)
 
+# 这个函数用来更新metadata.pickle 目前是加入了flip_val
+def set_metadata_pickle(dataset_root, camera_name):
+    import pickle
+    with open(os.path.join(dataset_root, camera_name, 'metadata.pickle'), 'rb') as fin:
+        data = pickle.load(fin)
+    default_root = '/ssd/invISP/'
+    for file_name in tqdm(data.keys()):
+        dng_path = os.path.join(default_root, camera_name, 'DNG', file_name+'.dng')
+        raw = rawpy.imread(dng_path)
+        data[file_name]['flip_val'] = raw.sizes.flip
+    with open(os.path.join(dataset_root, camera_name, 'metadata.pickle'), 'wb') as out:
+        pickle.dump(data, out)
 
 # def test_skip_downsample(dataset_root, camera_name):
 #     stage = 'test'
@@ -973,14 +1030,15 @@ if __name__ == '__main__':
     for i, value in enumerate(dataloader):
         # print(value)
         file_name = value['file_name']
+        print(file_name[0], value['bayer_pattern'][0])
         # metadata = train_set.metadata_list[file_name[0]]
 
-        input_raw = value['input_raw'][0]
-
+        input_raw = value['visualize_raw'][0]
+        template = rawpy.imread(os.path.join(dataset_root, camera_name, 'template.dng'))
         ###########################################################################
         # todo：用法 直接传入raw图，template可以传入rawpy对象，也可以是file_name
         ###########################################################################
-        numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=file_name[0], camera_name=camera_name,
+        numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=template, camera_name=camera_name,
                                        patch_size=512)
         target_rgb = value['target_rgb'][0].permute(1, 2, 0).cpu().numpy()*255
         target_rgb = target_rgb.astype(np.uint8)
