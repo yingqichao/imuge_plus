@@ -408,39 +408,17 @@ class FiveKDataset_skip(Dataset):
         raw_path = self.raw_files[index]
         rgb_path = self.rgb_files[index]
         camera_name = self.camera_name_per_image[index]
-        # print(raw_path)
         target_rgb_img = imageio.imread(rgb_path)
         assert self.data_mode == 'RAW'
         raw = np.load(raw_path)
         input_raw_img = raw['raw']
-        # if self.npz_uint16:
-        #     raw_img = self.pack_raw(raw_img)
-        # wb = raw['wb']
-        # wb = wb / wb.max()
-        # input_raw_img = raw_img * wb[:-1]
         input_raw_img, target_rgb_img = random_crop(self.patch_size, input_raw_img, target_rgb_img, not self.npz_uint16)
-        # imageio.imwrite('./test.png', target_rgb_img)
-        # print('here')
-        # input_raw_img = cv2.resize(input_raw_img, (self.patch_size, self.patch_size), interpolation=cv2.INTER_LINEAR)
-        input_raw_img, target_rgb_img = aug(input_raw_img, target_rgb_img)
-        # if self.gamma:
-        #     norm_value = np.power(4095, 1 / 2.2) if camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
-        #     input_raw_img = np.power(input_raw_img, 1 / 2.2)
-        # else:
-        #     norm_value = 4095 if camera_name == 'Canon_EOS_5D' else 16383
         norm_value = 4095 if camera_name == 'Canon_EOS_5D' else 16383
 
-        # show_images = np.hstack([(input_raw_img/norm_value*255).astype(np.uint8), target_rgb_img.astype(np.uint8)])
-        #
-        # Image.fromarray(show_images).save(f'./test_{index}.png')
-        # return {'file_name':'test'}
         target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
         input_raw_img = self.norm_img(input_raw_img, max_value=norm_value)
         input_raw_img = np.expand_dims(input_raw_img, axis=2)
-        # input_raw_img:[patch_size patch_size 1]
-        # target_rgb_imag:[patch_size patch_size 3]
 
-        # input_raw_img, target_rgb_img = crop_a_image(input_raw_img, target_rgb_img, 128, 4)
         input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
         target_rgb_img = torch.Tensor(target_rgb_img).permute(2, 0, 1)
 
@@ -466,7 +444,8 @@ class FiveKDataset_skip(Dataset):
                       #          [-0.8297, 1.5954, 0.2480],
                       #          [-0.1968, 0.2131, 0.7649],
                       #          [0.0000, 0.0000, 0.0000]]])
-                      'camera_whitebalance': meta['camera_whitebalance'],
+                      # 'camera_whitebalance': meta['camera_whitebalance'],
+                      'camera_whitebalance': raw['wb']
                       # example (batch size=2):
                       # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000], dtype=torch.float64), tensor([0., 0.], dtype=torch.fl
                       }
@@ -490,6 +469,17 @@ class FiveKDataset_skip(Dataset):
             img = img / float(max_value)
         return img
 
+
+def unflip(raw_img, flip):
+    if flip == 3:
+        raw_img = np.rot90(raw_img, k=2)
+    elif flip == 5:
+        raw_img = np.rot90(raw_img, k=3)
+    elif flip == 6:
+        raw_img = np.rot90(raw_img, k=1)
+    else:
+        pass
+    return raw_img
 
 # np.rot90(img, k):将矩阵逆时针旋转90*k度以后返回，k取负数时表示顺时针旋转
 def flip(raw_img, flip):
@@ -673,6 +663,9 @@ def random_crop(patch_size, input_raw, target_rgb, flow=True):
         h, w, _ = input_raw.shape
     rnd_h = random.randint(0, max(0, h - patch_size))
     rnd_w = random.randint(0, max(0, w - patch_size))
+    rnd_h = rnd_h - rnd_h % 2
+    rnd_w = rnd_w - rnd_w % 2
+
 
     if raw_channel_1:
         patch_input_raw = input_raw[rnd_h:rnd_h + patch_size, rnd_w:rnd_w + patch_size]
@@ -961,6 +954,8 @@ def data_process_skip(dataset_root, camera_name, new_root):
 # 这里用来处理数据集 如裁剪等
 # 数据集可用 data_mode=RAW表明是对插值后的图像
 if __name__ == '__main__':
+    from data.pipeline import rawpy_tensor2image
+
     dataset_root = '/ssd/invISP_skip/'
     camera_name = 'Canon_EOS_5D'
     # data_process_npz(dataset_root, camera_name)
@@ -969,34 +964,32 @@ if __name__ == '__main__':
     # data_process_npz(dataset_root, camera_name)
     # exit(0)
     train_set = FiveKDataset_skip([dataset_root], [camera_name], stage='train', rgb_scale=False, uncond_p=0.,
-                                  patch_size=256, use_metadata=True)
-    dataloader = DataLoader(train_set, batch_size=1, shuffle=False, num_workers=0,
+                                  patch_size=512, use_metadata=True)
+    dataloader = DataLoader(train_set, batch_size=4, shuffle=False, num_workers=4,
                             drop_last=True,
                             pin_memory=False)
     start = time.time()
+
     for i, value in enumerate(dataloader):
         # print(value)
         file_name = value['file_name']
-        metadata = train_set.metadata_list[file_name[0]]
+        # metadata = train_set.metadata_list[file_name[0]]
 
         input_raw = value['input_raw'][0]
-        print(input_raw.shape)
 
-        target_rgb = value['target_rgb'][0]
-        print(target_rgb.shape)
-        # print(metadata)
-
-        # print(f"value:{file_name}")
-        # print(f"camera_whitebalance:{value['camera_whitebalance']}")
-        # print(f"rgb_xyz_matrix:{value['rgb_xyz_matrix']}")
-        # template = rawpy.imread(os.path.join(dataset_root, camera_name, 'template.dng'))
-        # numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=template, camera_name=camera_name, patch_size=256)
-        # print(numpy_rgb.dtype)
-        # target_rgb = value['target_rgb'][0].permute(1, 2, 0).cpu().numpy()*255
-        # target_rgb = target_rgb.astype(np.uint8)
-        # numpy_rgb = np.concatenate([numpy_rgb, target_rgb], axis=1)
-        # PIL.Image.fromarray(numpy_rgb).save('./testrawpy.png', subsampling=1)
-        # break
+        ###########################################################################
+        # todo：用法 直接传入raw图，template可以传入rawpy对象，也可以是file_name
+        ###########################################################################
+        numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=file_name[0], camera_name=camera_name,
+                                       patch_size=512)
+        target_rgb = value['target_rgb'][0].permute(1, 2, 0).cpu().numpy()*255
+        target_rgb = target_rgb.astype(np.uint8)
+        # print(target_rgb[0])
+        # print('--split--')
+        # print(numpy_rgb[0])
+        numpy_rgb = np.concatenate([numpy_rgb, target_rgb], axis=1)
+        PIL.Image.fromarray(numpy_rgb).save(os.path.join('./test/', f'testrawpy_{i}.png'), subsampling=1)
+        # exit(0)
         # numpy_rgb = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).float()
         # print(f"numpy_rgb:{numpy_rgb.shape}")
         # if i>10:
