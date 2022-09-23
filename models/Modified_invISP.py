@@ -329,8 +329,11 @@ class Modified_invISP(BaseModel):
         create_folder(self.out_space_storage)
         create_folder(self.out_space_storage + "/model")
         create_folder(self.out_space_storage + "/images")
+        create_folder(self.out_space_storage + "/isp_images/")
         create_folder(self.out_space_storage + "/model/" + self.task_name)
         create_folder(self.out_space_storage + "/images/" + self.task_name)
+        create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
+
         # ## load states
         # state_path = self.load_space_storage + self.load_storage + '{}.state'.format(self.model_path)
         # if load_state:
@@ -405,7 +408,6 @@ class Modified_invISP(BaseModel):
         # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
         ####################################################################################################
 
-        
         if step is not None:
             self.global_step = step
 
@@ -416,6 +418,7 @@ class Modified_invISP(BaseModel):
         self.localizer.train()
         self.qf_predict_network.train()
         train_isp_networks = self.opt["train_isp_networks"]
+        train_full_pipeline = self.opt["train_full_pipeline"]
 
         logs, debug_logs = {}, []
         average_PSNR = 50  # default
@@ -426,6 +429,7 @@ class Modified_invISP(BaseModel):
         stored_image_netG = None
         stored_image_generator = None
         stored_image_qf_predict = None
+
 
         if not (self.previous_images is None or self.previous_previous_images is None):
             sum_batch_size = self.real_H.shape[0]
@@ -451,8 +455,8 @@ class Modified_invISP(BaseModel):
                         modified_input_qf_predict = self.clamp_with_grad(modified_input_qf_predict)
                         CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict), self.postprocess(gt_rgb)).item()
                         logs['CYCLE_PSNR'] = CYCLE_PSNR
-                        stored_image_qf_predict = modified_input_qf_predict.detach() if stored_image_qf_predict else \
-                            torch.cat((stored_image_generator,modified_input_qf_predict.detach()),dim=1)
+                        stored_image_qf_predict = modified_input_qf_predict.detach() if stored_image_qf_predict is None else \
+                            torch.cat((stored_image_generator,modified_input_qf_predict.detach()),dim=0)
 
                         modified_input_netG = self.netG(input_raw)
                         THIRD_L1 = self.l1_loss(input=modified_input_netG, target=gt_rgb)
@@ -460,8 +464,8 @@ class Modified_invISP(BaseModel):
                         PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG),
                                              self.postprocess(gt_rgb)).item()
                         logs['PIPE_PSNR'] = PIPE_PSNR
-                        stored_image_netG = modified_input_netG.detach() if stored_image_netG else \
-                            torch.cat((stored_image_netG, modified_input_netG.detach()), dim=1)
+                        stored_image_netG = modified_input_netG.detach() if stored_image_netG is None else \
+                            torch.cat((stored_image_netG, modified_input_netG.detach()), dim=0)
 
                         modified_input_generator = self.generator(input_raw)
                         ISP_L1_FOR = self.l1_loss(input=modified_input_generator, target=gt_rgb)
@@ -473,8 +477,8 @@ class Modified_invISP(BaseModel):
                         # ISP_L1 += ISP_L1_REV
                         ISP_PSNR = self.psnr(self.postprocess(modified_input_generator), self.postprocess(gt_rgb)).item()
                         logs['ISP_PSNR'] = ISP_PSNR
-                        stored_image_generator = modified_input_generator.detach() if stored_image_generator else \
-                            torch.cat((stored_image_generator, modified_input_generator.detach()), dim=1)
+                        stored_image_generator = modified_input_generator.detach() if stored_image_generator is None else \
+                            torch.cat((stored_image_generator, modified_input_generator.detach()), dim=0)
 
 
                         average_PSNR = (ISP_PSNR+PIPE_PSNR+CYCLE_PSNR)/3
@@ -558,8 +562,23 @@ class Modified_invISP(BaseModel):
                 #
                 # ISP_PSNR_PIPE = self.psnr(self.postprocess(modified_input_netG), self.postprocess(gt_rgb)).item()
                 # logs['PIPE_PSNR'] = ISP_PSNR_PIPE
+                if not train_full_pipeline and self.global_step % 200 == 3 or self.global_step <= 10:
+                    images = stitch_images(
+                        self.postprocess(input_raw),
+                        self.postprocess(modified_input_generator),
+                        self.postprocess(modified_input_qf_predict),
+                        self.postprocess(modified_input_netG),
+                        self.postprocess(gt_rgb),
 
-            if False:
+                        img_per_row=1
+                    )
+
+                    name = f"{self.out_space_storage}/isp_images/{self.task_name}/{str(self.global_step).zfill(5)}" \
+                           f"_3_ {str(self.rank)}_eval.png"
+                    print('\nsaving sample ' + name)
+                    images.save(name)
+
+            if train_full_pipeline:
                 for idx_clip in range(step_acumulate):
                     input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
                     gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
@@ -646,12 +665,11 @@ class Modified_invISP(BaseModel):
                         locs, cropped, scaled_cropped = self.cropping_mask_generation(
                             forward_image=modified_input, logs=logs)
                         h_start, h_end, w_start, w_end = locs
-                        tamper_source_cropped = None
-                        if self.using_simulated_inpainting():
-                            _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
+
+                        _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
 
                         percent_range = (0.05, 0.30)
-                        masks, masks_GT = self.mask_generation(percent_range=percent_range, logs=logs)
+                        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
 
 
                         attacked_forward = self.tampering(
@@ -758,9 +776,9 @@ class Modified_invISP(BaseModel):
                     if anomalies or self.global_step % 200 == 3 or self.global_step <= 10:
                         images = stitch_images(
                             self.postprocess(input_raw),
-                            self.postprocess(modified_input_generator),
-                            self.postprocess(modified_input_qf_predict),
-                            self.postprocess(modified_input_netG),
+                            self.postprocess(modified_input_0),
+                            self.postprocess(modified_input_1),
+                            self.postprocess(modified_input_2),
                             self.postprocess(gt_rgb),
                             ### RAW2RAW
                             self.postprocess(modified_raw),
@@ -884,12 +902,11 @@ class Modified_invISP(BaseModel):
                 forward_image=modified_input, logs=logs)
             h_start, h_end, w_start, w_end = locs
             tamper_source_crop = None
-            if self.using_simulated_inpainting():
-                _, _, tamper_source_crop = self.cropping_mask_generation(forward_image=tamper_source, locs=locs,
+            _, _, tamper_source_crop = self.cropping_mask_generation(forward_image=tamper_source, locs=locs,
                                                                     logs=logs)
 
             percent_range = (0.05, 0.30)
-            masks, masks_GT = self.mask_generation(percent_range=percent_range, logs=logs)
+            masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
 
             attacked_forward = self.tampering(
                 forward_image=tamper_source_crop, masks=masks, masks_GT=masks_GT,
@@ -946,7 +963,7 @@ class Modified_invISP(BaseModel):
         pass
 
     def visualize_raw(self, raw_to_raw_tensor):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        batch_size, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[2]
         # 两个相机都是RGGB
         # im = np.expand_dims(raw, axis=2)
 
@@ -962,7 +979,7 @@ class Modified_invISP(BaseModel):
 
     def pack_raw(self, raw_to_raw_tensor):
         # 两个相机都是RGGB
-        batch_size, num_channels, height_width = self.real_H.shape[0], self.real_H.shape[1], self.real_H.shape[2]
+        batch_size, num_channels, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[1], raw_to_raw_tensor.shape[2]
 
         H, W = raw_to_raw_tensor.shape[2], raw_to_raw_tensor.shape[3]
         R = raw_to_raw_tensor[:,:, 0:H:2, 0:W:2]
@@ -983,7 +1000,7 @@ class Modified_invISP(BaseModel):
         # todo: cropping
         # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
         ####################################################################################################
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         # masks_GT = torch.ones_like(self.canny_image)
 
         self.height_ratio = min_rate + (max_rate - min_rate) * np.random.rand()
@@ -1013,7 +1030,7 @@ class Modified_invISP(BaseModel):
 
     def tamper_based_augmentation(self, modified_input, modified_canny, masks, masks_GT, logs):
         # tamper-based data augmentation
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         for imgs in range(batch_size):
             if imgs % 3 != 2:
                 modified_input[imgs, :, :, :] = (
@@ -1027,8 +1044,8 @@ class Modified_invISP(BaseModel):
 
         return modified_input, modified_canny
 
-    def mask_generation(self, percent_range, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+    def mask_generation(self, modified_input, percent_range, logs):
+        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         masks_GT = torch.zeros(batch_size, 1, self.real_H.shape[2], self.real_H.shape[3]).cuda()
         ## THE RECOVERY STAGE WILL ONLY WORK UNDER LARGE TAMPERING
         ## TO LOCALIZE SMALL TAMPERING, WE ONLY UPDATE LOCALIZER NETWORK
@@ -1046,7 +1063,7 @@ class Modified_invISP(BaseModel):
         return masks, masks_GT
 
     def forward_image_generation(self, modified_input, modified_canny, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         forward_stuff = self.netG(x=torch.cat((modified_input, modified_canny), dim=1))
         forward_stuff = self.clamp_with_grad(forward_stuff)
         forward_image, forward_null = forward_stuff[:, :3, :, :], forward_stuff[:, 3:, :, :]
@@ -1055,7 +1072,7 @@ class Modified_invISP(BaseModel):
         return forward_image, forward_null, psnr_forward
 
     def tampering(self, forward_image, masks, masks_GT, modified_input, percent_range, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
         ####### Tamper ###############
         attacked_forward = torch.zeros_like(modified_input)
         for img_idx in range(batch_size):
@@ -1136,7 +1153,7 @@ class Modified_invISP(BaseModel):
         return attacked_forward
 
     def benign_attacks(self, attacked_forward, quality_idx, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        batch_size, height_width = attacked_forward.shape[0], attacked_forward.shape[2]
         attacked_real_jpeg = torch.rand_like(attacked_forward).cuda()
 
         if self.using_gaussian_blur():
@@ -1171,7 +1188,7 @@ class Modified_invISP(BaseModel):
         return attacked_image
 
     def benign_attacks_without_simulation(self, forward_image, quality_idx, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
         attacked_real_jpeg = torch.rand_like(forward_image).cuda()
 
         quality = int(quality_idx * 5)
@@ -1184,7 +1201,7 @@ class Modified_invISP(BaseModel):
         return attacked_real_jpeg
 
     def real_world_attacking_on_ndarray(self, grid, qf_after_blur, index=None):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         if index is None:
             index = self.global_step % 5
         if index == 0:
@@ -1215,7 +1232,7 @@ class Modified_invISP(BaseModel):
         return realworld_attack
 
     def localization_loss(self, model, attacked_image, forward_image, masks_GT, modified_input, attacked_forward, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         ### LOCALIZATION
         gen_attacked_train = model(attacked_image)
         # gen_non_attacked = self.localizer(forward_image)
@@ -1235,7 +1252,7 @@ class Modified_invISP(BaseModel):
         return CE, CE_recall, None, CE_recall, CE_recall, gen_attacked_train, gen_attacked_train, gen_attacked_train
 
     def recovery_image_generation(self, attacked_image, masks, modified_canny, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         ## RECOVERY
         tampered_attacked_image = attacked_image * (1 - masks)
         tampered_attacked_image = self.clamp_with_grad(tampered_attacked_image)
@@ -1255,7 +1272,7 @@ class Modified_invISP(BaseModel):
         return reversed_image, reversed_canny
 
     def GAN_loss(self, model, reversed_image, reversed_canny, modified_input, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         gen_input_fake = torch.cat((reversed_image, reversed_canny), dim=1)
         # dis_input_real = modified_input.clone().detach()
         # dis_real = self.discriminator_mask(dis_input_real)  # in: (grayscale(1) + edge(1))

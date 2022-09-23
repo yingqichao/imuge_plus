@@ -9,7 +9,7 @@ scale: 4
 gpu_ids: [3,0,1] #[1,3,4]
 step_acumulate: 2
 train_isp_networks: true
-
+train_full_pipeline: false
 
 #### datasets
 phase: train
@@ -42,7 +42,7 @@ datasets:
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 6 # 4
+    batch_size: 12 # 4
     GT_size: 512 # 608
     #########################
     use_flip: true
