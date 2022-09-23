@@ -64,7 +64,7 @@ def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
     flip_val = template.sizes.flip
     print(patch_size)
     raw_image = raw_image.permute(1, 2, 0)
-    raw_image = raw_image.cpu().numpy()
+    raw_image = raw_image.detach().cpu().numpy()
     raw_image = np.squeeze(raw_image, axis=2)
     raw_image = np.ascontiguousarray(unflip(raw_image, flip_val))
 
@@ -80,7 +80,6 @@ def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
     im = template.postprocess(use_camera_wb=True,no_auto_bright=True)
     im = unflip(im, flip_val)
     return flip(im[:patch_size, :patch_size, :], flip_val)
-
 
 def run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_1384.dng', params=None, metadata=None, fix_orient=True):
     params_ = params.copy()

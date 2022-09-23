@@ -32,6 +32,7 @@ from data.pipeline import pipeline_tensor2image
 # import matlab.engine
 import torch.nn.functional as Functional
 from utils.commons import create_folder
+from data.pipeline import rawpy_tensor2image
 # print("Starting MATLAB engine...")
 # engine = matlab.engine.start_matlab()
 # print("MATLAB engine loaded successful.")
@@ -383,6 +384,7 @@ class Modified_invISP(BaseModel):
             self.real_H = batch['input_raw'].cuda()
             self.label = batch['target_rgb'].cuda()
             self.file_name = batch['file_name']
+            self.camera_white_balance = batch['camera_whitebalance']
         else:
             self.real_H_val = batch['input_raw'].cuda()
             self.label_val = batch['target_rgb'].cuda()
@@ -838,6 +840,8 @@ class Modified_invISP(BaseModel):
         # todo: inference single image
         # todo: what is tamper_source? used for simulated inpainting, only activated if self.global_step%3==2
         ####################################################################################################
+        # numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=file_name[0], camera_name=camera_name,
+        #                                patch_size=512)
 
         batch_size = input_raw.shape[0]
         logs=[]
