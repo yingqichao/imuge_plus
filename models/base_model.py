@@ -28,15 +28,19 @@ class BaseModel():
         # todo: constants
         ####################################################################################################
         self.width_height = opt['datasets']['train']['GT_size']
-        self.kernel_RAW = torch.tensor([[[1, 0], [0, 0]],[[0, 1], [1, 0]],[[0, 0], [0, 1]]],device="cuda", requires_grad=False)
-        self.kernel_RAW_k1 = torch.tensor([[[0, 0], [1, 0]],[[1, 0], [0, 1]],[[0, 1], [0, 0]]],device="cuda", requires_grad=False)
-        self.kernel_RAW_k2 = torch.tensor([[[0, 0], [0, 1]],[[0, 1], [1, 0]],[[1, 0], [0, 0]]],device="cuda", requires_grad=False)
-        self.kernel_RAW_k3 = torch.tensor([[[0, 1], [0, 0]],[[0, 1], [1, 0]],[[0, 0], [1, 0]]],device="cuda", requires_grad=False)
+        self.kernel_RAW_k0 = torch.tensor([[[1, 0], [0, 0]],[[0, 1], [1, 0]],[[0, 0], [0, 1]]],device="cuda",
+                                          requires_grad=False).unsqueeze(0)
+        self.kernel_RAW_k1 = torch.tensor([[[0, 0], [1, 0]],[[1, 0], [0, 1]],[[0, 1], [0, 0]]],device="cuda",
+                                          requires_grad=False).unsqueeze(0)
+        self.kernel_RAW_k2 = torch.tensor([[[0, 0], [0, 1]],[[0, 1], [1, 0]],[[1, 0], [0, 0]]],device="cuda",
+                                          requires_grad=False).unsqueeze(0)
+        self.kernel_RAW_k3 = torch.tensor([[[0, 1], [0, 0]],[[0, 1], [1, 0]],[[0, 0], [1, 0]]],device="cuda",
+                                          requires_grad=False)
         expand_times = int(self.width_height//2)
-        self.kernel_RAW = self.kernel_RAW.repeat(1,expand_times,expand_times)
-        self.kernel_RAW_k1 = self.kernel_RAW_k1.repeat(1, expand_times, expand_times)
-        self.kernel_RAW_k2 = self.kernel_RAW_k2.repeat(1, expand_times, expand_times)
-        self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, expand_times, expand_times)
+        self.kernel_RAW_k0 = self.kernel_RAW_k0.repeat(1, 1, expand_times,expand_times)
+        self.kernel_RAW_k1 = self.kernel_RAW_k1.repeat(1, 1, expand_times, expand_times)
+        self.kernel_RAW_k2 = self.kernel_RAW_k2.repeat(1, 1, expand_times, expand_times)
+        self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, 1, expand_times, expand_times)
 
 
 

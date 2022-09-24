@@ -384,7 +384,8 @@ class Modified_invISP(BaseModel):
             self.real_H = batch['input_raw'].cuda()
             self.label = batch['target_rgb'].cuda()
             self.file_name = batch['file_name']
-            self.camera_white_balance = batch['camera_whitebalance']
+            self.camera_white_balance = batch['camera_whitebalance'].cuda()
+            self.bayer_pattern = batch['bayer_pattern'].cuda()
         else:
             self.real_H_val = batch['input_raw'].cuda()
             self.label_val = batch['target_rgb'].cuda()
@@ -437,53 +438,62 @@ class Modified_invISP(BaseModel):
             sum_batch_size = self.real_H.shape[0]
             num_per_clip = int(sum_batch_size//step_acumulate)
 
-            if train_isp_networks:
 
-                for idx_clip in range(step_acumulate):
-                    input_raw_one_dim = self.real_H[idx_clip*num_per_clip:(idx_clip+1)*num_per_clip]
-                    gt_rgb = self.label[idx_clip*num_per_clip:(idx_clip+1)*num_per_clip]
-                    input_raw = self.visualize_raw(input_raw_one_dim)
+
+            for idx_clip in range(step_acumulate):
+
+                with torch.cuda.amp.autocast() if train_isp_networks else torch.no_grad():
+                    ####################################################################################################
+                    # todo: Image pipeline training
+                    # todo: we first train several nn-based ISP networks
+                    ####################################################################################################
+                    ### tensor sized (B,3)
+                    camera_white_balance = self.camera_white_balance[
+                                           idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                    ### tensor sized (B,1) ranging from [0,3]
+                    bayer_pattern = self.bayer_pattern[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+
+                    input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                    gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                    input_raw = self.visualize_raw(input_raw_one_dim,
+                                                   bayer_pattern=bayer_pattern, white_balance=camera_white_balance, eval=train_isp_networks)
                     batch_size, num_channels, height_width, _ = input_raw.shape
                     # input_raw = self.clamp_with_grad(input_raw)
 
-                    with torch.cuda.amp.autocast():
-                        ####################################################################################################
-                        # todo: Image pipeline training
-                        # todo: we first train several nn-based ISP networks
-                        ####################################################################################################
+                    modified_input_qf_predict = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
+                    CYCLE_L1 = self.l1_loss(input=modified_input_qf_predict, target=gt_rgb)
+                    modified_input_qf_predict = self.clamp_with_grad(modified_input_qf_predict)
+                    CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict), self.postprocess(gt_rgb)).item()
+                    logs['CYCLE_PSNR'] = CYCLE_PSNR
+                    stored_image_qf_predict = modified_input_qf_predict.detach() if stored_image_qf_predict is None else \
+                        torch.cat((stored_image_generator,modified_input_qf_predict.detach()),dim=0)
 
-                        modified_input_qf_predict = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
-                        CYCLE_L1 = self.l1_loss(input=modified_input_qf_predict, target=gt_rgb)
-                        modified_input_qf_predict = self.clamp_with_grad(modified_input_qf_predict)
-                        CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict), self.postprocess(gt_rgb)).item()
-                        logs['CYCLE_PSNR'] = CYCLE_PSNR
-                        stored_image_qf_predict = modified_input_qf_predict.detach() if stored_image_qf_predict is None else \
-                            torch.cat((stored_image_generator,modified_input_qf_predict.detach()),dim=0)
+                    modified_input_netG = self.netG(input_raw)
+                    THIRD_L1 = self.l1_loss(input=modified_input_netG, target=gt_rgb)
+                    modified_input_netG = self.clamp_with_grad(modified_input_netG)
+                    PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG),
+                                         self.postprocess(gt_rgb)).item()
+                    logs['PIPE_PSNR'] = PIPE_PSNR
+                    stored_image_netG = modified_input_netG.detach() if stored_image_netG is None else \
+                        torch.cat((stored_image_netG, modified_input_netG.detach()), dim=0)
 
-                        modified_input_netG = self.netG(input_raw)
-                        THIRD_L1 = self.l1_loss(input=modified_input_netG, target=gt_rgb)
-                        modified_input_netG = self.clamp_with_grad(modified_input_netG)
-                        PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG),
-                                             self.postprocess(gt_rgb)).item()
-                        logs['PIPE_PSNR'] = PIPE_PSNR
-                        stored_image_netG = modified_input_netG.detach() if stored_image_netG is None else \
-                            torch.cat((stored_image_netG, modified_input_netG.detach()), dim=0)
-
-                        modified_input_generator = self.generator(input_raw)
-                        ISP_L1_FOR = self.l1_loss(input=modified_input_generator, target=gt_rgb)
-                        modified_input_generator = self.clamp_with_grad(modified_input_generator)
-                        # input_raw_rev = self.generator(modified_input_generator, rev=True)
-                        # ISP_L1_REV = self.l1_loss(input=input_raw_rev, target=input_raw.clone().detach())
-                        ISP_L1 = 0
-                        ISP_L1 += ISP_L1_FOR
-                        # ISP_L1 += ISP_L1_REV
-                        ISP_PSNR = self.psnr(self.postprocess(modified_input_generator), self.postprocess(gt_rgb)).item()
-                        logs['ISP_PSNR'] = ISP_PSNR
-                        stored_image_generator = modified_input_generator.detach() if stored_image_generator is None else \
-                            torch.cat((stored_image_generator, modified_input_generator.detach()), dim=0)
+                    modified_input_generator = self.generator(input_raw)
+                    ISP_L1_FOR = self.l1_loss(input=modified_input_generator, target=gt_rgb)
+                    modified_input_generator = self.clamp_with_grad(modified_input_generator)
+                    # input_raw_rev = self.generator(modified_input_generator, rev=True)
+                    # ISP_L1_REV = self.l1_loss(input=input_raw_rev, target=input_raw.clone().detach())
+                    ISP_L1 = 0
+                    ISP_L1 += ISP_L1_FOR
+                    # ISP_L1 += ISP_L1_REV
+                    ISP_PSNR = self.psnr(self.postprocess(modified_input_generator), self.postprocess(gt_rgb)).item()
+                    logs['ISP_PSNR'] = ISP_PSNR
+                    stored_image_generator = modified_input_generator.detach() if stored_image_generator is None else \
+                        torch.cat((stored_image_generator, modified_input_generator.detach()), dim=0)
 
 
-                        average_PSNR = (ISP_PSNR+PIPE_PSNR+CYCLE_PSNR)/3
+                    average_PSNR = (ISP_PSNR+PIPE_PSNR+CYCLE_PSNR)/3
+
+                if train_isp_networks:
 
                     ####################################################################################################
                     # todo: Grad Accumulation
@@ -524,27 +534,36 @@ class Modified_invISP(BaseModel):
                         self.scaler_G.step(self.optimizer_G)
                         self.scaler_G.update()
                         self.optimizer_G.zero_grad()
-                else:
-                    with torch.no_grad():
-                        self.qf_predict_network.eval()
-                        self.generator.eval()
-                        self.netG.eval()
-                        modified_input_qf_predict = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
-                        modified_input_qf_predict = self.clamp_with_grad(modified_input_qf_predict.detach())
-                        CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict), self.postprocess(gt_rgb)).item()
-                        logs['CYCLE_PSNR'] = CYCLE_PSNR
 
-                        modified_input_generator = self.generator(input_raw)
-                        modified_input_generator = self.clamp_with_grad(modified_input_generator.detach())
-                        ISP_PSNR = self.psnr(self.postprocess(modified_input_generator),
-                                             self.postprocess(gt_rgb)).item()
-                        logs['ISP_PSNR'] = ISP_PSNR
-
-                        modified_input_netG = self.netG(input_raw)
-                        modified_input_netG = self.clamp_with_grad(modified_input_netG.detach())
-                        PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG),
-                                             self.postprocess(gt_rgb)).item()
-                        logs['PIPE_PSNR'] = PIPE_PSNR
+                ####################################################################################################
+                # todo: emptying cache to save memory
+                # todo: https://discuss.pytorch.org/t/how-to-delete-a-tensor-in-gpu-to-free-up-memory/48879/25
+                ####################################################################################################
+                del modified_input_netG
+                del modified_input_qf_predict
+                del modified_input_generator
+                torch.cuda.empty_cache()
+                # else:
+                #     with torch.no_grad():
+                #         self.qf_predict_network.eval()
+                #         self.generator.eval()
+                #         self.netG.eval()
+                #         modified_input_qf_predict = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
+                #         modified_input_qf_predict = self.clamp_with_grad(modified_input_qf_predict.detach())
+                #         CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict), self.postprocess(gt_rgb)).item()
+                #         logs['CYCLE_PSNR'] = CYCLE_PSNR
+                #
+                #         modified_input_generator = self.generator(input_raw)
+                #         modified_input_generator = self.clamp_with_grad(modified_input_generator.detach())
+                #         ISP_PSNR = self.psnr(self.postprocess(modified_input_generator),
+                #                              self.postprocess(gt_rgb)).item()
+                #         logs['ISP_PSNR'] = ISP_PSNR
+                #
+                #         modified_input_netG = self.netG(input_raw)
+                #         modified_input_netG = self.clamp_with_grad(modified_input_netG.detach())
+                #         PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG),
+                #                              self.postprocess(gt_rgb)).item()
+                #         logs['PIPE_PSNR'] = PIPE_PSNR
 
                 # ####################################################################################################
                 # # todo: Image pipeline using my_own_pipeline
@@ -582,26 +601,35 @@ class Modified_invISP(BaseModel):
 
             if train_full_pipeline:
                 for idx_clip in range(step_acumulate):
-                    input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
-                    gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
-                    input_raw = self.visualize_raw(input_raw_one_dim)
-                    batch_size, num_channels, height_width, _ = input_raw.shape
-
-
                     with torch.cuda.amp.autocast():
                         ####################################################################################################
                         # todo: Generation of protected RAW
                         # todo: next, we protect RAW for tampering detection
                         ####################################################################################################
+                        input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                        gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                        ### tensor sized (B,3)
+                        camera_white_balance = self.camera_white_balance[
+                                               idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                        ### tensor sized (B,1) ranging from [0,3]
+                        bayer_pattern = self.bayer_pattern[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+
+                        input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
+                        batch_size, num_channels, height_width, _ = input_raw.shape
+
 
                         modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
                         RAW_L1 = self.l1_loss(input=modified_raw_one_dim, target=input_raw_one_dim)
                         modified_raw_one_dim = self.clamp_with_grad(modified_raw_one_dim)
 
-                        modified_raw = self.visualize_raw(modified_raw_one_dim)
+                        ####################################################################################################
+                        # todo: doing raw visualizing and white balance (and gamma)
+                        # todo:
+                        ####################################################################################################
+
+                        modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
                         RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
                         logs['RAW_PSNR'] = RAW_PSNR
-
 
                         ####################################################################################################
                         # todo: RAW2RGB pipelines
@@ -814,7 +842,8 @@ class Modified_invISP(BaseModel):
                     # todo:
                     ####################################################################################################
                     if self.global_step % 199 == 3 or self.global_step <= 10:
-                        self.inference_single_image(input_raw_single=input_raw_one_dim, input_raw=input_raw, gt_rgb=gt_rgb)
+                        self.inference_single_image(input_raw_single=input_raw_one_dim, input_raw=input_raw, gt_rgb=gt_rgb,
+                                                    camera_white_balance=camera_white_balance, bayer_pattern=bayer_pattern)
 
         ####################################################################################################
         # todo: updating the training stage
@@ -835,7 +864,7 @@ class Modified_invISP(BaseModel):
         # print(debug_logs)
         return logs, debug_logs
 
-    def inference_single_image(self,*, input_raw_single, input_raw, gt_rgb):
+    def inference_single_image(self,*, input_raw_single, input_raw, gt_rgb, bayer_pattern, camera_white_balance):
         ####################################################################################################
         # todo: inference single image
         # todo: what is tamper_source? used for simulated inpainting, only activated if self.global_step%3==2
@@ -850,7 +879,8 @@ class Modified_invISP(BaseModel):
             modified_raw_one_dim = self.KD_JPEG(input_raw_single)
             modified_raw_one_dim = self.clamp_with_grad(modified_raw_one_dim)
             RAW_PSNR = self.psnr(self.postprocess(modified_raw_one_dim), self.postprocess(input_raw)).item()
-            modified_raw = self.visualize_raw(modified_raw_one_dim)
+            modified_raw = self.visualize_raw(modified_raw_one_dim,
+                                              bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
             # modified_pack_raw = self.pack_raw(modified_raw_one_dim)
 
             tamper_source = None
@@ -966,20 +996,31 @@ class Modified_invISP(BaseModel):
         ####################################################################################################
         pass
 
-    def visualize_raw(self, raw_to_raw_tensor):
+    def visualize_raw(self, raw_to_raw_tensor, bayer_pattern, white_balance=None, eval=False):
         batch_size, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[2]
         # 两个相机都是RGGB
         # im = np.expand_dims(raw, axis=2)
+        # if self.kernel_RAW_k0.ndim!=4:
+        #     self.kernel_RAW_k0 = self.kernel_RAW_k0.unsqueeze(0).repeat(batch_size,1,1,1)
+        #     self.kernel_RAW_k1 = self.kernel_RAW_k1.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        #     self.kernel_RAW_k2 = self.kernel_RAW_k2.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        #     self.kernel_RAW_k3 = self.kernel_RAW_k3.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        #     print(f"visualize_raw is inited. Current shape {self.kernel_RAW_k0.shape}")
+        out_tensor = None
+        for idx in range(batch_size):
 
+            used_kernel = getattr(self, f"kernel_RAW_k{bayer_pattern[idx]}")
+            v_im = raw_to_raw_tensor[idx:idx+1].repeat(1,3,1,1) * used_kernel
 
-        if self.kernel_RAW.ndim!=4:
-            self.kernel_RAW = self.kernel_RAW.unsqueeze(0).repeat(batch_size,1,1,1)
-            print(f"visualize_raw is inited. Current shape {self.kernel_RAW.shape}")
+            if white_balance is not None:
+                # v_im (1,3,512,512) white_balance (1,3)
+                # print(white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3).shape)
+                # print(v_im.shape)
+                v_im = v_im * white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3)
 
-        v_im = raw_to_raw_tensor.repeat(1,3,1,1) * self.kernel_RAW
+            out_tensor = v_im if out_tensor is None else torch.cat((out_tensor, v_im), dim=0)
 
-
-        return v_im
+        return out_tensor.half() if not eval else out_tensor
 
     def pack_raw(self, raw_to_raw_tensor):
         # 两个相机都是RGGB

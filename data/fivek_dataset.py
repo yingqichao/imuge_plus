@@ -491,6 +491,7 @@ class FiveKDataset_skip(Dataset):
                       # example (batch size=2):
                       # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000],
                       # dtype=torch.float64), tensor([0., 0.], dtype=torch.fl
+                      ###### 0,1,2,3
                       'bayer_pattern': bayer_pattern,
                       # 'visualize_raw': visualize_raw
                       }
