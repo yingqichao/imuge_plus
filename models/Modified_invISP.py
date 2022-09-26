@@ -231,7 +231,8 @@ class Modified_invISP(BaseModel):
             # todo:
             ####################################################################################################
             from lama_models.HWMNet import HWMNet
-            self.KD_JPEG = HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
+            self.KD_JPEG = Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False,
+                                                    ).cuda() #InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
             self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
                                                    find_unused_parameters=True)
 
@@ -540,7 +541,7 @@ class Modified_invISP(BaseModel):
 
                     if train_isp_networks:
                         # self.optimizer_generator.zero_grad()
-                        THIRD_loss.backward()
+                        (THIRD_loss/step_acumulate).backward()
                         # self.scaler_G.scale(THIRD_loss).backward()
                         if idx_clip % step_acumulate == step_acumulate - 1:
                             if self.train_opt['gradient_clipping']:
@@ -579,7 +580,7 @@ class Modified_invISP(BaseModel):
                         # todo: added 20220919, steo==0, do not update, step==1 update
                         ####################################################################################################
                         # self.optimizer_generator.zero_grad()
-                        ISP_loss.backward()
+                        (ISP_loss/step_acumulate).backward()
                         # self.scaler_generator.scale(ISP_loss).backward()
                         if idx_clip % step_acumulate==step_acumulate-1:
                             if self.train_opt['gradient_clipping']:
@@ -679,7 +680,9 @@ class Modified_invISP(BaseModel):
 
 
                         modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
-                        RAW_L1 = self.l1_loss(input=modified_raw_one_dim, target=input_raw_one_dim)
+                        raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
+                        # RAW_L1 = self.l1_loss(input=modified_raw_one_dim, target=input_raw_one_dim)
+                        RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
                         modified_raw_one_dim = self.clamp_with_grad(modified_raw_one_dim)
 
                         ####################################################################################################
@@ -715,7 +718,7 @@ class Modified_invISP(BaseModel):
                             torch.cat((stored_image_generator,modified_input_qf_predict_detach),dim=0)
 
                         # self.optimizer_generator.zero_grad()
-                        CYCLE_loss.backward()
+                        (CYCLE_loss/step_acumulate).backward()
                         # self.scaler_qf.scale(CYCLE_loss).backward()
                         if idx_clip % step_acumulate == step_acumulate - 1:
                             if self.train_opt['gradient_clipping']:
@@ -728,6 +731,7 @@ class Modified_invISP(BaseModel):
 
 
                         ######## we use invISP ########
+
                         modified_input_0 = self.generator(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_0 = self.gamma_correction(modified_input_0)
@@ -736,7 +740,6 @@ class Modified_invISP(BaseModel):
                         ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
                         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
-                        ######## we use cycleISP ########
                         modified_input_1 = self.qf_predict_network(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_1 = self.gamma_correction(modified_input_1)
@@ -744,7 +747,7 @@ class Modified_invISP(BaseModel):
                         ISP_L1_1 = self.l1_loss(input=modified_input_1, target=tamper_source_1)
                         ISP_SSIM_1 = - self.ssim_loss(modified_input_1, tamper_source_1)
                         modified_input_1 = self.clamp_with_grad(modified_input_1)
-                        ######## we use my_own_pipeline ########
+
                         modified_input_2 = self.netG(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_2 = self.gamma_correction(modified_input_2)
@@ -752,6 +755,8 @@ class Modified_invISP(BaseModel):
                         ISP_L1_2 = self.l1_loss(input=modified_input_1, target=tamper_source_2)
                         ISP_SSIM_2 = - self.ssim_loss(modified_input_1, tamper_source_2)
                         modified_input_2 = self.clamp_with_grad(modified_input_2)
+
+                        ######## we use my_own_pipeline ########
                         # modified_pack_raw = self.pack_raw(modified_raw_one_dim)
                         # modified_input_2 = torch.zeros_like(gt_rgb)
                         # for img_idx in range(batch_size):
@@ -851,7 +856,7 @@ class Modified_invISP(BaseModel):
                         pred_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
 
-                        CE_resfcn.backward()
+                        (CE_resfcn/step_acumulate).backward()
                         if idx_clip % step_acumulate == step_acumulate-1:
                             # self.optimizer_generator.zero_grad()
                             # loss.backward()
@@ -860,11 +865,6 @@ class Modified_invISP(BaseModel):
                                 nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
                             self.optimizer_discriminator_mask.step()
                             self.optimizer_discriminator_mask.zero_grad()
-
-                        ####################################################################################################
-                        # todo: doing ema average
-                        # todo:
-                        ####################################################################################################
 
                         # logs['CE_MVSS'] = CE_MVSS.item()
                         # logs['CE_mantra'] = CE_mantra.item()
@@ -875,16 +875,16 @@ class Modified_invISP(BaseModel):
                         logs['CE_resfcn'] = CE_resfcn.item()
 
                         loss = 0
-                        loss += (ISP_L1_0+ISP_L1_1+ISP_L1_2)/3 + 1 * RAW_L1
+                        loss += (ISP_L1_0+ISP_L1_1+ISP_L1_2)/3 + 1 * RAW_L1_REV
                         loss += 0.01 * (ISP_SSIM_0+ISP_SSIM_1+ISP_SSIM_2)/3
-                        loss += 0.4 * CE_resfcn  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                        loss += 0.1 * CE_resfcn  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['loss'] = loss.item()
 
                         ####################################################################################################
                         # todo: Grad Accumulation
                         # todo: added 20220919, steo==0, do not update, step==1 update
                         ####################################################################################################
-                        loss.backward()
+                        (loss/step_acumulate).backward()
                         # self.scaler_kd_jpeg.scale(loss).backward()
                         if idx_clip % step_acumulate == step_acumulate-1:
                             # self.optimizer_generator.zero_grad()
@@ -910,7 +910,10 @@ class Modified_invISP(BaseModel):
                             self.optimizer_discriminator_mask.zero_grad()
                             self.optimizer_G.zero_grad()
 
-
+                    ####################################################################################################
+                    # todo: doing ema average
+                    # todo:
+                    ####################################################################################################
                     self._momentum_update_key_encoder()
 
                         # self.optimizer_G.zero_grad()
@@ -983,7 +986,7 @@ class Modified_invISP(BaseModel):
                 # todo: inference single image for testing
                 # todo:
                 ####################################################################################################
-                if self.global_step % 199 == 3 or self.global_step <= 10:
+                if self.global_step % 199 == 3:
                     did_val = True
                     self.inference_single_image()#input_raw_one_dim=input_raw_one_dim, input_raw=input_raw, gt_rgb=gt_rgb,
                                                 # camera_white_balance=camera_white_balance, file_name=file_name,
