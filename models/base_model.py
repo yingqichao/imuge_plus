@@ -47,11 +47,11 @@ class BaseModel():
         self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
 
     def using_invISP(self):
-        return self.global_step % 3 == 0
+        return self.global_step % 4 == 0
     def using_cycleISP(self):
-        return self.global_step % 3 == 1
+        return self.global_step % 4 == 1
     def using_my_own_pipeline(self):
-        return self.global_step % 3 == 2
+        return self.global_step % 4 == 2
     def using_weak_jpeg_plus_blurring_etc(self):
         return self.global_step % 5 in {0, 1, 2}
     def using_simulated_inpainting(self):
@@ -68,6 +68,8 @@ class BaseModel():
         return self.global_step % 5 == 0
     def using_jpeg_simulation_only(self):
         return self.global_step % 5 == 4
+    def begin_using_momentum(self):
+        return self.global_step>=0
 
 
 

@@ -721,13 +721,13 @@ class UNetDiscriminator(BaseNetwork):
         # ##SRM filters (fixed)
         # for param in self.SRMConv2D.parameters():
         #     param.requires_grad = False
-
-        self.BayarConv2D = nn.Conv2d(3, 3, 5, 1, padding=2, bias=False)
-        self.bayar_mask = (torch.tensor(np.ones(shape=(5, 5)))).cuda()
-        self.bayar_mask[2, 2] = 0
-        self.bayar_final = (torch.tensor(np.zeros((5, 5)))).cuda()
-        self.bayar_final[2, 2] = -1
-        self.activation = nn.ELU(inplace=True)
+        if self.use_SRM:
+            self.BayarConv2D = nn.Conv2d(3, 3, 5, 1, padding=2, bias=False)
+            self.bayar_mask = (torch.tensor(np.ones(shape=(5, 5)))).cuda()
+            self.bayar_mask[2, 2] = 0
+            self.bayar_final = (torch.tensor(np.zeros((5, 5)))).cuda()
+            self.bayar_final[2, 2] = -1
+            self.activation = nn.ELU(inplace=True)
 
         self.init_conv = nn.Sequential(
 
@@ -831,22 +831,24 @@ class UNetDiscriminator(BaseNetwork):
     def forward(self, x):
         # x = x.contiguous()
         ## **Bayar constraints**
-        # if self.use_SRM:
-        self.BayarConv2D.weight.data *= self.bayar_mask
-        self.BayarConv2D.weight.data *= torch.pow(self.BayarConv2D.weight.data.sum(axis=(2, 3)).view(3, 3, 1, 1), -1)
-        self.BayarConv2D.weight.data += self.bayar_final
+        if self.use_SRM:
+            self.BayarConv2D.weight.data *= self.bayar_mask
+            self.BayarConv2D.weight.data *= torch.pow(self.BayarConv2D.weight.data.sum(axis=(2, 3)).view(3, 3, 1, 1), -1)
+            self.BayarConv2D.weight.data += self.bayar_final
 
-        # Symmetric padding
-        # x = symm_pad(x, (2, 2, 2, 2))
+            # Symmetric padding
+            # x = symm_pad(x, (2, 2, 2, 2))
 
-        # conv_init = self.vanillaConv2D(x)
-        conv_bayar = self.BayarConv2D(x[:,:3])
-        # conv_srm = self.SRMConv2D(x)
+            # conv_init = self.vanillaConv2D(x)
+            conv_bayar = self.BayarConv2D(x[:,:3])
+            # conv_srm = self.SRMConv2D(x)
 
-        first_block = conv_bayar #torch.cat([conv_init, conv_srm, conv_bayar], axis=1)
-        e0 = self.activation(first_block)
-        if self.in_channels>3:
-            e0 = torch.cat((e0,x[:,3:]),dim=1)
+            first_block = conv_bayar #torch.cat([conv_init, conv_srm, conv_bayar], axis=1)
+            e0 = self.activation(first_block)
+            if self.in_channels>3:
+                e0 = torch.cat((e0,x[:,3:]),dim=1)
+        else:
+            e0 = x
         e0 = self.init_conv(e0)
 
         # e0 = self.encoder_0(x)

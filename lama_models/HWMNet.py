@@ -193,7 +193,7 @@ class CALayer(nn.Module):
         # feature channel downscale and upscale --> channel weight
         self.conv_du = nn.Sequential(
             nn.Conv2d(channel, channel // reduction, 1, padding=0, bias=bias),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Conv2d(channel // reduction, channel, 1, padding=0, bias=bias),
             nn.Sigmoid()
         )
@@ -314,7 +314,7 @@ class HWMNet(nn.Module):
         ms_result = [self.bottom_up(self.bottom_conv(x1))]
         for i, up in enumerate(self.up_path):
             x1 = up(x1, self.skip_conv[i](encs[-i - 1]))
-            ms_result.append(self.conv_up[i](x1))
+            ms_result.append(self.conv_up[i][1](self.conv_up[i][0](x1)))
         # Multi-scale selective feature fusion
         msff_result = self.final_ff(ms_result)
 
@@ -332,7 +332,7 @@ class SELayer(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Linear(channel // reduction, channel, bias=False),
             nn.Sigmoid()
         )
@@ -358,7 +358,7 @@ class FourierUnit(nn.Module):
                                           out_channels=out_channels * 2,
                                           kernel_size=1, stride=1, padding=0, groups=self.groups, bias=False)
         self.bn = torch.nn.BatchNorm2d(out_channels * 2)
-        self.relu = torch.nn.ReLU(inplace=True)
+        self.relu = torch.nn.ReLU()
 
         # squeeze and excitation block
         self.use_se = use_se
@@ -385,7 +385,7 @@ class FourierUnit(nn.Module):
         fft_dim = (-3, -2, -1) if self.ffc3d else (-2, -1)
         ffted = torch.fft.rfftn(x, dim=fft_dim, norm=self.fft_norm)
         ffted = torch.stack((ffted.real, ffted.imag), dim=-1)
-        ffted = ffted.permute(0, 1, 4, 2, 3).contiguous()  # (batch, c, 2, h, w/2+1)
+        ffted = ffted.permute(0, 1, 4, 2, 3)  # (batch, c, 2, h, w/2+1)
         ffted = ffted.view((batch, -1,) + ffted.size()[3:])
 
         if self.spectral_pos_encoding:
@@ -401,7 +401,7 @@ class FourierUnit(nn.Module):
         ffted = self.relu(self.bn(ffted))
 
         ffted = ffted.view((batch, -1, 2,) + ffted.size()[2:]).permute(
-            0, 1, 3, 4, 2).contiguous()  # (batch,c, t, h, w/2+1, 2)
+            0, 1, 3, 4, 2)  # (batch,c, t, h, w/2+1, 2)
         ffted = torch.complex(ffted[..., 0], ffted[..., 1])
 
         ifft_shape_slice = x.shape[-3:] if self.ffc3d else x.shape[-2:]
@@ -430,7 +430,7 @@ class SpectralTransform(nn.Module):
             nn.Conv2d(in_channels, out_channels //
                       2, kernel_size=1, groups=groups, bias=False),
             nn.BatchNorm2d(out_channels // 2),
-            nn.ReLU(inplace=True)
+            nn.ReLU()
         )
         self.fu = FourierUnit(
             out_channels // 2, out_channels // 2, groups, **fu_kwargs)
@@ -451,11 +451,11 @@ class SpectralTransform(nn.Module):
             split_no = 2
             split_s = h // split_no
             xs = torch.cat(torch.split(
-                x[:, :c // 4], split_s, dim=-2), dim=1).contiguous()
+                x[:, :c // 4], split_s, dim=-2), dim=1)
             xs = torch.cat(torch.split(xs, split_s, dim=-1),
-                           dim=1).contiguous()
+                           dim=1)
             xs = self.lfu(xs)
-            xs = xs.repeat(1, 1, split_no, split_no).contiguous()
+            xs = xs.repeat(1, 1, split_no, split_no)
         else:
             xs = 0
 
@@ -550,7 +550,7 @@ class FFC_BN_ACT(nn.Module):
         lact = nn.Identity if ratio_gout == 1 else activation_layer
         gact = nn.Identity if ratio_gout == 0 else activation_layer
         self.act_l = lact(inplace=True)
-        self.act_g = gact(inplace=True)
+        self.act_g = gact()
 
     def forward(self, x):
         x_l, x_g = self.ffc(x)

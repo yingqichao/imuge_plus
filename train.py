@@ -257,7 +257,7 @@ def main(args,opt):
         #     variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
         #     print(f"variables_list: {variables_list}")
         elif 'ISP' in which_model and args.mode==2:
-            variables_list = ['ISP_PSNR', 'CYCLE_PSNR', 'PIPE_PSNR', 'loss',
+            variables_list = ['ISP_PSNR', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'loss',
                               'RAW_PSNR', 'CE_MVSS', 'CE_mantra', 'CE_resfcn', 'ISP_PSNR_NOW',
                               'ERROR'
                               ]
@@ -275,9 +275,13 @@ def main(args,opt):
         total = len(train_set)
         print_step, restart_step = 15, 1000
         start = time.time()
+
+        val_generator = iter(val_loader)
+        val_item = next(val_generator)
+        model.feed_data_val_router(batch=val_item, mode=args.mode)
         for epoch in range(start_epoch, total_epochs + 1):
             current_step = 0
-            val_generator = iter(val_loader)
+
             # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
             #                     'SIMUL','RECON','RealTime'
             #                     'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
@@ -290,7 +294,12 @@ def main(args,opt):
             if opt['dist']:
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
-                if current_step%10==9:
+
+                #### training
+                model.feed_data_router(batch=train_data, mode=args.mode)
+
+                logs, debug_logs, did_val = model.optimize_parameters_router(mode=args.mode, step=current_step)
+                if did_val:
                     try:
                         val_item = next(val_generator)
                     except StopIteration as e:
@@ -299,10 +308,6 @@ def main(args,opt):
                         val_item = next(val_generator)
                     model.feed_data_val_router(batch=val_item, mode=args.mode)
 
-                #### training
-                model.feed_data_router(batch=train_data, mode=args.mode)
-
-                logs, debug_logs = model.optimize_parameters_router(mode=args.mode, step=current_step)
                 if variables_list[0] in logs:
                     for i in range(len(variables_list)):
                         if variables_list[i] in logs:
@@ -321,7 +326,7 @@ def main(args,opt):
                     #       )
                     end = time.time()
                     lr = logs['lr']
-                    info_str = f'[{epoch + 1}, {valid_idx + 1} {idx} {rank} {lr}] '
+                    info_str = f'[{epoch + 1}, {valid_idx + 1} {idx*model.real_H.shape[0]} {rank} {lr}] '
                     for i in range(len(variables_list)):
                         info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.5f} '
                     info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.2f} s'

@@ -493,6 +493,7 @@ class FiveKDataset_skip(Dataset):
                       # dtype=torch.float64), tensor([0., 0.], dtype=torch.fl
                       ###### 0,1,2,3
                       'bayer_pattern': bayer_pattern,
+                      'camera_name': camera_name,
                       # 'visualize_raw': visualize_raw
                       }
 

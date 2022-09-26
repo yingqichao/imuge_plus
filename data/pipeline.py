@@ -62,9 +62,9 @@ def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
         dng_path = os.path.join(default_root, camera_name, 'DNG', template+'.dng')
         template = rawpy.imread(dng_path)
     flip_val = template.sizes.flip
-    print(patch_size)
-    raw_image = raw_image.permute(1, 2, 0)
-    raw_image = raw_image.detach().cpu().numpy()
+    # print(patch_size)
+    raw_image = raw_image.permute(1, 2, 0).detach().cpu().numpy()
+    # print(raw_image.shape)
     raw_image = np.squeeze(raw_image, axis=2)
     raw_image = np.ascontiguousarray(unflip(raw_image, flip_val))
 
