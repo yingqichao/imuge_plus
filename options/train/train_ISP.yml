@@ -13,6 +13,7 @@ train_full_pipeline: true
 use_gamma_correction: false
 conduct_cropping: true
 consider_robost: true
+CE_hyper_param: 0.1
 #### datasets
 phase: train
 only_gen_immunized: 0.0

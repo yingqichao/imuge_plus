@@ -52,6 +52,9 @@ from MantraNet.mantranet import pre_trained_model
 from .invertible_net import Inveritible_Decolorization_PAMI
 from models.networks import UNetDiscriminator
 
+# import contextual_loss as cl
+# import contextual_loss.functional as F
+
 class Modified_invISP(BaseModel):
     def __init__(self, opt, args, train_set=None):
         super(Modified_invISP, self).__init__(opt, args, train_set)
@@ -72,6 +75,7 @@ class Modified_invISP(BaseModel):
         self.use_gamma_correction = self.opt['use_gamma_correction']
         self.conduct_cropping = self.opt['conduct_cropping']
         self.consider_robost = self.opt['consider_robost']
+        self.CE_hyper_param = self.opt['CE_hyper_param']
         ####################################################################################################
         # todo: losses and attack layers
         # todo: JPEG attack rescaling deblurring
@@ -468,6 +472,19 @@ class Modified_invISP(BaseModel):
             num_per_clip = int(sum_batch_size//step_acumulate)
 
             for idx_clip in range(step_acumulate):
+                ### tensor sized (B,3)
+                camera_white_balance = self.camera_white_balance[
+                                       idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                file_name = self.file_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                ### tensor sized (B,1) ranging from [0,3]
+                bayer_pattern = self.bayer_pattern[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+
+                input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
+                                               white_balance=camera_white_balance, eval=not train_isp_networks)
+                batch_size, num_channels, height_width, _ = input_raw.shape
+                # input_raw = self.clamp_with_grad(input_raw)
 
                 with torch.enable_grad() if train_isp_networks else torch.no_grad():
                     if train_isp_networks:
@@ -482,48 +499,8 @@ class Modified_invISP(BaseModel):
                     # todo: Image pipeline training
                     # todo: we first train several nn-based ISP networks
                     ####################################################################################################
-                    ### tensor sized (B,3)
-                    camera_white_balance = self.camera_white_balance[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                    file_name = self.file_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
-                    ### tensor sized (B,1) ranging from [0,3]
-                    bayer_pattern = self.bayer_pattern[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
 
-                    input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                    gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                    input_raw = self.visualize_raw(input_raw_one_dim,
-                                                   bayer_pattern=bayer_pattern, white_balance=camera_white_balance, eval=not train_isp_networks)
-                    batch_size, num_channels, height_width, _ = input_raw.shape
-                    # input_raw = self.clamp_with_grad(input_raw)
-
-                    ####### CYCYLE ISP PRODUCES WRONG RESULTS, ABANDON! 20220926 ##############
-                    # modified_input_qf_predict = self.qf_predict_network(rgb=gt_rgb, raw=input_raw.clone().detach())
-                    # if self.use_gamma_correction:
-                    #     modified_input_qf_predict = self.gamma_correction(modified_input_qf_predict)
-                    #
-                    # CYCLE_L1 = self.l1_loss(input=modified_input_qf_predict, target=gt_rgb)
-                    # CYCLE_SSIM = - self.ssim_loss(modified_input_qf_predict, gt_rgb)
-                    # CYCLE_loss = CYCLE_L1 + 0.01* CYCLE_SSIM
-                    # modified_input_qf_predict_detach = self.clamp_with_grad(modified_input_qf_predict.detach())
-                    # CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict_detach), self.postprocess(gt_rgb)).item()
-                    # logs['CYCLE_PSNR'] = CYCLE_PSNR
-                    # # del modified_input_qf_predict
-                    # # torch.cuda.empty_cache()
-                    # stored_image_qf_predict = modified_input_qf_predict_detach if stored_image_qf_predict is None else \
-                    #     torch.cat((stored_image_generator,modified_input_qf_predict_detach),dim=0)
-                    #
-                    # if train_isp_networks:
-                    #     # self.optimizer_generator.zero_grad()
-                    #     CYCLE_loss.backward()
-                    #     # self.scaler_qf.scale(CYCLE_loss).backward()
-                    #     if idx_clip % step_acumulate == step_acumulate - 1:
-                    #         if self.train_opt['gradient_clipping']:
-                    #             nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-                    #             # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                    #         self.optimizer_qf.step()
-                    #         # self.scaler_qf.step(self.optimizer_qf)
-                    #         # self.scaler_qf.update()
-                    #         self.optimizer_qf.zero_grad()
-
+                    ################## HWMNET ########################
                     modified_input_netG = self.netG(input_raw.clone().detach())
                     if self.use_gamma_correction:
                         modified_input_netG = self.gamma_correction(modified_input_netG)
@@ -552,6 +529,7 @@ class Modified_invISP(BaseModel):
                             # self.scaler_G.update()
                             self.optimizer_G.zero_grad()
 
+                    ################## InvISP ########################
                     modified_input_generator = self.generator(input_raw.clone().detach())
                     if self.use_gamma_correction:
                         modified_input_generator = self.gamma_correction(modified_input_generator)
@@ -591,31 +569,43 @@ class Modified_invISP(BaseModel):
                             # self.scaler_generator.update()
                             self.optimizer_generator.zero_grad()
 
+                #### DUE TO THE MISCONDUCTIVENESS OF CYCLEISP, WE RETRAIN A MODEL #########
+                with torch.enable_grad():
+                    self.qf_predict_network.train()
+                    ####### CYCYLE ISP PRODUCES WRONG RESULTS, ABANDON! 20220926 ##############
+                    modified_input_qf_predict = self.qf_predict_network(input_raw.clone().detach())
+                    if self.use_gamma_correction:
+                        modified_input_qf_predict = self.gamma_correction(modified_input_qf_predict)
+
+                    CYCLE_L1 = self.l1_loss(input=modified_input_qf_predict, target=gt_rgb)
+                    CYCLE_SSIM = - self.ssim_loss(modified_input_qf_predict, gt_rgb)
+                    CYCLE_loss = CYCLE_L1 + 0.01 * CYCLE_SSIM
+                    modified_input_qf_predict_detach = self.clamp_with_grad(modified_input_qf_predict.detach())
+                    CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict_detach),
+                                           self.postprocess(gt_rgb)).item()
+                    logs['CYCLE_PSNR'] = CYCLE_PSNR
+                    logs['CYCLE_L1'] = CYCLE_L1.item()
+                    # del modified_input_qf_predict
+                    # torch.cuda.empty_cache()
+                    stored_image_qf_predict = modified_input_qf_predict_detach if stored_image_qf_predict is None else \
+                        torch.cat((stored_image_qf_predict, modified_input_qf_predict_detach), dim=0)
+
+                    # self.optimizer_generator.zero_grad()
+                    (CYCLE_loss / step_acumulate).backward()
+                    # self.scaler_qf.scale(CYCLE_loss).backward()
+                    if idx_clip % step_acumulate == step_acumulate - 1:
+                        if self.train_opt['gradient_clipping']:
+                            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+                            # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                        self.optimizer_qf.step()
+                        # self.scaler_qf.step(self.optimizer_qf)
+                        # self.scaler_qf.update()
+                        self.optimizer_qf.zero_grad()
+
                 ####################################################################################################
                 # todo: emptying cache to save memory
                 # todo: https://discuss.pytorch.org/t/how-to-delete-a-tensor-in-gpu-to-free-up-memory/48879/25
                 ####################################################################################################
-                # else:
-                #     with torch.no_grad():
-                #         self.qf_predict_network.eval()
-                #         self.generator.eval()
-                #         self.netG.eval()
-                #         modified_input_qf_predict = self.qf_predict_network(rgb=gt_rgb, raw=input_raw)
-                #         modified_input_qf_predict = self.clamp_with_grad(modified_input_qf_predict.detach())
-                #         CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict), self.postprocess(gt_rgb)).item()
-                #         logs['CYCLE_PSNR'] = CYCLE_PSNR
-                #
-                #         modified_input_generator = self.generator(input_raw)
-                #         modified_input_generator = self.clamp_with_grad(modified_input_generator.detach())
-                #         ISP_PSNR = self.psnr(self.postprocess(modified_input_generator),
-                #                              self.postprocess(gt_rgb)).item()
-                #         logs['ISP_PSNR'] = ISP_PSNR
-                #
-                #         modified_input_netG = self.netG(input_raw)
-                #         modified_input_netG = self.clamp_with_grad(modified_input_netG.detach())
-                #         PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG),
-                #                              self.postprocess(gt_rgb)).item()
-                #         logs['PIPE_PSNR'] = PIPE_PSNR
 
                 # ####################################################################################################
                 # # todo: Image pipeline using my_own_pipeline
@@ -657,27 +647,29 @@ class Modified_invISP(BaseModel):
                 self.netG.eval()
                 self.discriminator_mask.train()
                 self.discriminator.eval()
-                self.qf_predict_network.train()
+                self.qf_predict_network.eval()
 
                 for idx_clip in range(step_acumulate):
-                    with torch.enable_grad():
+                    input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                    file_name = self.file_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                    camera_name = self.camera_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
+                    gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                    ### tensor sized (B,3)
+                    camera_white_balance = self.camera_white_balance[
+                                           idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                    ### tensor sized (B,1) ranging from [0,3]
+                    bayer_pattern = self.bayer_pattern[
+                                    idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
 
+                    input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
+                                                   white_balance=camera_white_balance)
+                    batch_size, num_channels, height_width, _ = input_raw.shape
+
+                    with torch.enable_grad():
                         ####################################################################################################
                         # todo: Generation of protected RAW
                         # todo: next, we protect RAW for tampering detection
                         ####################################################################################################
-                        input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        file_name = self.file_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
-                        camera_name = self.camera_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
-                        gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        ### tensor sized (B,3)
-                        camera_white_balance = self.camera_white_balance[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        ### tensor sized (B,1) ranging from [0,3]
-                        bayer_pattern = self.bayer_pattern[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-
-                        input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
-                        batch_size, num_channels, height_width, _ = input_raw.shape
-
 
                         modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
                         raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
@@ -699,36 +691,6 @@ class Modified_invISP(BaseModel):
                         # todo: note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
                         # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
                         ####################################################################################################
-
-                        #### DUE TO THE MISCONDUCTIVENESS OF CYCLEISP, WE RETRAIN A MODEL #########
-                        modified_input_qf_predict = self.qf_predict_network(input_raw.clone().detach())
-                        if self.use_gamma_correction:
-                            modified_input_qf_predict = self.gamma_correction(modified_input_qf_predict)
-
-                        CYCLE_L1 = self.l1_loss(input=modified_input_qf_predict, target=gt_rgb)
-                        CYCLE_SSIM = - self.ssim_loss(modified_input_qf_predict, gt_rgb)
-                        CYCLE_loss = CYCLE_L1 + 0.01* CYCLE_SSIM
-                        modified_input_qf_predict_detach = self.clamp_with_grad(modified_input_qf_predict.detach())
-                        CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict_detach), self.postprocess(gt_rgb)).item()
-                        logs['CYCLE_PSNR'] = CYCLE_PSNR
-                        logs['CYCLE_L1'] = CYCLE_L1.item()
-                        # del modified_input_qf_predict
-                        # torch.cuda.empty_cache()
-                        stored_image_qf_predict = modified_input_qf_predict_detach if stored_image_qf_predict is None else \
-                            torch.cat((stored_image_generator,modified_input_qf_predict_detach),dim=0)
-
-                        # self.optimizer_generator.zero_grad()
-                        (CYCLE_loss/step_acumulate).backward()
-                        # self.scaler_qf.scale(CYCLE_loss).backward()
-                        if idx_clip % step_acumulate == step_acumulate - 1:
-                            if self.train_opt['gradient_clipping']:
-                                nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-                                # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                            self.optimizer_qf.step()
-                            # self.scaler_qf.step(self.optimizer_qf)
-                            # self.scaler_qf.update()
-                            self.optimizer_qf.zero_grad()
-
 
                         ######## we use invISP ########
 
@@ -877,7 +839,7 @@ class Modified_invISP(BaseModel):
                         loss = 0
                         loss += (ISP_L1_0+ISP_L1_1+ISP_L1_2)/3 + 1 * RAW_L1_REV
                         loss += 0.01 * (ISP_SSIM_0+ISP_SSIM_1+ISP_SSIM_2)/3
-                        loss += 0.1 * CE_resfcn  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                        loss += self.CE_hyper_param * CE_resfcn  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['loss'] = loss.item()
 
                         ####################################################################################################
@@ -952,16 +914,19 @@ class Modified_invISP(BaseModel):
                         images = stitch_images(
                             self.postprocess(input_raw),
                             self.postprocess(modified_input_0),
+                            self.postprocess(tamper_source_0),
                             self.postprocess(modified_input_1),
+                            self.postprocess(tamper_source_1),
                             self.postprocess(modified_input_2),
+                            self.postprocess(tamper_source_2),
                             self.postprocess(gt_rgb),
                             ### RAW2RAW
                             self.postprocess(modified_raw),
                             self.postprocess(10 * torch.abs(modified_raw - input_raw)),
                             ### RAW2RGB
-                            self.postprocess(modified_input),
-                            self.postprocess(tamper_source),
-                            self.postprocess(10 * torch.abs(modified_input - tamper_source)),
+                            # self.postprocess(modified_input),
+                            # self.postprocess(tamper_source),
+                            # self.postprocess(10 * torch.abs(modified_input - tamper_source)),
                             ### tampering and benign attack
                             self.postprocess(attacked_forward),
                             self.postprocess(attacked_image),
