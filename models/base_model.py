@@ -55,11 +55,11 @@ class BaseModel():
     def using_weak_jpeg_plus_blurring_etc(self):
         return self.global_step % 5 in {0, 1, 2}
     def using_simulated_inpainting(self):
-        return self.global_step % 2 == 0
+        return self.global_step % 4 == 1 or self.global_step % 4 == 2
     def using_splicing(self):
-        return False #self.global_step % 3 == 0
+        return self.global_step % 4 == 0
     def using_copy_move(self):
-        return self.global_step % 2 == 1
+        return self.global_step % 4 == 3
     def using_gaussian_blur(self):
         return self.global_step % 5 == 1
     def using_median_blur(self):

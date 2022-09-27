@@ -257,8 +257,8 @@ def main(args,opt):
         #     variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
         #     print(f"variables_list: {variables_list}")
         elif 'ISP' in which_model and args.mode==2:
-            variables_list = ['ISP_PSNR', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'loss',
-                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra', 'CE_resfcn', 'ISP_PSNR_NOW',
+            variables_list = ['ISP_PSNR', 'CE_resfcn', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'loss',
+                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra',  'ISP_PSNR_NOW', 'ISP_SSIM_NOW'
                               'ERROR'
                               ]
             print(f"variables_list: {variables_list}")
@@ -308,7 +308,7 @@ def main(args,opt):
                         val_item = next(val_generator)
                     model.feed_data_val_router(batch=val_item, mode=args.mode)
 
-                if variables_list[0] in logs:
+                if variables_list[0] in logs or variables_list[1] in logs or variables_list[2] in logs:
                     for i in range(len(variables_list)):
                         if variables_list[i] in logs:
                             running_list[i] += logs[variables_list[i]]
