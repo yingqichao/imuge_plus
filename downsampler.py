@@ -11,7 +11,6 @@ class Downsampler(nn.Module):
     def __init__(self, n_planes, factor, kernel_type, phase=0, kernel_width=None, support=None, sigma=None,
                  preserve_size=False):
         """
-
         :param n_planes:
         :param factor:
         :param kernel_type:
@@ -150,7 +149,7 @@ def get_kernel(factor, kernel_type, phase, kernel_width, support=None, sigma=Non
 def get_downsampled(image, downsample_factors):
     """
     image is of type np.array
-    downsampling_factor should be integer - e.g. 2 
+    downsampling_factor should be integer - e.g. 2
     """
     # TODO: move kernel type to args
     torch.backends.cudnn.enabled = True

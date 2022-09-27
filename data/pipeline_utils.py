@@ -1,17 +1,17 @@
 """
 Author(s):
 Abdelrahman Abdelhamed
-
 Camera pipeline utilities.
 """
 
 import os
 
+import PIL.Image
 import cv2
 import exifread
 import numpy as np
 import rawpy
-from colour_demosaicing import demosaicing_CFA_Bayer_Menon2007
+from colour_demosaicing import demosaicing_CFA_Bayer_Menon2007, demosaicing_CFA_Bayer_DDFAPD, demosaicing_CFA_Bayer_bilinear
 # from exifread import Ratio
 from exifread.utils import Ratio
 from scipy.io import loadmat
@@ -309,7 +309,7 @@ def demosaic(white_balanced_image, cfa_pattern, output_channel_order='BGR', alg_
         max_val = 255
         wb_image = (white_balanced_image * max_val).astype(dtype=np.uint8)
     else:
-        max_val = 16383
+        max_val = 4095
         wb_image = (white_balanced_image * max_val).astype(dtype=np.uint16)
 
     if alg_type in ['', 'EA', 'VNG']:
@@ -318,8 +318,18 @@ def demosaic(white_balanced_image, cfa_pattern, output_channel_order='BGR', alg_
     elif alg_type == 'menon2007':
         cfa_pattern_str = "".join(["RGB"[i] for i in cfa_pattern])
         demosaiced_image = demosaicing_CFA_Bayer_Menon2007(wb_image, pattern=cfa_pattern_str)
+    elif alg_type == 'ddfapd':
+        cfa_pattern_str = "".join(["RGB"[i] for i in cfa_pattern])
+        demosaiced_image = demosaicing_CFA_Bayer_DDFAPD(wb_image, pattern=cfa_pattern_str)
+    elif alg_type == 'bilinear':
+        cfa_pattern_str = "".join(["RGB"[i] for i in cfa_pattern])
+        demosaiced_image = demosaicing_CFA_Bayer_bilinear(wb_image, pattern=cfa_pattern_str)
+    # elif alg_type == ''
+        # print(demosaiced_image)
 
     demosaiced_image = demosaiced_image.astype(dtype=np.float32) / max_val
+    import PIL
+    # PIL.Image.fromarray((demosaiced_image*255).astype(np.uint8)).save('dem.png', subsampling=1)
 
     return demosaiced_image
 

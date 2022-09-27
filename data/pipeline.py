@@ -41,12 +41,25 @@ def pipeline_tensor2image(*, raw_image, metadata, input_stage='normal', output_s
         'input_stage': input_stage,  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
         'output_stage': output_stage,  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
         'save_as': 'png',  # options: 'jpg', 'png', 'tif', etc.
-        'demosaic_type': 'EA',
+        'demosaic_type': 'ddfapd',
         'save_dtype': np.uint8
     }
     # first: transfer the torch into numpy variable
-    raw_image = raw_image.cpu().numpy()
-    final_rgb = run_pipeline_v2(raw_image, params, metadata, False)
+    raw_image = raw_image.detach().cpu().numpy()
+    camera_name = metadata['camera_name']
+    if camera_name == 'Canon_EOS_5D':
+        max_value = 4095
+    else:
+        max_value = 16383
+    tmp_raw = raw_image * float(max_value)
+    # tmp_raw = np.squeeze(origin_raw, axis=2)
+    if camera_name == 'Canon_EOS_5D':
+        tmp_raw = tmp_raw + 127.0
+    tmp_raw = unflip(tmp_raw, metadata['flip_val'])
+    # print(raw_image.shape)
+    # print(tmp_raw)
+    final_rgb = run_pipeline_v2(tmp_raw, params, metadata, True)
+    # print(final_rgb)
     return final_rgb
 
 
@@ -143,11 +156,12 @@ def run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_13
 
     if params_['output_stage'] == current_stage:
         return current_image
-
     if params_['input_stage'] == current_stage:
         current_image = demosaic(current_image, metadata['cfa_pattern'], output_channel_order='RGB',
                                  alg_type=params_['demosaic_type'])
+        # print(current_image)
         params_['input_stage'] = 'demosaic'
+
 
     current_stage = 'demosaic'
 

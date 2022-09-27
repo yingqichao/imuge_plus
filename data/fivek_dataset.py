@@ -943,7 +943,7 @@ def set_metadata_pickle(dataset_root, camera_name):
     for file_name in tqdm(data.keys()):
         dng_path = os.path.join(default_root, camera_name, 'DNG', file_name+'.dng')
         raw = rawpy.imread(dng_path)
-        data[file_name]['flip_val'] = raw.sizes.flip
+        data[file_name]['metadata']['black_level'] = raw.black_level_per_channel
     with open(os.path.join(dataset_root, camera_name, 'metadata.pickle'), 'wb') as out:
         pickle.dump(data, out)
 
@@ -1014,9 +1014,35 @@ def set_metadata_pickle(dataset_root, camera_name):
 # 数据集可用 data_mode=RAW表明是对插值后的图像
 if __name__ == '__main__':
     from data.pipeline import rawpy_tensor2image
+    from data.pipeline import pipeline_tensor2image
+    import os
+    import pickle
 
     dataset_root = '/ssd/invISP_skip/'
     camera_name = 'Canon_EOS_5D'
+    os.makedirs('./test/', exist_ok=True)
+    # dng_files = os.listdir(os.path.join(dataset_root, camera_name, 'DNG'))
+    # with open(os.path.join('/ssd/invISP_skip/', camera_name, 'metadata.pickle'), 'rb') as f:
+    #     metadatas = pickle.load(f)
+    # for dng_file_name in dng_files:
+    #     if not dng_file_name.endswith('.dng'):
+    #         continue
+    #     dng_file_path = os.path.join(dataset_root, camera_name, 'DNG', dng_file_name)
+    #     raw_image_visible = rawpy.imread(dng_file_path).raw_image_visible
+    #     target_rgb_path = os.path.join(dataset_root, camera_name, 'RGB_PNG', dng_file_name.replace('.dng', '.png'))
+    #     target_rgb = imageio.imread(target_rgb_path)
+    #     fn = dng_file_name.split('.')[-2]
+    #     metadata = metadatas[fn]
+    #     flip_val = metadata['flip_val']
+    #     raw_image_visible = flip(raw_image_visible, flip_val)
+    #     rawf, rgbf = random_crop(512, raw_image_visible, target_rgb)
+    #     rawf = unflip(rawf, flip_val)
+    #     n_rgb = pipeline_tensor2image(raw_image=rawf, metadata=metadata['metadata'], input_stage='raw')
+    #     numpy_rgb = (n_rgb * 255).astype(np.uint8)
+    #     numpy_rgb = np.concatenate([numpy_rgb, rgbf], axis=1)
+    #     print(dng_file_name)
+    #     PIL.Image.fromarray(numpy_rgb).save(os.path.join('./test/', f'{fn}.png'), subsampling=1)
+    # exit(0)
     # data_process_npz(dataset_root, camera_name)
     # test_image_downsample(dataset_root, camera_name)
     # exit(0)
@@ -1035,13 +1061,28 @@ if __name__ == '__main__':
         print(file_name[0], value['bayer_pattern'][0])
         # metadata = train_set.metadata_list[file_name[0]]
 
-        input_raw = value['visualize_raw'][0]
-        template = rawpy.imread(os.path.join(dataset_root, camera_name, 'template.dng'))
-        ###########################################################################
-        # todo：用法 直接传入raw图，template可以传入rawpy对象，也可以是file_name
-        ###########################################################################
-        numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=template, camera_name=camera_name,
-                                       patch_size=512)
+        input_raw = value['input_raw'][0]
+
+        # 测试rawpy
+        # template = rawpy.imread(os.path.join(dataset_root, camera_name, 'template.dng'))
+        # ###########################################################################
+        # # todo：用法 直接传入raw图，template可以传入rawpy对象，也可以是file_name
+        # ###########################################################################
+        # numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=template, camera_name=camera_name,
+        #                                patch_size=512)
+
+        # 测试 my own pipeline
+        metadata = train_set.metadata_list[file_name[0]]
+        flip_val = metadata['flip_val']
+        metadata = metadata['metadata']
+        # 在metadata中加入要用的flip_val和camera_name
+        metadata['flip_val'] = flip_val
+        metadata['camera_name'] = camera_name
+
+        # print(metadata)
+        input_raw = input_raw.permute(1, 2, 0).squeeze(2)
+        numpy_rgb = pipeline_tensor2image(raw_image=input_raw, metadata=metadata, input_stage='raw')
+        numpy_rgb = (numpy_rgb * 255).astype(np.uint8)
         target_rgb = value['target_rgb'][0].permute(1, 2, 0).cpu().numpy()*255
         target_rgb = target_rgb.astype(np.uint8)
         # print(target_rgb[0])

@@ -703,24 +703,24 @@ class Modified_invISP(BaseModel):
                         if self.use_gamma_correction:
                             modified_input_0 = self.gamma_correction(modified_input_0)
                         tamper_source_0 = stored_image_generator[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        # ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
-                        # ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
+                        ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
+                        ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
                         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
-                        modified_input_1 = self.qf_predict_network(modified_raw)
-                        if self.use_gamma_correction:
-                            modified_input_1 = self.gamma_correction(modified_input_1)
-                        tamper_source_1 = stored_image_qf_predict[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        # ISP_L1_1 = self.l1_loss(input=modified_input_1, target=tamper_source_1)
-                        # ISP_SSIM_1 = - self.ssim_loss(modified_input_1, tamper_source_1)
-                        modified_input_1 = self.clamp_with_grad(modified_input_1)
+                        # modified_input_1 = self.qf_predict_network(modified_raw)
+                        # if self.use_gamma_correction:
+                        #     modified_input_1 = self.gamma_correction(modified_input_1)
+                        # tamper_source_1 = stored_image_qf_predict[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                        # # ISP_L1_1 = self.l1_loss(input=modified_input_1, target=tamper_source_1)
+                        # # ISP_SSIM_1 = - self.ssim_loss(modified_input_1, tamper_source_1)
+                        # modified_input_1 = self.clamp_with_grad(modified_input_1)
 
                         modified_input_2 = self.netG(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_2 = self.gamma_correction(modified_input_2)
                         tamper_source_2 = stored_image_netG[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        # ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
-                        # ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
+                        ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
+                        ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
                         modified_input_2 = self.clamp_with_grad(modified_input_2)
 
                         ######## we use my_own_pipeline ########
@@ -744,24 +744,24 @@ class Modified_invISP(BaseModel):
                         # todo: note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
                         # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
                         ####################################################################################################
-                        alpha_0 = np.random.rand()*0.66
-                        alpha_1 = np.random.rand()*0.66
-                        alpha_1 = min(alpha_1,1-alpha_0)
-                        alpha_1 = max(0, alpha_1)
+                        alpha_0 = np.random.rand()
+                        # alpha_1 = np.random.rand()*0.66
+                        # alpha_1 = min(alpha_1,1-alpha_0)
+                        # alpha_1 = max(0, alpha_1)
                         # alpha_2 = np.random.rand() * 0.6
                         # alpha_2 = min(alpha_2, 1 - alpha_0-alpha_1)
                         # alpha_2 = max(0, alpha_2)
-                        alpha_2 = 1 - alpha_0 - alpha_1
+                        alpha_2 = 1 - alpha_0
 
                         modified_input = alpha_0*modified_input_0
                         modified_input += alpha_2*modified_input_2
-                        modified_input += alpha_1*modified_input_1
+                        # modified_input += alpha_1*modified_input_1
                         tamper_source = alpha_0*tamper_source_0
                         tamper_source += alpha_2*tamper_source_2
-                        tamper_source += alpha_1*tamper_source_1
+                        # tamper_source += alpha_1*tamper_source_1
                         tamper_source = tamper_source.detach()
 
-                        ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
+                        # ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
                         ISP_SSIM_sum = - self.ssim_loss(modified_input, tamper_source)
 
                         modified_input = self.clamp_with_grad(modified_input)
@@ -853,9 +853,9 @@ class Modified_invISP(BaseModel):
                         logs['CE_resfcn'] = CE_resfcn.item()
 
                         loss = 0
-                        loss += ISP_L1_sum #(ISP_L1_1+ISP_L1_0+ISP_L1_2)/3
+                        loss += (ISP_L1_0+ISP_L1_2)/2
                         loss += 1 * RAW_L1_REV + 1 * RAW_L1
-                        loss += 0.01 * ISP_SSIM_sum #0.01 * (ISP_SSIM_0+ISP_SSIM_2+ISP_SSIM_1)/3
+                        loss += 0.01 * (ISP_SSIM_0+ISP_SSIM_2)/2
 
                         hyper_param = self.CE_hyper_param if (ISP_PSNR>=38 or ISP_SSIM_sum>0.95) else self.CE_hyper_param/5
                         loss += hyper_param * CE_resfcn  # (CE_MVSS+CE_mantra+CE_resfcn)/3
