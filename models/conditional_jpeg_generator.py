@@ -199,6 +199,12 @@ class QFAttention(nn.Module):
         return x + res
 
 
+def spectral_norm(module, mode=True):
+    if mode:
+        return nn.utils.spectral_norm(module)
+
+    return module
+
 class FBCNN(nn.Module):
     def __init__(self, in_nc=3, out_nc=3, nc=[32, 64, 128, 256], nb=4, act_mode='R', downsample_mode='strideconv',qf_classes=6,
                  upsample_mode='convtranspose'):

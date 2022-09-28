@@ -68,12 +68,15 @@ def bili_resize(factor):
 
 ##---------- Basic Blocks ----------
 class UNetConvBlock(nn.Module):
-    def __init__(self, in_size, out_size, downsample):
+    def __init__(self, in_size, out_size, downsample, style_control=False, use_dwt=True):
         super(UNetConvBlock, self).__init__()
         self.downsample = downsample
+        self.style_control = style_control
+        print(f"enable style control:{style_control}")
+        self.use_dwt = use_dwt
         ### previously
-        self.body = [HWB(n_feat=in_size, o_feat=in_size, kernel_size=3, reduction=16, bias=False, act=nn.PReLU())]# for _ in range(wab)]
-        ### now: FFC ResBlock from LAMA
+        self.body = [HWB(n_feat=in_size, o_feat=in_size, kernel_size=3, reduction=16, bias=False, act=nn.PReLU(), use_dwt=self.use_dwt)]# for _ in range(wab)]
+        ### alternatively: FFC ResBlock from LAMA
         # self.body = [FFCResnetBlock(in_size, ratio_gin=0.5, ratio_gout=0.5)]
         self.body = nn.Sequential(*self.body)
 
@@ -81,26 +84,32 @@ class UNetConvBlock(nn.Module):
             self.downsample = PS_down(out_size, out_size, downscale=2)
 
         self.tail = nn.Conv2d(in_size, out_size, kernel_size=1)
+        if self.style_control:
+            self.instance_norm = nn.InstanceNorm2d(out_size, affine=False)
+            self.condition = Conditional_Norm(in_channels=out_size)
 
-    def forward(self, x):
+
+    def forward(self, x, style_code=None):
         out = self.body(x)
         out = self.tail(out)
         if self.downsample:
             out_down = self.downsample(out)
             return out_down, out
         else:
+            if self.style_control:
+                out = self.condition(out, style_code)
             return out
 
 class UNetUpBlock(nn.Module):
-    def __init__(self, in_size, out_size):
+    def __init__(self, in_size, out_size, style_control=False, use_dwt=True):
         super(UNetUpBlock, self).__init__()
         self.up = PS_up(in_size, out_size, upscale=2)
-        self.conv_block = UNetConvBlock(in_size, out_size, downsample=False)
+        self.conv_block = UNetConvBlock(in_size, out_size, downsample=False, style_control=style_control, use_dwt=use_dwt)
 
-    def forward(self, x, bridge):
+    def forward(self, x, bridge, style_code=None):
         up = self.up(x)
         out = torch.cat([up, bridge], dim=1)
-        out = self.conv_block(out)
+        out = self.conv_block(out, style_code)
         return out
 
 ##---------- Resizing Modules (Pixel(Un)Shuffle) ----------
@@ -127,11 +136,34 @@ class PS_up(nn.Module):
         x = self.conv1(x)
         return x
 
+from collections import OrderedDict
+def sequential(*args):
+    """Advanced nn.Sequential.
+
+    Args:
+        nn.Sequential, nn.Module
+
+    Returns:
+        nn.Sequential
+    """
+    if len(args) == 1:
+        if isinstance(args[0], OrderedDict):
+            raise NotImplementedError('sequential does not support OrderedDict input.')
+        return args[0]  # No sequential is needed.
+    modules = []
+    for module in args:
+        if isinstance(module, nn.Sequential):
+            for submodule in module.children():
+                modules.append(submodule)
+        elif isinstance(module, nn.Module):
+            modules.append(module)
+    return nn.Sequential(*modules)
+
 ##---------- Selective Kernel Feature Fusion (SKFF) ----------
 class SKFF(nn.Module):
-    def __init__(self, in_channels, height=3, reduction=8, bias=False):
+    def __init__(self, in_channels, height=3, reduction=8, bias=False, subtask=0):
         super(SKFF, self).__init__()
-
+        self.subtask = subtask
         self.height = height
         d = max(int(in_channels / reduction), 4)
 
@@ -206,10 +238,15 @@ class CALayer(nn.Module):
 ##########################################################################
 # Half Wavelet Dual Attention Block (HWB)
 class HWB(nn.Module):
-    def __init__(self, n_feat, o_feat, kernel_size=3, reduction=16, bias=False, act=nn.ELU()):
+    def __init__(self, n_feat, o_feat, kernel_size=3, reduction=16, bias=False, act=nn.ELU(), use_dwt=True):
         super(HWB, self).__init__()
-        self.dwt = DWT()
-        self.iwt = IWT()
+        self.use_dwt = use_dwt
+
+        if self.use_dwt:
+            self.dwt = DWT()
+            self.iwt = IWT()
+        else:
+            self.fourier_conv = SpectralTransform(in_channels=n_feat//2, out_channels=n_feat//2)
 
         modules_body = \
             [
@@ -233,14 +270,18 @@ class HWB(nn.Module):
         # Split 2 part
         wavelet_path_in, identity_path = torch.chunk(x, 2, dim=1)
 
-        # Wavelet domain (Dual attention)
-        x_dwt = self.dwt(wavelet_path_in)
-        res = self.body(x_dwt)
-        branch_sa = self.WSA(res)
-        branch_ca = self.WCA(res)
-        res = torch.cat([branch_sa, branch_ca], dim=1)
-        res = self.conv1x1(res) + x_dwt
-        wavelet_path = self.iwt(res)
+        ########## Wavelet domain (Dual attention) ############
+        if self.use_dwt:
+            x_dwt = self.dwt(wavelet_path_in)
+            res = self.body(x_dwt)
+            branch_sa = self.WSA(res)
+            branch_ca = self.WCA(res)
+            res = torch.cat([branch_sa, branch_ca], dim=1)
+            res = self.conv1x1(res) + x_dwt
+            wavelet_path = self.iwt(res)
+        ########## alternatively: fourier path ##########
+        else:
+            wavelet_path = self.fourier_conv(wavelet_path_in)
 
         out = torch.cat([wavelet_path, identity_path], dim=1)
         out = self.activate(self.conv3x3(out))
@@ -249,11 +290,42 @@ class HWB(nn.Module):
         return out
 
 
+class Conditional_Norm(nn.Module):
+    def __init__(self, in_channels=64):
+        super(Conditional_Norm, self).__init__()
+        # out_channels = in_channels
+
+        # self.res = spectral_norm(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1), True)
+        # conv(in_channels, out_channels, kernel_size, stride, padding, bias, mode, negative_slope)
+
+        # self.conv_sn_1 = nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, padding=1)
+        # self.act = nn.ELU(inplace=True)
+        # self.conv_sn_2 = nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, padding=1)
+
+        self.shared = sequential(torch.nn.Linear(1, in_channels), nn.ReLU())
+        self.to_gamma_1 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Sigmoid())
+        self.to_beta_1 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Tanh())
+        # self.to_gamma_2 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Sigmoid())
+        # self.to_beta_2 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Tanh())
+
+    def forward(self, x, label):
+        # originally nn.Conv2d((2 ** i) * wf, wf, 3, 1, 1)
+        actv = self.shared(label)
+        gamma_1, beta_1 = self.to_gamma_1(actv).unsqueeze(-1).unsqueeze(-1), self.to_beta_1(actv).unsqueeze(-1).unsqueeze(-1)
+        # gamma_2, beta_2 = self.to_gamma_2(actv).unsqueeze(-1).unsqueeze(-1), self.to_beta_2(actv).unsqueeze(-1).unsqueeze(-1)
+
+        x_1 = gamma_1 * x + beta_1
+        # x_2 = self.act(gamma_2 * self.conv_sn_1(x_1) + beta_2)
+        return x_1
+
+
 ##########################################################################
 ##---------- HWMNet-LOL ----------
 class HWMNet(nn.Module):
-    def __init__(self, in_chn=3, out_chn=None, wf=64, depth=4):
+    def __init__(self, in_chn=3, out_chn=None, wf=64, depth=4, subtask=0, style_control=False, use_dwt=True):
         super(HWMNet, self).__init__()
+        self.subtask = subtask
+        self.style_control = style_control
         if out_chn is None:
             out_chn = in_chn
         self.apply_res = in_chn==out_chn
@@ -277,15 +349,25 @@ class HWMNet(nn.Module):
         self.bottom_up = bili_resize(2 ** (depth-1))
 
         for i in reversed(range(depth - 1)):
-            self.up_path.append(UNetUpBlock(prev_channels, (2 ** i) * wf))
+            self.up_path.append(UNetUpBlock(prev_channels, (2 ** i) * wf, style_control=style_control, use_dwt=use_dwt))
             self.skip_conv.append(nn.Conv2d((2 ** i) * wf, (2 ** i) * wf, 3, 1, 1))
-            self.conv_up.append(nn.Sequential(*[bili_resize(2 ** i), nn.Conv2d((2 ** i) * wf, wf, 3, 1, 1)]))
+            self.conv_up.append(nn.Sequential(*[bili_resize(2 ** i), nn.Conv2d((2 ** i) * wf, wf, 3, 1, 1)])) # originally nn.Conv2d((2 ** i) * wf, wf, 3, 1, 1)
             prev_channels = (2 ** i) * wf
 
         self.final_ff = SKFF(in_channels=wf, height=depth)
         self.last = conv3x3(prev_channels, out_chn, bias=True)
 
-    def forward(self, x):
+        if self.subtask!=0:
+            self.mlp_subtask = sequential(
+                torch.nn.AdaptiveAvgPool2d((1, 1)),
+                torch.nn.Flatten(),
+                torch.nn.Linear(wf, wf),
+                nn.ReLU(),
+                torch.nn.Linear(wf, self.subtask),
+                # nn.Sigmoid()
+            )
+
+    def forward(self, x, style_code=None):
         img = x
         scale_img = img
 
@@ -313,8 +395,11 @@ class HWMNet(nn.Module):
         # Up-path (Decoder)
         ms_result = [self.bottom_up(self.bottom_conv(x1))]
         for i, up in enumerate(self.up_path):
-            x1 = up(x1, self.skip_conv[i](encs[-i - 1]))
-            ms_result.append(self.conv_up[i][1](self.conv_up[i][0](x1)))
+            ## up contains upsampling, concat(UNet) and HWAblock
+            x1 = up(x1, bridge=self.skip_conv[i](encs[-i - 1]), style_code=style_code)
+            ## conv_up contains upsampling and conv for SKFF
+            ## Thus we modify the HWA block
+            ms_result.append(self.conv_up[i](x1))
         # Multi-scale selective feature fusion
         msff_result = self.final_ff(ms_result)
 
@@ -323,7 +408,13 @@ class HWMNet(nn.Module):
             out_1 = self.last(msff_result) + img
         else:
             out_1 = self.last(msff_result)
-        return out_1
+        #### sub-task ########
+        if self.subtask != 0:
+            pred = self.mlp_subtask(msff_result)
+            return out_1, pred
+        else:
+            return out_1
+
 
 import torch.nn.functional as F
 class SELayer(nn.Module):
@@ -385,7 +476,7 @@ class FourierUnit(nn.Module):
         fft_dim = (-3, -2, -1) if self.ffc3d else (-2, -1)
         ffted = torch.fft.rfftn(x, dim=fft_dim, norm=self.fft_norm)
         ffted = torch.stack((ffted.real, ffted.imag), dim=-1)
-        ffted = ffted.permute(0, 1, 4, 2, 3)  # (batch, c, 2, h, w/2+1)
+        ffted = ffted.permute(0, 1, 4, 2, 3).contiguous()  # (batch, c, 2, h, w/2+1)
         ffted = ffted.view((batch, -1,) + ffted.size()[3:])
 
         if self.spectral_pos_encoding:
@@ -401,7 +492,7 @@ class FourierUnit(nn.Module):
         ffted = self.relu(self.bn(ffted))
 
         ffted = ffted.view((batch, -1, 2,) + ffted.size()[2:]).permute(
-            0, 1, 3, 4, 2)  # (batch,c, t, h, w/2+1, 2)
+            0, 1, 3, 4, 2).contiguous()  # (batch,c, t, h, w/2+1, 2)
         ffted = torch.complex(ffted[..., 0], ffted[..., 1])
 
         ifft_shape_slice = x.shape[-3:] if self.ffc3d else x.shape[-2:]
@@ -451,11 +542,11 @@ class SpectralTransform(nn.Module):
             split_no = 2
             split_s = h // split_no
             xs = torch.cat(torch.split(
-                x[:, :c // 4], split_s, dim=-2), dim=1)
+                x[:, :c // 4], split_s, dim=-2), dim=1).contiguous()
             xs = torch.cat(torch.split(xs, split_s, dim=-1),
-                           dim=1)
+                           dim=1).contiguous()
             xs = self.lfu(xs)
-            xs = xs.repeat(1, 1, split_no, split_no)
+            xs = xs.repeat(1, 1, split_no, split_no).contiguous()
         else:
             xs = 0
 
@@ -594,41 +685,18 @@ class FFCResnetBlock(nn.Module):
         return out
 
 if __name__ == "__main__":
-    ######### check HWMNet ##############
-    from thop import profile
-    input = torch.ones(1, 3, 64, 64, dtype=torch.float, requires_grad=False)
+    input = torch.ones(1, 16, 32, 32, dtype=torch.float, requires_grad=False).cuda()
 
-    model = HWMNet(in_chn=3, wf=64, depth=4)
+    model = SpectralTransform(in_channels=16, out_channels=16).cuda()
     out = model(input)
-    flops, params = profile(model, inputs=(input,))
 
     # RDBlayer = SK_RDB(in_channels=64, growth_rate=64, num_layers=3)
     # print(RDBlayer)
     # out = RDBlayer(input)
     # flops, params = profile(RDBlayer, inputs=(input,))
     print('input shape:', input.shape)
-    print('parameters:', params/1e6)
-    print('flops', flops/1e9)
     print('output shape', out.shape)
 
-    ########## compare the two blocks
-    # input = torch.ones(1, 64, 64, 64, dtype=torch.float, requires_grad=False).cuda()
-    # model = HWB(n_feat=64, o_feat=64).cuda()
-    # out = model(input)
-    # flops, params = profile(model, inputs=(input,))
-    # print('input shape:', input.shape)
-    # print('parameters:', params/1e6)
-    # print('flops', flops/1e9)
-    # print('output shape', out.shape)
-    #
-    # # model = FFC_BN_ACT(64, 64, kernel_size=3, padding=1, norm_layer=nn.BatchNorm2d,
-    # #                      activation_layer=nn.ReLU, ratio_gin=0.5, ratio_gout=0.5).cuda()
-    # model = FFCResnetBlock(64, ratio_gin=0.5, ratio_gout=0.5).cuda()
-    # input = torch.chunk(input, chunks=2, dim=1)
-    # out = model(input)
-    # flops, params = profile(model, inputs=(input,))
-    # print('parameters:', params / 1e6)
-    # print('flops', flops / 1e9)
 
 
 

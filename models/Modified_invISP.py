@@ -3,6 +3,7 @@ import logging
 import os
 import math
 import cv2
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -51,7 +52,9 @@ from data.pipeline import rawpy_tensor2image
 from MantraNet.mantranet import pre_trained_model
 from .invertible_net import Inveritible_Decolorization_PAMI
 from models.networks import UNetDiscriminator
-
+from loss import PerceptualLoss
+from .networks import SPADE_UNet
+from lama_models.HWMNet import HWMNet
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 
@@ -76,6 +79,12 @@ class Modified_invISP(BaseModel):
         self.conduct_cropping = self.opt['conduct_cropping']
         self.consider_robost = self.opt['consider_robost']
         self.CE_hyper_param = self.opt['CE_hyper_param']
+        self.psnr_thresh = self.opt['psnr_thresh']
+        self.raw_classes = self.opt['raw_classes']
+        self.train_isp_networks = self.opt["train_isp_networks"]
+        self.train_full_pipeline = self.opt["train_full_pipeline"]
+        self.include_isp_inference = self.opt["include_isp_inference"]
+        self.step_acumulate = self.opt["step_acumulate"]
         ####################################################################################################
         # todo: losses and attack layers
         # todo: JPEG attack rescaling deblurring
@@ -110,7 +119,7 @@ class Modified_invISP(BaseModel):
         self.bce_with_logit_loss = nn.BCEWithLogitsLoss().cuda()
         self.l1_loss = nn.SmoothL1Loss(beta=0.5).cuda()  # reduction="sum"
         self.l2_loss = nn.MSELoss().cuda()  # reduction="sum"
-        # self.perceptual_loss = PerceptualLoss().cuda()
+        self.perceptual_loss = PerceptualLoss().cuda()
         # self.style_loss = StyleLoss().cuda()
         self.Quantization = diff_round
         # self.Quantization = Quantization().cuda()
@@ -209,17 +218,20 @@ class Modified_invISP(BaseModel):
                                                               device_ids=[torch.cuda.current_device()],
                                                               find_unused_parameters=True)
 
-            from lama_models.HWMNet import HWMNet
-            self.netG = HWMNet(in_chn=3, wf=32, depth=4).cuda()
+            self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
             self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                                    find_unused_parameters=True)
 
-            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
+            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=self.raw_classes,
+                                             style_control=False, use_dwt=False).cuda()
+                # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
             self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
                                                               device_ids=[torch.cuda.current_device()],
                                                               find_unused_parameters=True)
 
-            self.discriminator = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4).cuda() #UNetDiscriminator(use_SRM=False).cuda()
+            self.discriminator = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=self.raw_classes,
+                                        style_control=False, use_dwt=False).cuda()
+                # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda()
             self.discriminator = DistributedDataParallel(self.discriminator,
                                                               device_ids=[torch.cuda.current_device()],
                                                               find_unused_parameters=True)
@@ -234,9 +246,10 @@ class Modified_invISP(BaseModel):
             # todo: RAW2RAW network will be loaded
             # todo:
             ####################################################################################################
-            from lama_models.HWMNet import HWMNet
-            self.KD_JPEG = Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False,
-                                                    ).cuda() #InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
+            self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=True, use_dwt=False).cuda()
+                # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
+                # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
+            #InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
             self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
                                                    find_unused_parameters=True)
 
@@ -448,49 +461,50 @@ class Modified_invISP(BaseModel):
         # todo: Image Manipulation Detection Network (Downstream task)
         # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
         ####################################################################################################
+        #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
         did_val = False
-
         if step is not None:
             self.global_step = step
 
-        train_isp_networks = self.opt["train_isp_networks"]
-        train_full_pipeline = self.opt["train_full_pipeline"]
-        include_isp_inference = self.opt["include_isp_inference"]
-
         logs, debug_logs = {}, []
-        average_PSNR = 50  # default
         self.real_H = self.clamp_with_grad(self.real_H)
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
-        step_acumulate = self.opt["step_acumulate"]
+
+        #### THESE VARIABLES STORE THE RENDERED RGB FROM CLEAN RAW ######
         stored_image_netG = None
         stored_image_generator = None
         stored_image_qf_predict = None
 
-
         if not (self.previous_images is None or self.previous_previous_images is None):
+            #### DIVIDE THE BATCH INTO CLIPS AS MINI-BATCHES ###
             sum_batch_size = self.real_H.shape[0]
-            num_per_clip = int(sum_batch_size//step_acumulate)
+            num_per_clip = int(sum_batch_size//self.step_acumulate)
 
-
-            for idx_clip in range(step_acumulate):
-                ### tensor sized (B,3)
+            for idx_clip in range(self.step_acumulate):
+                ### camera_white_balance SIZE (B,3)
                 camera_white_balance = self.camera_white_balance[
                                        idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                 file_name = self.file_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
-                ### tensor sized (B,1) ranging from [0,3]
+                ### bayer_pattern sized (B,1) ranging from [0,3]
                 bayer_pattern = self.bayer_pattern[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
 
                 input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                 gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                 input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
-                                               white_balance=camera_white_balance, eval=not train_isp_networks)
+                                               white_balance=camera_white_balance, eval=not self.train_isp_networks)
+                ### NEW BATCH_SIZE AFTER CLIPPING
                 batch_size, num_channels, height_width, _ = input_raw.shape
                 # input_raw = self.clamp_with_grad(input_raw)
 
-                if include_isp_inference:
-                    with torch.enable_grad() if train_isp_networks else torch.no_grad():
-                        if train_isp_networks:
+                if self.include_isp_inference:
+                    with torch.enable_grad() if self.train_isp_networks else torch.no_grad():
+                        ### HINT FOR WHICH IS WHICH
+                        ### generator: INV ISP
+                        ### netG: HWMNET (BEFORE MODIFICATION)
+                        ### qf_predict_network: UNETDISCRIMINATOR
+
+                        if self.train_isp_networks:
                             self.generator.train()
                             self.netG.train()
                             self.qf_predict_network.train()
@@ -499,90 +513,86 @@ class Modified_invISP(BaseModel):
                             self.netG.eval()
                             self.qf_predict_network.eval()
                         ####################################################################################################
-                        # todo: Image pipeline training
-                        # todo: we first train several nn-based ISP networks
+                        # todo: Image ISP training
+                        # todo: we first train several nn-based ISP networks BEFORE TRAINING THE PIPELINE
                         ####################################################################################################
 
-                        ################## HWMNET ########################
+                        #### HWMNET ####
                         modified_input_netG = self.netG(input_raw.clone().detach())
                         if self.use_gamma_correction:
                             modified_input_netG = self.gamma_correction(modified_input_netG)
-
                         THIRD_L1 = self.l1_loss(input=modified_input_netG, target=gt_rgb)
-                        THIRD_SSIM = - self.ssim_loss(modified_input_netG, gt_rgb)
-                        THIRD_loss = THIRD_L1 + 0.01 * THIRD_SSIM
+                        # THIRD_SSIM = - self.ssim_loss(modified_input_netG, gt_rgb)
+                        # THIRD_ISP_percept = self.perceptual_loss(modified_input_netG, gt_rgb).squeeze()
+                        THIRD_loss = THIRD_L1 #+ 0.01 * THIRD_SSIM #+ 0.01 * THIRD_ISP_percept
                         modified_input_netG_detach = self.clamp_with_grad(modified_input_netG.detach())
                         PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG_detach),self.postprocess(gt_rgb)).item()
                         logs['PIPE_PSNR'] = PIPE_PSNR
-                        # del modified_input_netG
-                        # torch.cuda.empty_cache()
+                        logs['PIPE_L1'] = THIRD_L1.item()
+                        ## STORE THE RESULT FOR LATER USE
                         stored_image_netG = modified_input_netG_detach if stored_image_netG is None else \
                             torch.cat((stored_image_netG, modified_input_netG_detach), dim=0)
 
-                        if train_isp_networks:
+                        if self.train_isp_networks:
                             # self.optimizer_generator.zero_grad()
-                            (THIRD_loss/step_acumulate).backward()
+                            (THIRD_loss/self.step_acumulate).backward()
                             # self.scaler_G.scale(THIRD_loss).backward()
-                            if idx_clip % step_acumulate == step_acumulate - 1:
+                            if idx_clip % self.step_acumulate == self.step_acumulate - 1:
                                 if self.train_opt['gradient_clipping']:
                                     nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-                                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
                                 self.optimizer_G.step()
                                 # self.scaler_G.step(self.optimizer_G)
                                 # self.scaler_G.update()
                                 self.optimizer_G.zero_grad()
 
-                        ################## InvISP ########################
+                        #### InvISP #####
                         modified_input_generator = self.generator(input_raw.clone().detach())
                         if self.use_gamma_correction:
                             modified_input_generator = self.gamma_correction(modified_input_generator)
+                        input_raw_rev, _ = self.generator(modified_input_generator, rev=True)
 
                         ISP_L1_FOR = self.l1_loss(input=modified_input_generator, target=gt_rgb)
-                        ISP_SSIM = - self.ssim_loss(modified_input_generator, gt_rgb)
-                        ISP_loss = ISP_L1_FOR + 0.01 * ISP_SSIM
-                        modified_input_generator = self.clamp_with_grad(modified_input_generator)
-                        input_raw_rev, _ = self.generator(modified_input_generator, rev=True)
+                        # ISP_SSIM = - self.ssim_loss(modified_input_generator, gt_rgb)
+                        # INV_ISP_percept = self.perceptual_loss(modified_input_generator, gt_rgb).squeeze()
+                        ISP_loss = ISP_L1_FOR #+ 0.01 * ISP_SSIM #+ 0.01 * INV_ISP_percept
                         ISP_L1_REV = self.l1_loss(input=input_raw_rev, target=input_raw.clone().detach())
-                        ISP_L1 = 0
-                        ISP_L1 += ISP_L1_FOR
-                        ISP_L1 += ISP_L1_REV
-                        modified_input_generator_detach = modified_input_generator.detach()
+                        ISP_loss += ISP_L1_REV
+                        modified_input_generator_detach = self.clamp_with_grad(modified_input_generator.detach())
                         ISP_PSNR = self.psnr(self.postprocess(modified_input_generator_detach), self.postprocess(gt_rgb)).item()
                         logs['ISP_PSNR'] = ISP_PSNR
-                        # del modified_input_generator
-                        # del input_raw_rev
-                        # torch.cuda.empty_cache()
+                        logs['ISP_L1'] = ISP_L1_FOR.item()
                         stored_image_generator = modified_input_generator_detach if stored_image_generator is None else \
                             torch.cat((stored_image_generator, modified_input_generator_detach), dim=0)
 
-                        if train_isp_networks:
+                        if self.train_isp_networks:
                             ####################################################################################################
                             # todo: Grad Accumulation
                             # todo: added 20220919, steo==0, do not update, step==1 update
                             ####################################################################################################
                             # self.optimizer_generator.zero_grad()
-                            (ISP_loss/step_acumulate).backward()
+                            (ISP_loss/self.step_acumulate).backward()
                             # self.scaler_generator.scale(ISP_loss).backward()
-                            if idx_clip % step_acumulate==step_acumulate-1:
+                            if idx_clip % self.step_acumulate==self.step_acumulate-1:
                                 if self.train_opt['gradient_clipping']:
                                     nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
                                 self.optimizer_generator.step()
                                 # self.scaler_generator.step(self.optimizer_generator)
                                 # self.scaler_generator.update()
                                 self.optimizer_generator.zero_grad()
 
-                # #### DUE TO THE MISCONDUCTIVENESS OF CYCLEISP, WE RETRAIN A MODEL #########
+                ##### DUE TO THE MISCONDUCTIVENESS OF CYCLEISP, WE RETRAIN A MODEL #########
+                ####### CYCYLE ISP PRODUCES WRONG RESULTS, ABANDON! 20220926 ##############
                 with torch.enable_grad():
                     self.qf_predict_network.train()
-                    ####### CYCYLE ISP PRODUCES WRONG RESULTS, ABANDON! 20220926 ##############
+                    ####### UNetDiscriminator ##############
                     modified_input_qf_predict = self.qf_predict_network(input_raw.clone().detach())
                     if self.use_gamma_correction:
                         modified_input_qf_predict = self.gamma_correction(modified_input_qf_predict)
 
                     CYCLE_L1 = self.l1_loss(input=modified_input_qf_predict, target=gt_rgb)
-                    CYCLE_SSIM = - self.ssim_loss(modified_input_qf_predict, gt_rgb)
-                    CYCLE_loss = CYCLE_L1 + 0.01 * CYCLE_SSIM
+                    # CYCLE_SSIM = - self.ssim_loss(modified_input_qf_predict, gt_rgb)
+                    # CYCLE_ISP_percept = self.perceptual_loss(modified_input_qf_predict, gt_rgb).squeeze()
+                    CYCLE_loss = CYCLE_L1 #+ 0.01 * CYCLE_SSIM #+ 0.01 * CYCLE_ISP_percept
                     modified_input_qf_predict_detach = self.clamp_with_grad(modified_input_qf_predict.detach())
                     CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict_detach),
                                            self.postprocess(gt_rgb)).item()
@@ -594,12 +604,11 @@ class Modified_invISP(BaseModel):
                         torch.cat((stored_image_qf_predict, modified_input_qf_predict_detach), dim=0)
 
                     # self.optimizer_generator.zero_grad()
-                    (CYCLE_loss / step_acumulate).backward()
+                    (CYCLE_loss / self.step_acumulate).backward()
                     # self.scaler_qf.scale(CYCLE_loss).backward()
-                    if idx_clip % step_acumulate == step_acumulate - 1:
+                    if idx_clip % self.step_acumulate == self.step_acumulate - 1:
                         if self.train_opt['gradient_clipping']:
                             nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-                            # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
                         self.optimizer_qf.step()
                         # self.scaler_qf.step(self.optimizer_qf)
                         # self.scaler_qf.update()
@@ -609,33 +618,16 @@ class Modified_invISP(BaseModel):
                 # todo: emptying cache to save memory
                 # todo: https://discuss.pytorch.org/t/how-to-delete-a-tensor-in-gpu-to-free-up-memory/48879/25
                 ####################################################################################################
+                # torch.cuda.empty_cache()
 
-                # ####################################################################################################
-                # # todo: Image pipeline using my_own_pipeline
-                # # todo: the result is not so good
-                # ####################################################################################################
-                # modified_input_netG = torch.zeros_like(gt_rgb)
-                # for img_idx in range(batch_size):
-                #     numpy_rgb = input_raw[img_idx].clone().detach().permute(1, 2, 0).contiguous()
-                #     file_name = self.file_name[img_idx]
-                #     metadata = self.train_set.metadata_list[file_name]
-                #     numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
-                #                                       metadata=metadata['metadata'],
-                #                                       input_stage='demosaic')
-                #
-                #     modified_input_netG[img_idx] = torch.from_numpy(
-                #         np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-                #
-                # ISP_PSNR_PIPE = self.psnr(self.postprocess(modified_input_netG), self.postprocess(gt_rgb)).item()
-                # logs['PIPE_PSNR'] = ISP_PSNR_PIPE
-                if not train_full_pipeline and (self.global_step % 200 == 3 or self.global_step <= 10):
+
+                if self.train_isp_networks and (self.global_step % 200 == 3 or self.global_step <= 10):
                     images = stitch_images(
                         self.postprocess(input_raw),
                         self.postprocess(modified_input_generator_detach),
-                        # self.postprocess(modified_input_qf_predict_detach),
+                        self.postprocess(modified_input_qf_predict_detach),
                         self.postprocess(modified_input_netG_detach),
                         self.postprocess(gt_rgb),
-
                         img_per_row=1
                     )
 
@@ -644,8 +636,11 @@ class Modified_invISP(BaseModel):
                     print(f'Bayer: {bayer_pattern}. Saving sample {name}')
                     images.save(name)
 
-            # torch.cuda.empty_cache()
-            if train_full_pipeline:
+            if self.train_full_pipeline:
+                ### HINT FOR WHICH IS WHICH
+                ### KD_JPEG: RAW2RAW, WHICH IS A MODIFIED HWMNET WITH STYLE CONDITION
+                ### discriminator_mask: HWMNET WITH SUBTASK
+                ### discriminator: MOVING AVERAGE OF discriminator_mask
                 self.KD_JPEG.train()
                 self.generator.eval()
                 self.netG.eval()
@@ -653,7 +648,7 @@ class Modified_invISP(BaseModel):
                 self.discriminator.eval()
                 self.qf_predict_network.eval()
 
-                for idx_clip in range(step_acumulate):
+                for idx_clip in range(self.step_acumulate):
 
                     input_raw_one_dim = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                     file_name = self.file_name[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip]
@@ -675,17 +670,18 @@ class Modified_invISP(BaseModel):
                         # todo: Generation of protected RAW
                         # todo: next, we protect RAW for tampering detection
                         ####################################################################################################
+                        #### condition for RAW2RAW ####
+                        label_array = np.random.choice(range(self.raw_classes),batch_size)
+                        label_control = torch.tensor(label_array).long().cuda()
+                        label_input = torch.tensor(label_array).float().cuda().unsqueeze(1)
+                        label_input = label_input / self.raw_classes
 
-                        modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
-                        raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
+                        ### RAW PROTECTION ###
+                        modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim, label_input)
+                        # raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
                         RAW_L1 = self.l1_loss(input=modified_raw_one_dim, target=input_raw_one_dim)
-                        RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
+                        # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
                         modified_raw_one_dim = self.clamp_with_grad(modified_raw_one_dim)
-
-                        ####################################################################################################
-                        # todo: doing raw visualizing and white balance (and gamma)
-                        # todo:
-                        ####################################################################################################
 
                         modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
                         RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
@@ -697,14 +693,14 @@ class Modified_invISP(BaseModel):
                         # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
                         ####################################################################################################
 
-                        ######## we use invISP ########
-
+                        #### invISP AS SUBSEQUENT ISP####
                         modified_input_0 = self.generator(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_0 = self.gamma_correction(modified_input_0)
                         tamper_source_0 = stored_image_generator[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
                         ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
+                        ISP_percept_0 = self.perceptual_loss(modified_input_0, tamper_source_0).squeeze()
                         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
                         # modified_input_1 = self.qf_predict_network(modified_raw)
@@ -715,50 +711,61 @@ class Modified_invISP(BaseModel):
                         # # ISP_SSIM_1 = - self.ssim_loss(modified_input_1, tamper_source_1)
                         # modified_input_1 = self.clamp_with_grad(modified_input_1)
 
+                        #### HWMNET AS SUBSEQUENT ISP####
                         modified_input_2 = self.netG(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_2 = self.gamma_correction(modified_input_2)
                         tamper_source_2 = stored_image_netG[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
                         ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
+                        ISP_percept_2 = self.perceptual_loss(modified_input_2, tamper_source_2).squeeze()
                         modified_input_2 = self.clamp_with_grad(modified_input_2)
 
-                        ######## we use my_own_pipeline ########
-                        # modified_pack_raw = self.pack_raw(modified_raw_one_dim)
-                        # modified_input_2 = torch.zeros_like(gt_rgb)
-                        # for img_idx in range(batch_size):
-                        #     numpy_rgb = modified_pack_raw[img_idx].clone().detach().permute(1, 2, 0).contiguous()
-                        #     file_name = self.file_name[img_idx]
-                        #     metadata = self.train_set.metadata_list[file_name]
-                        #     numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
-                        #                                       metadata=metadata['metadata'],
-                        #                                       input_stage='demosaic')
-                        #
-                        #     modified_input_2[img_idx] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-                        #
-                        # modified_input_2 = modified_raw + (modified_input_2-modified_raw).detach()
-                        # tamper_source_2 = modified_input_netG
+                        #### my_own_pipeline ON PROTECTED RAW ######
+                        modified_input_1 = torch.zeros_like(modified_input_2)
+                        for idx_pipeline in range(num_per_clip):
+                            metadata = self.train_set.metadata_list[file_name[idx_pipeline]]
+                            flip_val = metadata['flip_val']
+                            metadata = metadata['metadata']
+                            # 在metadata中加入要用的flip_val和camera_name
+                            metadata['flip_val'] = flip_val
+                            metadata['camera_name'] = camera_name
+                            # [B C H W]->[H,W]
+                            raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw')
+                            modified_input_1[idx_pipeline:idx_pipeline+1] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+                        #### my_own_pipeline ON ORIGINAL RAW ######
+                        tamper_source_1 = torch.zeros_like(modified_input_2)
+                        for idx_pipeline in range(num_per_clip):
+                            metadata = self.train_set.metadata_list[file_name[idx_pipeline]]
+                            flip_val = metadata['flip_val']
+                            metadata = metadata['metadata']
+                            # 在metadata中加入要用的flip_val和camera_name
+                            metadata['flip_val'] = flip_val
+                            metadata['camera_name'] = camera_name
+                            # [B C H W]->[H,W]
+                            raw_1 = input_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw')
+                            tamper_source_1[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
+                                np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
 
                         ####################################################################################################
                         # todo: doing mixup on the images
                         # todo: note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
                         # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
                         ####################################################################################################
-                        alpha_0 = np.random.rand()
-                        # alpha_1 = np.random.rand()*0.66
-                        # alpha_1 = min(alpha_1,1-alpha_0)
-                        # alpha_1 = max(0, alpha_1)
-                        # alpha_2 = np.random.rand() * 0.6
-                        # alpha_2 = min(alpha_2, 1 - alpha_0-alpha_1)
-                        # alpha_2 = max(0, alpha_2)
-                        alpha_2 = 1 - alpha_0
+                        alpha_0 = np.random.rand()*0.8
+                        alpha_1 = np.random.rand()*0.4
+                        alpha_1 = min(alpha_1,1-alpha_0)
+                        alpha_1 = max(0, alpha_1)
+                        alpha_2 = 1 - alpha_0 - alpha_1
 
                         modified_input = alpha_0*modified_input_0
                         modified_input += alpha_2*modified_input_2
-                        # modified_input += alpha_1*modified_input_1
+                        modified_input += alpha_1*modified_input_1
                         tamper_source = alpha_0*tamper_source_0
                         tamper_source += alpha_2*tamper_source_2
-                        # tamper_source += alpha_1*tamper_source_1
+                        tamper_source += alpha_1*tamper_source_1
                         tamper_source = tamper_source.detach()
 
                         # ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
@@ -770,10 +777,7 @@ class Modified_invISP(BaseModel):
                         ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(tamper_source)).item()
                         logs['ISP_PSNR_NOW'] = ISP_PSNR
                         logs['ISP_SSIM_NOW'] = -ISP_SSIM_sum.item()
-                        ####################################################################################################
-                        # todo: Image tampering and benign attacks
-                        # todo:
-                        ####################################################################################################
+
 
                         ####################################################################################################
                         # todo: cropping
@@ -784,14 +788,16 @@ class Modified_invISP(BaseModel):
                             locs, cropped, scaled_cropped = self.cropping_mask_generation(
                                 forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
                             h_start, h_end, w_start, w_end = locs
-
                             _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
                         else:
                             scaled_cropped = modified_input
                             tamper_source_cropped = tamper_source
 
-
-                        percent_range = (0.05, 0.25)
+                        ####################################################################################################
+                        # todo: TAMPERING
+                        # todo: including inpainting copy-move and splicing
+                        ####################################################################################################
+                        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.3)
                         masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
 
                         # attacked_forward = tamper_source_cropped
@@ -801,11 +807,15 @@ class Modified_invISP(BaseModel):
                             idx_clip=idx_clip, num_per_clip=num_per_clip,
                         )
 
+                        ####################################################################################################
+                        # todo: Benign attacks
+                        # todo: including JPEG compression Gaussian Blurring, Median blurring and resizing
+                        ####################################################################################################
                         if self.consider_robost:
                             if self.using_weak_jpeg_plus_blurring_etc():
                                 quality_idx = np.random.randint(19, 21)
                             else:
-                                quality_idx = np.random.randint(10, 19)
+                                quality_idx = np.random.randint(12, 21)
                             attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
                                                                  quality_idx=quality_idx)
                         else:
@@ -820,22 +830,21 @@ class Modified_invISP(BaseModel):
                         ####################################################################################################
                         # _, pred_mvss = self.netG(attacked_image)
                         # CE_MVSS = self.bce_with_logit_loss(pred_mvss, masks_GT)
-                        #
+                        # logs['CE_MVSS'] = CE_MVSS.item()
                         # pred_mantra = self.localizer(attacked_image)
                         # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
-                        ####################################################################################################
-                        # todo: update Image Manipulation Detection Network and re-calculate
-                        # todo: why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
-                        # todo: This seems to be related to the CUDNN implementation of Resize with conv2d,
-                        # todo: specifically if your generator has any uses for channels being the last dimension. (eg. transformers) .
-
-                        ####################################################################################################
-
-                        pred_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
+                        # logs['CE_mantra'] = CE_mantra.item()
+                        ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
+                        pred_resfcn, pred_control = self.discriminator_mask(attacked_image.detach().contiguous())
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+                        CE_control = self.CE_loss(pred_control, label_control)
+                        CE_loss = CE_resfcn + CE_control
+                        logs['CE_resfcn'] = CE_resfcn.item()
+                        logs['CE_control'] = CE_control.item()
 
-                        (CE_resfcn/step_acumulate).backward()
-                        if idx_clip % step_acumulate == step_acumulate-1:
+                        ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
+                        (CE_loss/self.step_acumulate).backward()
+                        if idx_clip % self.step_acumulate == self.step_acumulate-1:
                             # self.optimizer_generator.zero_grad()
                             # loss.backward()
                             # self.scaler_generator.scale(loss).backward()
@@ -844,30 +853,31 @@ class Modified_invISP(BaseModel):
                             self.optimizer_discriminator_mask.step()
                             self.optimizer_discriminator_mask.zero_grad()
 
-                        # logs['CE_MVSS'] = CE_MVSS.item()
-                        # logs['CE_mantra'] = CE_mantra.item()
 
+                        ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
                         detection_model = self.discriminator if self.begin_using_momentum else self.discriminator_mask
-                        pred_resfcn = detection_model(attacked_image.contiguous())
+                        pred_resfcn, pred_control = detection_model(attacked_image)
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        logs['CE_resfcn'] = CE_resfcn.item()
+                        CE_control = self.CE_loss(pred_control, label_control)
+                        CE_loss = CE_resfcn + CE_control
+
 
                         loss = 0
-                        loss += (ISP_L1_0+ISP_L1_2)/2
-                        loss += 1 * RAW_L1_REV + 1 * RAW_L1
-                        loss += 0.01 * (ISP_SSIM_0+ISP_SSIM_2)/2
-
-                        hyper_param = self.CE_hyper_param if (ISP_PSNR>=38 or ISP_SSIM_sum>0.95) else self.CE_hyper_param/5
-                        loss += hyper_param * CE_resfcn  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                        # loss += (ISP_L1_0+ISP_L1_2)/2
+                        # loss += 1 * RAW_L1
+                        loss += 1 * (ISP_SSIM_0+ISP_SSIM_2)/2
+                        loss += 1 * (ISP_percept_0+ISP_percept_2)/2
+                        hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/5
+                        loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['loss'] = loss.item()
 
                         ####################################################################################################
                         # todo: Grad Accumulation
                         # todo: added 20220919, steo==0, do not update, step==1 update
                         ####################################################################################################
-                        (loss/step_acumulate).backward()
+                        (loss/self.step_acumulate).backward()
                         # self.scaler_kd_jpeg.scale(loss).backward()
-                        if idx_clip % step_acumulate == step_acumulate-1:
+                        if idx_clip % self.step_acumulate == self.step_acumulate-1:
                             # self.optimizer_generator.zero_grad()
                             # loss.backward()
                             # self.scaler_generator.scale(loss).backward()
@@ -893,39 +903,6 @@ class Modified_invISP(BaseModel):
                             self.optimizer_qf.zero_grad()
 
                     ####################################################################################################
-                    # todo: doing ema average
-                    # todo:
-                    ####################################################################################################
-                    self._momentum_update_key_encoder()
-
-                        # self.optimizer_G.zero_grad()
-                        # # loss.backward()
-                        # self.scaler_G.scale(CE_MVSS).backward(retain_graph=True)
-                        # if self.train_opt['gradient_clipping']:
-                        #     nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-                        # # self.optimizer_G.step()
-                        # self.scaler_G.step(self.optimizer_G)
-                        # self.scaler_G.update()
-                        #
-                        # self.optimizer_localizer.zero_grad()
-                        # # CE_train.backward()
-                        # self.scaler_localizer.scale(CE_mantra).backward(retain_graph=True)
-                        # if self.train_opt['gradient_clipping']:
-                        #     nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-                        # # self.optimizer_localizer.step()
-                        # self.scaler_localizer.step(self.optimizer_localizer)
-                        # self.scaler_localizer.update()
-                        #
-                        # self.optimizer_discriminator_mask.zero_grad()
-                        # # dis_loss.backward()
-                        # self.scaler_discriminator_mask.scale(CE_resfcn).backward(retain_graph=True)
-                        # if self.train_opt['gradient_clipping']:
-                        #     nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                        # # self.optimizer_discriminator_mask.step()
-                        # self.scaler_discriminator_mask.step(self.optimizer_discriminator_mask)
-                        # self.scaler_discriminator_mask.update()
-
-                    ####################################################################################################
                     # todo: printing the images
                     # todo: invISP
                     ####################################################################################################
@@ -935,8 +912,8 @@ class Modified_invISP(BaseModel):
                             self.postprocess(input_raw),
                             self.postprocess(modified_input_0),
                             self.postprocess(tamper_source_0),
-                            # self.postprocess(modified_input_1),
-                            # self.postprocess(tamper_source_1),
+                            self.postprocess(modified_input_1),
+                            self.postprocess(tamper_source_1),
                             self.postprocess(modified_input_2),
                             self.postprocess(tamper_source_2),
                             self.postprocess(gt_rgb),
@@ -966,6 +943,12 @@ class Modified_invISP(BaseModel):
                                    f"_{idx_clip}_ {str(self.rank)}.png"
                         print('\nsaving sample ' + name)
                         images.save(name)
+
+                ####################################################################################################
+                # todo: doing ema average
+                # todo:
+                ####################################################################################################
+                self._momentum_update_key_encoder()
 
                 ####################################################################################################
                 # todo: inference single image for testing
@@ -1118,7 +1101,7 @@ class Modified_invISP(BaseModel):
             if self.using_weak_jpeg_plus_blurring_etc():
                 quality_idx = np.random.randint(17, 21)
             else:
-                quality_idx = np.random.randint(10, 17)
+                quality_idx = np.random.randint(12, 21)
             attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
                                                  quality_idx=quality_idx)
         else:
@@ -1304,7 +1287,8 @@ class Modified_invISP(BaseModel):
             # todo: invISP
             ####################################################################################################
             lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
-            tamper = modified_input.clone().detach()
+            ###### IMPORTANT NOTE: for ideal copy-mopv, here should be modified_input. If you want to ease the condition, can be changed to forward_iamge
+            tamper = forward_image.clone().detach()
             x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
             while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
                 x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
@@ -1379,8 +1363,7 @@ class Modified_invISP(BaseModel):
         quality = int(quality_idx * 5)
 
         jpeg_layer_after_blurring = self.jpeg_simulate[quality_idx - 10][0] if quality < 100 else self.identity
-        attacked_real_jpeg_simulate = self.Quantization(
-            self.clamp_with_grad(jpeg_layer_after_blurring(blurring_layer(attacked_forward))))
+        attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_layer_after_blurring(blurring_layer(attacked_forward)))
         if self.using_jpeg_simulation_only():
             attacked_image = attacked_real_jpeg_simulate
         else:  # if self.global_step%5==3:

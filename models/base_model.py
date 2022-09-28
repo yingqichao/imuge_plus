@@ -69,7 +69,7 @@ class BaseModel():
     def using_jpeg_simulation_only(self):
         return self.global_step % 5 == 4
     def begin_using_momentum(self):
-        return self.global_step>=0
+        return self.global_step>=100
 
 
 

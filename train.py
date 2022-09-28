@@ -116,6 +116,7 @@ def main(args,opt):
     dataset_opt = opt['datasets']['train']
     print("#################################### train set ####################################")
     print(dataset_opt)
+    train_set_1 = None
     if "PAMI" in opt['model'] or "CLR" in opt['model']:
         print("dataset with canny")
         from data.LQGT_dataset import LQGTDataset as D
@@ -128,15 +129,14 @@ def main(args,opt):
     elif "ISP" in opt['model']:
         print("dataset with ISP")
         from data.fivek_dataset import FiveKDataset_skip
-        dataset_root = ['/ssd/invISP_skip/', '/ssd/invISP_skip/']
-        camera_name = ['Canon_EOS_5D', 'NIKON_D700']
-        # data_process_npz(dataset_root, camera_name)
-        # test_image_downsample(dataset_root, camera_name)
-        # exit(0)
-        # data_process_npz(dataset_root, camera_name)
-        # exit(0)
+        dataset_root = ['/ssd/invISP_skip/','/ssd/invISP_skip/']
+        camera_name = ['Canon_EOS_5D','NIKON_D700']
         print(f'FiveK dataset size:{GT_size}')
         train_set = FiveKDataset_skip(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0., patch_size=GT_size)
+
+        # dataset_root_1 = [ '/ssd/invISP_skip/']
+        # camera_name_1 = [ 'NIKON_D700']
+        # train_set_1 = FiveKDataset_skip(dataset_root_1, camera_name_1, stage='train', rgb_scale=False, uncond_p=0.,patch_size=GT_size)
 
         # from data.LQGT_dataset import LQGTDataset as D
         # train_set = D(opt, dataset_opt)
@@ -144,12 +144,7 @@ def main(args,opt):
         raise NotImplementedError('大神是不是搞错了？')
 
     train_size = int(math.ceil(len(train_set) / dataset_opt['batch_size']))
-    # total_iters = int(opt['train']['niter'])
     total_epochs = 100
-    if opt['dist']:
-        train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio,seed=seed)
-    else:
-        train_sampler = None
     # train_loader = create_dataloader(train_set, dataset_opt, opt, train_sampler)
     world_size = torch.distributed.get_world_size()
     print("World size: {}".format(world_size))
@@ -157,14 +152,32 @@ def main(args,opt):
     num_workers = dataset_opt['n_workers']
     assert dataset_opt['batch_size'] % world_size == 0
     batch_size = dataset_opt['batch_size'] // world_size
+    ####################################################################################################
+    # todo: Data loader
+    # todo:
+    ####################################################################################################
+    if opt['dist']:
+        train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio,seed=seed)
+    else:
+        train_sampler = None
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=False,
                                 num_workers=num_workers, sampler=train_sampler, drop_last=True,
                                 pin_memory=True)
     if rank <= 0:
         print('Number of train images: {:,d}, iters: {:,d}'.format(
             len(train_set), train_size))
-        # print('Total epochs needed: {:d} for iters {:,d}'.format(
-        #     total_epochs, total_iters))
+
+    # if train_set_1 is not None:
+    #     if opt['dist']:
+    #         train_sampler_1 = DistIterSampler(train_set_1, world_size, rank, dataset_ratio, seed=seed)
+    #     else:
+    #         train_sampler_1 = None
+    #     train_loader_1 = torch.utils.data.DataLoader(train_set_1, batch_size=batch_size, shuffle=False,
+    #                                                num_workers=num_workers, sampler=train_sampler_1, drop_last=True,
+    #                                                pin_memory=True)
+    #     if rank <= 0:
+    #         print('Number of train images: {:,d}, iters: {:,d}'.format(
+    #             len(train_set_1), train_size))
     ####################################################################################################
     # todo: TEST DATASET DEFINITION
     # todo: Define the testing set
@@ -187,11 +200,6 @@ def main(args,opt):
         from data.fivek_dataset import FiveKDataset_skip
         dataset_root = ['/ssd/invISP_skip/','/ssd/invISP_skip/']
         camera_name = ['Canon_EOS_5D', 'NIKON_D700']
-        # data_process_npz(dataset_root, camera_name)
-        # test_image_downsample(dataset_root, camera_name)
-        # exit(0)
-        # data_process_npz(dataset_root, camera_name)
-        # exit(0)
         print(f'FiveK dataset size:{GT_size}')
         val_set = FiveKDataset_skip(dataset_root, camera_name, stage='test', rgb_scale=False, uncond_p=0.,
                                       patch_size=GT_size)
@@ -257,8 +265,8 @@ def main(args,opt):
         #     variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
         #     print(f"variables_list: {variables_list}")
         elif 'ISP' in which_model and args.mode==2:
-            variables_list = ['ISP_PSNR', 'CE_resfcn', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'loss',
-                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra',  'ISP_PSNR_NOW', 'ISP_SSIM_NOW'
+            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE_resfcn', 'CE_control', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
+                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra',  'ISP_PSNR_NOW', 'ISP_SSIM_NOW',
                               'ERROR'
                               ]
             print(f"variables_list: {variables_list}")
@@ -269,13 +277,15 @@ def main(args,opt):
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
         ####################################################################################################
-        if rank<=0:
-            print('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
-        latest_values = None
         total = len(train_set)
+        if rank<=0:
+            print('Start training from epoch: {:d}, iter: {:d}, total: {:d}'.format(start_epoch, current_step, total))
+        latest_values = None
+
         print_step, restart_step = 15, 1000
         start = time.time()
 
+        # train_generator_1 = iter(train_loader_1)
         val_generator = iter(val_loader)
         val_item = next(val_generator)
         model.feed_data_val_router(batch=val_item, mode=args.mode)
@@ -294,7 +304,13 @@ def main(args,opt):
             if opt['dist']:
                 train_sampler.set_epoch(epoch)
             for idx, train_data in enumerate(train_loader):
-
+                #### get item from another dataset
+                # try:
+                #     train_item_1 = next(train_generator_1)
+                # except StopIteration as e:
+                #     print("The end of val set is reached. Refreshing...")
+                #     train_generator_1 = iter(train_loader_1)
+                #     train_item_1 = next(train_generator_1)
                 #### training
                 model.feed_data_router(batch=train_data, mode=args.mode)
 
@@ -318,18 +334,18 @@ def main(args,opt):
                 else:
                     ## which is kind of abnormal, print
                     print(variables_list)
-                if valid_idx % print_step == print_step - 1:  # print every 2000 mini-batches
+                if valid_idx>0 and (idx<10 or valid_idx % print_step == print_step - 1):  # print every 2000 mini-batches
                     # print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
-                    #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.5f} '
-                    #       f'running_CE_mantra: {running_CE_mantra / print_step:.5f} '
-                    #       f'running_CE_resfcn: {running_CE_resfcn / print_step:.5f} '
+                    #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.2f} '
+                    #       f'running_CE_mantra: {running_CE_mantra / print_step:.2f} '
+                    #       f'running_CE_resfcn: {running_CE_resfcn / print_step:.2f} '
                     #       )
                     end = time.time()
                     lr = logs['lr']
                     info_str = f'[{epoch + 1}, {valid_idx + 1} {idx*model.real_H.shape[0]} {rank} {lr}] '
                     for i in range(len(variables_list)):
-                        info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.5f} '
-                    info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.2f} s'
+                        info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.3f} '
+                    info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.3f} s'
                     print(info_str)
                     start = time.time()
                     if valid_idx>=restart_step:

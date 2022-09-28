@@ -6,6 +6,7 @@ import logging
 import math
 import torch.nn as nn
 import numpy as np
+from collections import OrderedDict
 logger = logging.getLogger('base')
 
 def sequential(*args):
@@ -30,55 +31,10 @@ def sequential(*args):
             modules.append(module)
     return nn.Sequential(*modules)
 
-def define_G(opt, subnet_type, block_num):
-    """
-    Hint:
-    subnet_type DBNet
-    block_num [4, 4, 4, 2]
-    """
-    opt_net = opt['network_G']
-    which_model = opt_net['which_model_G']
-    # subnet_type = which_model['subnet_type'] # default DBNet
-    if opt_net['init']:
-        init = opt_net['init']
-    else:
-        init = 'xavier'
-
-    down_num = int(math.log(opt_net['scale'], 2))
-
-    netG = InvRescaleNet(opt_net['in_nc'], opt_net['out_nc'], subnet(subnet_type, init), block_num, down_num)
-
-    return netG
-
-
-#### Discriminator
-def define_D(opt):
-    opt_net = opt['network_D']
-    which_model = opt_net['which_model_D']
-
-    if which_model == 'discriminator_vgg_128':
-        netD = SRGAN_arch.Discriminator_VGG_128(in_nc=opt_net['in_nc'], nf=opt_net['nf'])
-    else:
-        raise NotImplementedError('Discriminator model [{:s}] not recognized'.format(which_model))
-    return netD
 
 def get_pad(in_,  ksize, stride, atrous=1):
     out_ = np.ceil(float(in_)/stride)
     return int(((out_ - 1) * stride + atrous*(ksize-1) + 1 - in_)/2)
-
-#### Define Network used for Perceptual Loss
-def define_F(opt, use_bn=False):
-    gpu_ids = opt['gpu_ids']
-    device = torch.device('cuda' if gpu_ids else 'cpu')
-    # PyTorch pretrained VGG19-54, before ReLU.
-    if use_bn:
-        feature_layer = 49
-    else:
-        feature_layer = 34
-    netF = SRGAN_arch.VGGFeatureExtractor(feature_layer=feature_layer, use_bn=use_bn,
-                                          use_input_norm=True, device=device)
-    netF.eval()  # No need to train
-    return netF
 
 class Self_Attn(nn.Module):
     """ Self attention Layer"""
@@ -548,6 +504,7 @@ class Discriminator(BaseNetwork):
 
         return outputs , [conv1, conv2, conv3, conv4, conv5]
 
+import torch.nn.functional as F
 class BayarConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=5, stride=1, padding=0):
         self.in_channels = in_channels
@@ -706,7 +663,7 @@ class Localizer(BaseNetwork):
 
 class UNetDiscriminator(BaseNetwork):
     def __init__(self, in_channels=3, out_channels=1, residual_blocks=4, init_weights=True, use_spectral_norm=True,
-                 use_SRM=True, with_attn=False, dim=16, use_sigmoid=False):
+                 use_SRM=True, with_attn=False, dim=16, use_sigmoid=False, subtask=0):
         super(UNetDiscriminator, self).__init__()
         # dim = 32
         self.use_SRM = use_SRM
@@ -714,6 +671,7 @@ class UNetDiscriminator(BaseNetwork):
         self.with_attn = with_attn
         self.clock = 1
         self.in_channels = in_channels
+        self.subtask = subtask
         # if self.use_SRM:
 
         # self.SRMConv2D = nn.Conv2d(in_channels, 9, 5, 1, padding=2, bias=False)
@@ -795,7 +753,6 @@ class UNetDiscriminator(BaseNetwork):
             nn.ELU(inplace=True),
             spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, padding=1), use_spectral_norm),
             nn.ELU(inplace=True),
-
             spectral_norm(nn.ConvTranspose2d(in_channels=dim * 2, out_channels=dim * 2,  kernel_size=3, padding=1), use_spectral_norm),
             nn.ELU(inplace=True),
             spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, padding=1), use_spectral_norm),
@@ -813,6 +770,16 @@ class UNetDiscriminator(BaseNetwork):
             spectral_norm(nn.Conv2d(in_channels=dim, out_channels=dim, kernel_size=3, padding=1), use_spectral_norm),
             nn.ELU(inplace=True),
         )
+
+        if self.subtask!=0:
+            self.mlp_subtask = sequential(
+                torch.nn.AdaptiveAvgPool2d((1, 1)),
+                torch.nn.Flatten(),
+                torch.nn.Linear(dim * 2, dim * 2),
+                nn.ReLU(),
+                torch.nn.Linear(dim * 2, self.subtask),
+                # nn.Sigmoid()
+            )
 
         self.decoder_0 = nn.Sequential(
             # spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim, kernel_size=3, padding=1),
@@ -873,13 +840,185 @@ class UNetDiscriminator(BaseNetwork):
         d1 = self.decoder_1(torch.cat((e1, d2), dim=1))
         # d1_add = self.decoder_1_add(d1)
         # d1 = d1_add #self.clock * d1_add + (1 - self.clock) * d1
+
+        d0_concat = torch.cat((e0, d1), dim=1)
+
+        x = self.decoder_0(d0_concat)
+        if self.use_sigmoid:
+            x = torch.sigmoid(x)
+
+        if self.subtask != 0:
+            pred = self.mlp_subtask(d0_concat)
+            return x, pred
+        else:
+            return x
+
+
+class Conditional_Norm(nn.Module):
+    def __init__(self, in_channels=64):
+        super(Conditional_Norm, self).__init__()
+        # out_channels = in_channels
+
+        # self.res = spectral_norm(nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1), True)
+        # conv(in_channels, out_channels, kernel_size, stride, padding, bias, mode, negative_slope)
+
+        self.conv_sn_1 = spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, padding=1), True)
+        self.act = nn.ELU(inplace=True)
+        self.conv_sn_2 = spectral_norm(nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, padding=1), True)
+
+        self.shared = sequential(torch.nn.Linear(1, in_channels), nn.ReLU())
+        self.to_gamma_1 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Sigmoid())
+        self.to_beta_1 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Tanh())
+        self.to_gamma_2 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Sigmoid())
+        self.to_beta_2 = sequential(torch.nn.Linear(in_channels, in_channels), nn.Tanh())
+
+    def forward(self, x, label):
+        actv = self.shared(label)
+        gamma_1, beta_1 = self.to_gamma_1(actv).unsqueeze(-1).unsqueeze(-1), self.to_beta_1(actv).unsqueeze(-1).unsqueeze(-1)
+        gamma_2, beta_2 = self.to_gamma_2(actv).unsqueeze(-1).unsqueeze(-1), self.to_beta_2(actv).unsqueeze(-1).unsqueeze(-1)
+
+        x_1 = self.act(gamma_1 * self.conv_sn_1(x) + beta_1)
+        x_2 = self.act(gamma_2 * self.conv_sn_1(x_1) + beta_2)
+        return x + x_2
+
+class SPADE_UNet(BaseNetwork):
+    def __init__(self, in_channels=3, out_channels=3, residual_blocks=4, init_weights=True, use_spectral_norm=True,
+                  dim=16, use_sigmoid=False):
+        super(SPADE_UNet, self).__init__()
+        # dim = 32
+
+        self.use_sigmoid = use_sigmoid
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        self.init_conv = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=self.in_channels, out_channels=dim, kernel_size=3, stride=1, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+        )
+
+        self.encoder_1 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=dim, out_channels=dim * 2, kernel_size=4, stride=2, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2,  kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+        )
+
+        self.encoder_2 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 4, kernel_size=4, stride=2, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 4, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+
+            spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 4,  kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 4, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True)
+        )
+
+        self.encoder_3 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 8, kernel_size=4, stride=2, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 8, out_channels=dim * 8, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 8, out_channels=dim * 8, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 8, out_channels=dim * 8, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True)
+        )
+
+        blocks = []
+        for _ in range(residual_blocks):  # residual_blocks
+            block = ResnetBlock(dim * 8, dilation=2, use_spectral_norm=use_spectral_norm)
+            blocks.append(block)
+
+        self.middle = nn.Sequential(*blocks)
+
+        self.decoder_3 = nn.Sequential(
+            spectral_norm(nn.ConvTranspose2d(in_channels=dim * 8 * 2, out_channels=dim * 4, kernel_size=4, stride=2, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 4, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            # spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 4, kernel_size=3, padding=1), use_spectral_norm),
+            # nn.ELU(inplace=True),
+            # spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 4, kernel_size=3, padding=1), use_spectral_norm),
+            # nn.ELU(inplace=True),
+        )
+
+        self.decoder_3_condition = Conditional_Norm(in_channels=dim * 4)
+
+        self.decoder_2 = nn.Sequential(
+            spectral_norm(nn.ConvTranspose2d(in_channels=dim * 4 * 2, out_channels=dim * 2, kernel_size=4, stride=2, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            # spectral_norm(nn.ConvTranspose2d(in_channels=dim * 2, out_channels=dim * 2,  kernel_size=3, padding=1), use_spectral_norm),
+            # nn.ELU(inplace=True),
+            # spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, padding=1), use_spectral_norm),
+            # nn.ELU(inplace=True),
+        )
+
+        self.decoder_2_condition = Conditional_Norm(in_channels=dim * 2)
+
+        self.decoder_1 = nn.Sequential(
+            spectral_norm(nn.ConvTranspose2d(in_channels=dim * 2 * 2, out_channels=dim, kernel_size=4, stride=2, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim, out_channels=dim, kernel_size=3, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+            # spectral_norm(nn.ConvTranspose2d(in_channels=dim, out_channels=dim,  kernel_size=3, padding=1), use_spectral_norm),
+            # nn.ELU(inplace=True),
+            # spectral_norm(nn.Conv2d(in_channels=dim, out_channels=dim, kernel_size=3, padding=1), use_spectral_norm),
+            # nn.ELU(inplace=True),
+        )
+
+        self.decoder_1_condition = Conditional_Norm(in_channels=dim)
+
+
+        self.decoder_0 = nn.Sequential(
+            nn.Conv2d(in_channels=dim * 2, out_channels=self.out_channels, kernel_size=1, padding=0),
+        )
+
+        if init_weights:
+            self.init_weights()
+
+    def forward(self, x_input, label):
+
+        e0 = self.init_conv(x_input)
+
+        # e0 = self.encoder_0(x)
+        e1 = self.encoder_1(e0)
+        # e1_add = self.encoder_1_add(e1)
+        # e1 = e1_add #self.clock*e1_add+(1-self.clock)*e1
+        e2 = self.encoder_2(e1)
+        # e2_add = self.encoder_2_add(e2)
+        # e2 = e2_add #self.clock * e2_add + (1 - self.clock) * e2
+        e3 = self.encoder_3(e2)
+        # e3_add = self.encoder_3_add(e3)
+        # e3 = e3_add  # self.clock * e2_add + (1 - self.clock) * e2
+
+        m = self.middle(e3)
+
+        d3 = self.decoder_3(torch.cat((e3, m), dim=1))
+        d3 = self.decoder_3_condition(d3, label)
+        # d3_add = self.decoder_3_add(d3)
+        # d3 = d3_add #self.clock * d2_add + (1 - self.clock) * d2
+        d2 = self.decoder_2(torch.cat((e2, d3), dim=1))
+        d2 = self.decoder_2_condition(d2, label)
+        # d2_add = self.decoder_2_add(d2)
+        # d2 = d2_add #self.clock * d2_add + (1 - self.clock) * d2
+        d1 = self.decoder_1(torch.cat((e1, d2), dim=1))
+        d1 = self.decoder_1_condition(d1, label)
+        # d1_add = self.decoder_1_add(d1)
+        # d1 = d1_add #self.clock * d1_add + (1 - self.clock) * d1
         x = self.decoder_0(torch.cat((e0, d1), dim=1))
         if self.use_sigmoid:
             x = torch.sigmoid(x)
 
-        return x
-
-
+        return x+x_input
 
 class QF_predictor(BaseNetwork):
     def __init__(self, in_channels=3, classes=6, residual_blocks=8, init_weights=True, use_spectral_norm=True,
