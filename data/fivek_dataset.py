@@ -31,13 +31,12 @@ class FiveKDataset_total(Dataset):
     """
 
     def __init__(self, dataset_roots: list, camera_names: list, stage, patch_size=256, data_mode='RAW',
-                 file_nums=100, rgb_scale=False, npz_uint16=True):
+                 file_nums=100, npz_uint16=True):
         ####################################################################################################
         # todo: Settings
         # todo:
         ####################################################################################################
         self.data_mode = data_mode
-        self.rgb_scale = rgb_scale
         self.npz_uint16 = npz_uint16
         self.stage = stage
         self.patch_size = patch_size
