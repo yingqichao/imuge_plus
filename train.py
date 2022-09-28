@@ -128,11 +128,13 @@ def main(args,opt):
     #     # train_set = D(opt, dataset_opt)
     elif "ISP" in opt['model']:
         print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset_skip
-        dataset_root = ['/ssd/invISP_skip/','/ssd/invISP_skip/']
-        camera_name = ['Canon_EOS_5D','NIKON_D700']
+        from data.fivek_dataset import FiveKDataset_total
+        with open("./data/camera.txt",'r') as t:
+            camera_name = [i.strip() for i in t.readlines()]
+        dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
+        # camera_name = ['Canon_EOS_5D','NIKON_D700']
         print(f'FiveK dataset size:{GT_size}')
-        train_set = FiveKDataset_skip(dataset_root, camera_name, stage='train', rgb_scale=False, uncond_p=0., patch_size=GT_size)
+        train_set = FiveKDataset_total(dataset_root, camera_name, stage='train', patch_size=GT_size)
 
         # dataset_root_1 = [ '/ssd/invISP_skip/']
         # camera_name_1 = [ 'NIKON_D700']
@@ -266,7 +268,7 @@ def main(args,opt):
         #     print(f"variables_list: {variables_list}")
         elif 'ISP' in which_model and args.mode==2:
             variables_list = ['ISP_PSNR', 'ISP_L1', 'CE_resfcn', 'CE_control', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
-                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra',  'ISP_PSNR_NOW', 'ISP_SSIM_NOW',
+                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra',  'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray',
                               'ERROR'
                               ]
             print(f"variables_list: {variables_list}")

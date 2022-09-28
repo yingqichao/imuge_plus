@@ -240,7 +240,7 @@ class FiveKDataset_total(Dataset):
 
     def norm_raw(self, img, white_level, black_level):
         assert len(black_level) == 4
-        print(black_level)
+        # print(black_level)
         if len(set(black_level)) > 1:
             # todo: 需要加上全局判断
             norm_black_level = sum(black_level) / len(black_level)

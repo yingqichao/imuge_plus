@@ -90,6 +90,8 @@ class AdversarialLoss(nn.Module):
             loss = self.criterion(outputs, labels)
             return loss
 
+IMAGENET_MEAN = torch.FloatTensor([0.485, 0.456, 0.406])[None, :, None, None]
+IMAGENET_STD = torch.FloatTensor([0.229, 0.224, 0.225])[None, :, None, None]
 
 class StyleLoss(nn.Module):
     r"""
@@ -102,6 +104,8 @@ class StyleLoss(nn.Module):
         super(StyleLoss, self).__init__()
         self.add_module('vgg', VGG19())
         self.criterion = torch.nn.L1Loss()
+        self.mean_ = IMAGENET_MEAN
+        self.std_ = IMAGENET_STD
 
     def compute_gram(self, x):
         b, ch, h, w = x.size()
@@ -129,9 +133,6 @@ class StyleLoss(nn.Module):
 
         return style_loss
 
-IMAGENET_MEAN = torch.FloatTensor([0.485, 0.456, 0.406])[None, :, None, None]
-IMAGENET_STD = torch.FloatTensor([0.229, 0.224, 0.225])[None, :, None, None]
-#
 class PerceptualLoss(nn.Module):
     r"""
     Perceptual loss, VGG-based

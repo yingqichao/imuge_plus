@@ -524,10 +524,10 @@ class Modified_invISP(BaseModel):
                         modified_input_netG = self.netG(input_raw.clone().detach())
                         if self.use_gamma_correction:
                             modified_input_netG = self.gamma_correction(modified_input_netG)
-                        THIRD_L1 = self.l1_loss(input=modified_input_netG, target=gt_rgb)
-                        # THIRD_SSIM = - self.ssim_loss(modified_input_netG, gt_rgb)
+                        THIRD_L1 = self.gray_scale_loss(input=modified_input_netG, target=gt_rgb)
+                        THIRD_SSIM = - self.ssim_loss(modified_input_netG, gt_rgb)
                         # THIRD_ISP_percept = self.perceptual_loss(modified_input_netG, gt_rgb).squeeze()
-                        THIRD_loss = THIRD_L1 #+ 0.01 * THIRD_SSIM #+ 0.01 * THIRD_ISP_percept
+                        THIRD_loss = THIRD_L1 + 0.1 * THIRD_SSIM #+ 0.1 * THIRD_ISP_percept
                         modified_input_netG_detach = self.clamp_with_grad(modified_input_netG.detach())
                         PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG_detach),self.postprocess(gt_rgb)).item()
                         logs['PIPE_PSNR'] = PIPE_PSNR
@@ -554,10 +554,10 @@ class Modified_invISP(BaseModel):
                             modified_input_generator = self.gamma_correction(modified_input_generator)
                         input_raw_rev, _ = self.generator(modified_input_generator, rev=True)
 
-                        ISP_L1_FOR = self.l1_loss(input=modified_input_generator, target=gt_rgb)
-                        # ISP_SSIM = - self.ssim_loss(modified_input_generator, gt_rgb)
+                        ISP_L1_FOR = self.gray_scale_loss(input=modified_input_generator, target=gt_rgb)
+                        ISP_SSIM = - self.ssim_loss(modified_input_generator, gt_rgb)
                         # INV_ISP_percept = self.perceptual_loss(modified_input_generator, gt_rgb).squeeze()
-                        ISP_loss = ISP_L1_FOR #+ 0.01 * ISP_SSIM #+ 0.01 * INV_ISP_percept
+                        ISP_loss = ISP_L1_FOR + 0.1 * ISP_SSIM #+ 0.1 * INV_ISP_percept
                         ISP_L1_REV = self.l1_loss(input=input_raw_rev, target=input_raw.clone().detach())
                         ISP_loss += ISP_L1_REV
                         modified_input_generator_detach = self.clamp_with_grad(modified_input_generator.detach())
@@ -593,9 +593,9 @@ class Modified_invISP(BaseModel):
                         modified_input_qf_predict = self.gamma_correction(modified_input_qf_predict)
 
                     CYCLE_L1 = self.l1_loss(input=modified_input_qf_predict, target=gt_rgb)
-                    # CYCLE_SSIM = - self.ssim_loss(modified_input_qf_predict, gt_rgb)
+                    CYCLE_SSIM = - self.ssim_loss(modified_input_qf_predict, gt_rgb)
                     # CYCLE_ISP_percept = self.perceptual_loss(modified_input_qf_predict, gt_rgb).squeeze()
-                    CYCLE_loss = CYCLE_L1 #+ 0.01 * CYCLE_SSIM #+ 0.01 * CYCLE_ISP_percept
+                    CYCLE_loss = CYCLE_L1 + 0.1 * CYCLE_SSIM #+ 0.1 * CYCLE_ISP_percept
                     modified_input_qf_predict_detach = self.clamp_with_grad(modified_input_qf_predict.detach())
                     CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict_detach),
                                            self.postprocess(gt_rgb)).item()
@@ -703,8 +703,8 @@ class Modified_invISP(BaseModel):
                         tamper_source_0 = stored_image_generator[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_0 = self.gray_scale_loss(input=modified_input_0, target=tamper_source_0)
                         ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
-                        ISP_percept_0 = self.perceptual_loss(modified_input_0, tamper_source_0).squeeze()
-                        ISP_style_0 = self.style_loss(modified_input_0, tamper_source_0)
+                        # ISP_percept_0 = self.perceptual_loss(modified_input_0, tamper_source_0).squeeze()
+                        # ISP_style_0 = self.style_loss(modified_input_0, tamper_source_0)
                         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
                         # modified_input_1 = self.qf_predict_network(modified_raw)
@@ -722,8 +722,8 @@ class Modified_invISP(BaseModel):
                         tamper_source_2 = stored_image_netG[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_2 = self.gray_scale_loss(input=modified_input_2, target=tamper_source_2)
                         ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
-                        ISP_percept_2 = self.perceptual_loss(modified_input_2, tamper_source_2).squeeze()
-                        ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
+                        # ISP_percept_2 = self.perceptual_loss(modified_input_2, tamper_source_2).squeeze()
+                        # ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
                         modified_input_2 = self.clamp_with_grad(modified_input_2)
 
                         #### my_own_pipeline ON PROTECTED RAW ######
@@ -737,7 +737,7 @@ class Modified_invISP(BaseModel):
                             metadata['camera_name'] = camera_name
                             # [B C H W]->[H,W]
                             raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
-                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw')
+                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw', output_stage='srgb')
                             modified_input_1[idx_pipeline:idx_pipeline+1] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
                         #### my_own_pipeline ON ORIGINAL RAW ######
                         tamper_source_1 = torch.zeros_like(modified_input_2)
@@ -750,7 +750,7 @@ class Modified_invISP(BaseModel):
                             metadata['camera_name'] = camera_name
                             # [B C H W]->[H,W]
                             raw_1 = input_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
-                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw')
+                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw', output_stage='srgb')
                             tamper_source_1[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
                                 np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
 
@@ -774,14 +774,13 @@ class Modified_invISP(BaseModel):
                         tamper_source = tamper_source.detach()
 
                         # ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
-                        ISP_SSIM_sum = - self.ssim_loss(modified_input, tamper_source)
+                        # ISP_SSIM_sum = - self.ssim_loss(modified_input, tamper_source)
 
                         modified_input = self.clamp_with_grad(modified_input)
                         tamper_source = self.clamp_with_grad(tamper_source)
 
                         ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(tamper_source)).item()
                         logs['ISP_PSNR_NOW'] = ISP_PSNR
-                        logs['ISP_SSIM_NOW'] = -ISP_SSIM_sum.item()
 
 
                         ####################################################################################################
@@ -868,13 +867,19 @@ class Modified_invISP(BaseModel):
 
 
                         loss = 0
-                        loss += (ISP_L1_0+ISP_L1_2)/2
+                        loss_l1 = (ISP_L1_0+ISP_L1_2)/2
+                        loss += loss_l1
                         # loss += 1 * RAW_L1
-                        loss += self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_2)/2
-                        loss += self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2)/2
-                        loss += self.perceptual_hyper_param * (ISP_style_0 + ISP_style_2) / 2
+                        loss_ssim = self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_2)/2
+                        loss += loss_ssim
+                        # loss_percept = self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2)/2
+                        # loss += loss_percept
+                        # loss += self.perceptual_hyper_param * (ISP_style_0 + ISP_style_2) / 2
                         hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/5
                         loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                        logs['ISP_SSIM_NOW'] = -loss_ssim.item()
+                        # logs['Percept'] = loss_percept.item()
+                        logs['Gray'] = loss_l1.item()
                         logs['loss'] = loss.item()
 
                         ####################################################################################################
@@ -905,7 +910,7 @@ class Modified_invISP(BaseModel):
                             self.optimizer_G.zero_grad()
                             self.optimizer_localizer.zero_grad()
                             self.optimizer_discriminator_mask.zero_grad()
-                            self.optimizer_G.zero_grad()
+                            self.optimizer_generator.zero_grad()
                             self.optimizer_qf.zero_grad()
 
                     ####################################################################################################
