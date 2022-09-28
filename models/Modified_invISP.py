@@ -52,11 +52,12 @@ from data.pipeline import rawpy_tensor2image
 from MantraNet.mantranet import pre_trained_model
 from .invertible_net import Inveritible_Decolorization_PAMI
 from models.networks import UNetDiscriminator
-from loss import PerceptualLoss
+from loss import PerceptualLoss, StyleLoss
 from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet
 # import contextual_loss as cl
 # import contextual_loss.functional as F
+from loss import GrayscaleLoss
 
 class Modified_invISP(BaseModel):
     def __init__(self, opt, args, train_set=None):
@@ -120,7 +121,7 @@ class Modified_invISP(BaseModel):
         self.l1_loss = nn.SmoothL1Loss(beta=0.5).cuda()  # reduction="sum"
         self.l2_loss = nn.MSELoss().cuda()  # reduction="sum"
         self.perceptual_loss = PerceptualLoss().cuda()
-        # self.style_loss = StyleLoss().cuda()
+        self.style_loss = StyleLoss().cuda()
         self.Quantization = diff_round
         # self.Quantization = Quantization().cuda()
         # self.Reconstruction_forw = ReconstructionLoss(losstype=self.train_opt['pixel_criterion_forw']).cuda()
@@ -701,6 +702,7 @@ class Modified_invISP(BaseModel):
                         ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
                         ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
                         ISP_percept_0 = self.perceptual_loss(modified_input_0, tamper_source_0).squeeze()
+                        ISP_style_0 = self.style_loss(modified_input_0, tamper_source_0)
                         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
                         # modified_input_1 = self.qf_predict_network(modified_raw)
@@ -719,6 +721,7 @@ class Modified_invISP(BaseModel):
                         ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
                         ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
                         ISP_percept_2 = self.perceptual_loss(modified_input_2, tamper_source_2).squeeze()
+                        ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
                         modified_input_2 = self.clamp_with_grad(modified_input_2)
 
                         #### my_own_pipeline ON PROTECTED RAW ######
@@ -867,6 +870,7 @@ class Modified_invISP(BaseModel):
                         # loss += 1 * RAW_L1
                         loss += 1 * (ISP_SSIM_0+ISP_SSIM_2)/2
                         loss += 1 * (ISP_percept_0+ISP_percept_2)/2
+                        loss += 1 * (ISP_style_0 + ISP_style_2) / 2
                         hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/5
                         loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['loss'] = loss.item()

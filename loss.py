@@ -375,7 +375,14 @@ class VGG19(torch.nn.Module):
 # from downsampler import *
 # from torch.nn import functional
 
+class GrayscaleLayer(nn.Module):
+    def __init__(self):
+        super(GrayscaleLayer, self).__init__()
 
+    def forward(self, x):
+        return torch.mean(x, 1, keepdim=True)
+
+import numpy as np
 class StdLoss(nn.Module):
     def __init__(self):
         """

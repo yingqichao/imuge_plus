@@ -207,13 +207,6 @@ class CovarianceLayer(nn.Module):
         return F.conv2d((F.conv2d(x, self.ones_mask) - F.conv2d(x, self.mean_mask)) *
                         (F.conv2d(y, self.ones_mask) - F.conv2d(y, self.mean_mask)), self.mean_mask)
 
-class GrayscaleLayer(nn.Module):
-    def __init__(self):
-        super(GrayscaleLayer, self).__init__()
-
-    def forward(self, x):
-        return torch.mean(x, 1, keepdim=True)
-
 
 
 def add_module(self, module_):
