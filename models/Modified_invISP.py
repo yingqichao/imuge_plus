@@ -80,6 +80,7 @@ class Modified_invISP(BaseModel):
         self.conduct_cropping = self.opt['conduct_cropping']
         self.consider_robost = self.opt['consider_robost']
         self.CE_hyper_param = self.opt['CE_hyper_param']
+        self.perceptual_hyper_param = self.opt['perceptual_hyper_param']
         self.psnr_thresh = self.opt['psnr_thresh']
         self.raw_classes = self.opt['raw_classes']
         self.train_isp_networks = self.opt["train_isp_networks"]
@@ -103,6 +104,7 @@ class Modified_invISP(BaseModel):
         self.median_blur = MiddleBlur().cuda()
         self.resize = Resize().cuda()
         self.identity = Identity().cuda()
+        self.gray_scale_loss = GrayscaleLoss().cuda()
         self.jpeg_simulate = [
             [DiffJPEG(50, height=self.width_height, width=self.width_height).cuda(), ]
             , [DiffJPEG(55, height=self.width_height, width=self.width_height).cuda(), ]
@@ -699,7 +701,7 @@ class Modified_invISP(BaseModel):
                         if self.use_gamma_correction:
                             modified_input_0 = self.gamma_correction(modified_input_0)
                         tamper_source_0 = stored_image_generator[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
+                        ISP_L1_0 = self.gray_scale_loss(input=modified_input_0, target=tamper_source_0)
                         ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
                         ISP_percept_0 = self.perceptual_loss(modified_input_0, tamper_source_0).squeeze()
                         ISP_style_0 = self.style_loss(modified_input_0, tamper_source_0)
@@ -718,7 +720,7 @@ class Modified_invISP(BaseModel):
                         if self.use_gamma_correction:
                             modified_input_2 = self.gamma_correction(modified_input_2)
                         tamper_source_2 = stored_image_netG[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
+                        ISP_L1_2 = self.gray_scale_loss(input=modified_input_2, target=tamper_source_2)
                         ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
                         ISP_percept_2 = self.perceptual_loss(modified_input_2, tamper_source_2).squeeze()
                         ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
@@ -866,11 +868,11 @@ class Modified_invISP(BaseModel):
 
 
                         loss = 0
-                        # loss += (ISP_L1_0+ISP_L1_2)/2
+                        loss += (ISP_L1_0+ISP_L1_2)/2
                         # loss += 1 * RAW_L1
-                        loss += 1 * (ISP_SSIM_0+ISP_SSIM_2)/2
-                        loss += 1 * (ISP_percept_0+ISP_percept_2)/2
-                        loss += 1 * (ISP_style_0 + ISP_style_2) / 2
+                        loss += self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_2)/2
+                        loss += self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2)/2
+                        loss += self.perceptual_hyper_param * (ISP_style_0 + ISP_style_2) / 2
                         hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/5
                         loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['loss'] = loss.item()

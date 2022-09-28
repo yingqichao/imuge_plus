@@ -379,8 +379,12 @@ class GrayscaleLayer(nn.Module):
     def __init__(self):
         super(GrayscaleLayer, self).__init__()
 
-    def forward(self, x):
-        return torch.mean(x, 1, keepdim=True)
+    def forward(self, rgb):
+        # return torch.mean(x, 1, keepdim=True)
+        b, g, r = rgb[:, 0, :, :], rgb[:, 1, :, :], rgb[:, 2, :, :]
+        gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
+        gray = torch.unsqueeze(gray, 1)
+        return gray
 
 import numpy as np
 class StdLoss(nn.Module):
@@ -494,9 +498,9 @@ class GrayscaleLoss(nn.Module):
         self.gray_scale = GrayscaleLayer()
         self.mse = nn.MSELoss().cuda()
 
-    def forward(self, x, y):
-        x_g = self.gray_scale(x)
-        y_g = self.gray_scale(y)
+    def forward(self, input, target):
+        x_g = self.gray_scale(input)
+        y_g = self.gray_scale(target)
         return self.mse(x_g, y_g)
 
 

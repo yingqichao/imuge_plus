@@ -15,7 +15,8 @@ conduct_cropping: true
 consider_robost: true
 include_isp_inference: true
 psnr_thresh: 30
-CE_hyper_param: 1.5
+CE_hyper_param: 0.015
+perceptual_hyper_param: 0.01
 raw_classes: 5
 #### datasets
 phase: train
