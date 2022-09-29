@@ -46,15 +46,18 @@ def pipeline_tensor2image(*, raw_image, metadata, input_stage='normal', output_s
     }
     # first: transfer the torch into numpy variable
     raw_image = raw_image.detach().cpu().numpy()
-    camera_name = metadata['camera_name']
-    if camera_name == 'Canon_EOS_5D':
-        max_value = 4095
+    if input_stage == 'normal':
+        tmp_raw = raw_image
     else:
-        max_value = 16383
-    tmp_raw = raw_image * float(max_value)
-    # tmp_raw = np.squeeze(origin_raw, axis=2)
-    if camera_name == 'Canon_EOS_5D':
-        tmp_raw = tmp_raw + 127.0
+        camera_name = metadata['camera_name']
+        if camera_name == 'Canon_EOS_5D':
+            max_value = 4095
+        else:
+            max_value = 16383
+        tmp_raw = raw_image * float(max_value)
+        # tmp_raw = np.squeeze(origin_raw, axis=2)
+        if camera_name == 'Canon_EOS_5D':
+            tmp_raw = tmp_raw + 127.0
     tmp_raw = unflip(tmp_raw, metadata['flip_val'])
     # print(raw_image.shape)
     # print(tmp_raw)
