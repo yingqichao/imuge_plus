@@ -46,20 +46,31 @@ class BaseModel():
 
         self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
 
+    ####################################################################################################
+    # todo: using which ISP network?
+    ####################################################################################################
     def using_invISP(self):
         return self.global_step % 4 == 0
     def using_cycleISP(self):
         return self.global_step % 4 == 1
     def using_my_own_pipeline(self):
         return self.global_step % 4 == 2
+
+    ####################################################################################################
+    # todo: using which tampering attacks?
+    ####################################################################################################
+    def using_simulated_inpainting(self):
+        return self.global_step % 3 == 0 or self.global_step % 3 == 1
+    def using_splicing(self):
+        return False #self.global_step % 3 == 1 # or self.global_step % 3 == 2
+    def using_copy_move(self):
+        return self.global_step % 3 == 2
+
+    ####################################################################################################
+    # todo: using which image processing attacks?
+    ####################################################################################################
     def using_weak_jpeg_plus_blurring_etc(self):
         return self.global_step % 5 in {0, 1, 2}
-    def using_simulated_inpainting(self):
-        return self.global_step % 4 == 1 or self.global_step % 4 == 2
-    def using_splicing(self):
-        return self.global_step % 4 == 0
-    def using_copy_move(self):
-        return self.global_step % 4 == 3
     def using_gaussian_blur(self):
         return self.global_step % 5 == 1
     def using_median_blur(self):
@@ -67,9 +78,15 @@ class BaseModel():
     def using_resizing(self):
         return self.global_step % 5 == 0
     def using_jpeg_simulation_only(self):
+        return False #self.global_step % 5 == 4
+    def using_gaussian_noise(self):
         return self.global_step % 5 == 4
+
+    ####################################################################################################
+    # todo: settings for beginning training
+    ####################################################################################################
     def begin_using_momentum(self):
-        return self.global_step>=100
+        return self.global_step>=0
 
 
 

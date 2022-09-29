@@ -69,6 +69,7 @@ class Modified_invISP(BaseModel):
         self.train_opt = opt['train']
         self.test_opt = opt['test']
         self.real_H, self.real_H_path, self.previous_images, self.previous_previous_images = None, None, None, None
+        self.previous_protected = None
         self.previous_canny = None
         self.task_name = args.task_name #self.opt['datasets']['train']['name']  # self.train_opt['task_name']
         self.loading_from = args.loading_from
@@ -225,14 +226,14 @@ class Modified_invISP(BaseModel):
             self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                                    find_unused_parameters=True)
 
-            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=self.raw_classes,
+            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
                                              style_control=False, use_dwt=False).cuda()
                 # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
             self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
                                                               device_ids=[torch.cuda.current_device()],
                                                               find_unused_parameters=True)
 
-            self.discriminator = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=self.raw_classes,
+            self.discriminator = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
                                         style_control=False, use_dwt=False).cuda()
                 # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda()
             self.discriminator = DistributedDataParallel(self.discriminator,
@@ -249,7 +250,7 @@ class Modified_invISP(BaseModel):
             # todo: RAW2RAW network will be loaded
             # todo:
             ####################################################################################################
-            self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=True, use_dwt=False).cuda()
+            self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
                 # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
                 # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
             #InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
@@ -478,6 +479,7 @@ class Modified_invISP(BaseModel):
         stored_image_netG = None
         stored_image_generator = None
         stored_image_qf_predict = None
+        collected_protected_image = None
 
         if not (self.previous_images is None or self.previous_previous_images is None):
             #### DIVIDE THE BATCH INTO CLIPS AS MINI-BATCHES ###
@@ -674,13 +676,13 @@ class Modified_invISP(BaseModel):
                         # todo: next, we protect RAW for tampering detection
                         ####################################################################################################
                         #### condition for RAW2RAW ####
-                        label_array = np.random.choice(range(self.raw_classes),batch_size)
-                        label_control = torch.tensor(label_array).long().cuda()
-                        label_input = torch.tensor(label_array).float().cuda().unsqueeze(1)
-                        label_input = label_input / self.raw_classes
+                        # label_array = np.random.choice(range(self.raw_classes),batch_size)
+                        # label_control = torch.tensor(label_array).long().cuda()
+                        # label_input = torch.tensor(label_array).float().cuda().unsqueeze(1)
+                        # label_input = label_input / self.raw_classes
 
                         ### RAW PROTECTION ###
-                        modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim, label_input)
+                        modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
                         # raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
                         RAW_L1 = self.l1_loss(input=modified_raw_one_dim, target=input_raw_one_dim)
                         # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
@@ -737,7 +739,7 @@ class Modified_invISP(BaseModel):
                             metadata['camera_name'] = camera_name
                             # [B C H W]->[H,W]
                             raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
-                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw', output_stage='srgb')
+                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal', output_stage='gamma')
                             modified_input_1[idx_pipeline:idx_pipeline+1] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
                         #### my_own_pipeline ON ORIGINAL RAW ######
                         tamper_source_1 = torch.zeros_like(modified_input_2)
@@ -750,7 +752,7 @@ class Modified_invISP(BaseModel):
                             metadata['camera_name'] = camera_name
                             # [B C H W]->[H,W]
                             raw_1 = input_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
-                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='raw', output_stage='srgb')
+                            numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal', output_stage='gamma')
                             tamper_source_1[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
                                 np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
 
@@ -776,11 +778,14 @@ class Modified_invISP(BaseModel):
                         # ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
                         # ISP_SSIM_sum = - self.ssim_loss(modified_input, tamper_source)
 
+                        ### collect the protected images
                         modified_input = self.clamp_with_grad(modified_input)
                         tamper_source = self.clamp_with_grad(tamper_source)
-
                         ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(tamper_source)).item()
                         logs['ISP_PSNR_NOW'] = ISP_PSNR
+
+                        collected_protected_image = modified_input_netG_detach if collected_protected_image is None else \
+                            torch.cat((collected_protected_image, modified_input.detach()), dim=0)
 
 
                         ####################################################################################################
@@ -801,7 +806,7 @@ class Modified_invISP(BaseModel):
                         # todo: TAMPERING
                         # todo: including inpainting copy-move and splicing
                         ####################################################################################################
-                        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.3)
+                        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
                         masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
 
                         # attacked_forward = tamper_source_cropped
@@ -817,7 +822,7 @@ class Modified_invISP(BaseModel):
                         ####################################################################################################
                         if self.consider_robost:
                             if self.using_weak_jpeg_plus_blurring_etc():
-                                quality_idx = np.random.randint(19, 21)
+                                quality_idx = np.random.randint(20, 21)
                             else:
                                 quality_idx = np.random.randint(12, 21)
                             attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
@@ -839,12 +844,12 @@ class Modified_invISP(BaseModel):
                         # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
                         # logs['CE_mantra'] = CE_mantra.item()
                         ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
-                        pred_resfcn, pred_control = self.discriminator_mask(attacked_image.detach().contiguous())
+                        pred_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn + CE_control
+                        # CE_control = self.CE_loss(pred_control, label_control)
+                        CE_loss = CE_resfcn #+ CE_control
                         logs['CE_resfcn'] = CE_resfcn.item()
-                        logs['CE_control'] = CE_control.item()
+                        # logs['CE_control'] = CE_control.item()
 
                         ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                         (CE_loss/self.step_acumulate).backward()
@@ -860,10 +865,10 @@ class Modified_invISP(BaseModel):
 
                         ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
                         detection_model = self.discriminator if self.begin_using_momentum else self.discriminator_mask
-                        pred_resfcn, pred_control = detection_model(attacked_image)
+                        pred_resfcn = detection_model(attacked_image)
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn + CE_control
+                        # CE_control = self.CE_loss(pred_control, label_control)
+                        CE_loss = CE_resfcn #+ CE_control
 
 
                         loss = 0
@@ -981,9 +986,16 @@ class Modified_invISP(BaseModel):
                 print('Saving models and training states.')
                 self.save(self.global_step, folder='model', network_list=self.network_list)
         if self.real_H is not None:
+            ### update the tampering source
             if self.previous_images is not None:
+                ### previous_previous_images is for tampering-based data augmentation
                 self.previous_previous_images = self.previous_images.clone().detach()
             self.previous_images = self.label
+            ### update the tampering source with pattern
+            # if self.previous_protected is not None:
+            #     self.previous_previous_protected = self.previous_protected.clone().detach()
+            self.previous_protected = collected_protected_image
+
         self.global_step = self.global_step + 1
 
         # print(logs)
@@ -1299,7 +1311,7 @@ class Modified_invISP(BaseModel):
             ####################################################################################################
             lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
             ###### IMPORTANT NOTE: for ideal copy-mopv, here should be modified_input. If you want to ease the condition, can be changed to forward_iamge
-            tamper = forward_image.clone().detach()
+            tamper = modified_input.clone().detach()
             x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
             while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
                 x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
@@ -1346,12 +1358,14 @@ class Modified_invISP(BaseModel):
             # del self.mask_shifted
             # torch.cuda.empty_cache()
 
-        else: #if way_tamper == 0:
+        elif self.using_simulated_inpainting:
             ####################################################################################################
             # todo: simulated inpainting
             # todo: it is important, without protection, though the tampering can be close, it should also be detected.
             ####################################################################################################
-            attacked_forward = modified_input * (1 - masks) + forward_image * masks
+            # attacked_forward = modified_input * (1 - masks) + forward_image * masks
+            attacked_forward = modified_input * (1 - masks) + self.previous_protected[
+                                 idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks
 
         attacked_forward = self.clamp_with_grad(attacked_forward)
         # attacked_forward = self.Quantization(attacked_forward)
@@ -1368,6 +1382,8 @@ class Modified_invISP(BaseModel):
             blurring_layer = self.median_blur
         elif self.using_resizing():
             blurring_layer = self.resize
+        elif self.using_gaussian_noise():
+            blurring_layer = self.gaussian
         else:
             blurring_layer = self.identity
 
@@ -1375,17 +1391,17 @@ class Modified_invISP(BaseModel):
 
         jpeg_layer_after_blurring = self.jpeg_simulate[quality_idx - 10][0] if quality < 100 else self.identity
         attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_layer_after_blurring(blurring_layer(attacked_forward)))
-        if self.using_jpeg_simulation_only():
-            attacked_image = attacked_real_jpeg_simulate
-        else:  # if self.global_step%5==3:
-            for idx_atkimg in range(batch_size):
-                grid = attacked_forward[idx_atkimg]
-                realworld_attack = self.real_world_attacking_on_ndarray(grid, quality)
-                attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
+        # if self.using_jpeg_simulation_only():
+        #     attacked_image = attacked_real_jpeg_simulate
+        # else:  # if self.global_step%5==3:
+        for idx_atkimg in range(batch_size):
+            grid = attacked_forward[idx_atkimg]
+            realworld_attack = self.real_world_attacking_on_ndarray(grid, quality)
+            attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
-            attacked_real_jpeg = attacked_real_jpeg.clone().detach()
-            attacked_image = attacked_real_jpeg_simulate + (
-                        attacked_real_jpeg - attacked_real_jpeg_simulate).clone().detach()
+        attacked_real_jpeg = attacked_real_jpeg.clone().detach()
+        attacked_image = attacked_real_jpeg_simulate + (
+                    attacked_real_jpeg - attacked_real_jpeg_simulate).clone().detach()
 
         # error_scratch = attacked_real_jpeg - attacked_forward
         # l_scratch = self.l1_loss(error_scratch, torch.zeros_like(error_scratch).cuda())
@@ -1420,8 +1436,14 @@ class Modified_invISP(BaseModel):
             kernel_list = [5] #[3, 5, 7]
             kernel = random.choice(kernel_list)
             realworld_attack = cv2.medianBlur(ndarr, kernel)
+        elif index == 4:
+            mean, sigma = 0, 0.1
+            gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
+            # 给图片添加高斯噪声
+            realworld_attack = ndarr + gauss
         else:
             realworld_attack = ndarr
+
 
         if qf_after_blur != 100:
             _, realworld_attack = cv2.imencode('.jpeg', realworld_attack,
