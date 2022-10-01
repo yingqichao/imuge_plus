@@ -322,8 +322,9 @@ class Conditional_Norm(nn.Module):
 ##########################################################################
 ##---------- HWMNet-LOL ----------
 class HWMNet(nn.Module):
-    def __init__(self, in_chn=3, out_chn=None, wf=64, depth=4, subtask=0, style_control=False, use_dwt=True):
+    def __init__(self, in_chn=3, out_chn=None, wf=64, depth=4, subtask=0, style_control=False, use_dwt=True, use_norm_conv=False):
         super(HWMNet, self).__init__()
+        self.use_norm_conv = use_norm_conv
         self.subtask = subtask
         self.style_control = style_control
         if out_chn is None:
@@ -367,6 +368,31 @@ class HWMNet(nn.Module):
                 # nn.Sigmoid()
             )
 
+        ## we refine the mask using reparameterization
+        if self.use_norm_conv:
+            self.global_pool = sequential(
+                torch.nn.AdaptiveAvgPool2d((1, 1)),
+                torch.nn.Flatten(),
+                torch.nn.Linear(wf, wf),
+                nn.ReLU(),
+                # nn.Sigmoid()
+            )
+            self.to_gamma_1 = sequential(torch.nn.Linear(wf, 1), nn.Sigmoid())
+            self.to_beta_1 = sequential(torch.nn.Linear(wf, 1), nn.Tanh())
+
+            self.IN = nn.InstanceNorm2d(1, affine=False)
+            self.post_process = nn.Sequential(
+                nn.Conv2d(1,16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
+            )
+
     def forward(self, x, style_code=None):
         img = x
         scale_img = img
@@ -408,10 +434,29 @@ class HWMNet(nn.Module):
             out_1 = self.last(msff_result) + img
         else:
             out_1 = self.last(msff_result)
+
+
         #### sub-task ########
-        if self.subtask != 0:
-            pred = self.mlp_subtask(msff_result)
-            return out_1, pred
+        # if self.subtask != 0:
+        #     pred = self.mlp_subtask(msff_result)
+        #     if self.use_norm_conv:
+        #         out_post = self.post_process(torch.sigmoid(out_1.detach()))
+        #         return out_1, pred, out_post
+        #     else:
+        #         return out_1, pred
+        # else:
+        if self.use_norm_conv:
+            ## minimize the affect on the CE prediction using detach
+            norm_pred = self.IN(torch.sigmoid(out_1.detach()))
+            ## get mean and std from msff_result
+            actv = self.global_pool(msff_result.detach())
+            gamma_1, beta_1 = self.to_gamma_1(actv).unsqueeze(-1).unsqueeze(-1), self.to_beta_1(actv).unsqueeze(-1).unsqueeze(-1)
+            ## ada instance norm
+            adaptive_pred = gamma_1 * norm_pred + beta_1
+            ## post-process the mask
+            out_post = self.post_process(adaptive_pred)
+
+            return out_1, out_post
         else:
             return out_1
 

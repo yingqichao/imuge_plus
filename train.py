@@ -267,8 +267,8 @@ def main(args,opt):
         #     variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
         #     print(f"variables_list: {variables_list}")
         elif 'ISP' in which_model and args.mode==2:
-            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE_resfcn', 'CE_control', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
-                              'RAW_PSNR', 'CE_MVSS', 'CE_mantra',  'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray',
+            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE_resfcn', 'l1_resfcn', 'CE_control', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
+                              'RAW_L1', 'RAW_PSNR', 'PSNR_DIFF', 'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray', 'Style',
                               'ERROR'
                               ]
             print(f"variables_list: {variables_list}")

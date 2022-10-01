@@ -159,12 +159,12 @@ def run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_13
 
     if params_['output_stage'] == current_stage:
         return current_image
+
     if params_['input_stage'] == current_stage:
         current_image = demosaic(current_image, metadata['cfa_pattern'], output_channel_order='RGB',
                                  alg_type=params_['demosaic_type'])
         # print(current_image)
         params_['input_stage'] = 'demosaic'
-
 
     current_stage = 'demosaic'
 

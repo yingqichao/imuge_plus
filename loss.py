@@ -148,10 +148,18 @@ class PerceptualLoss(nn.Module):
         self.mean_ = IMAGENET_MEAN
         self.std_ = IMAGENET_STD
 
+    def compute_gram(self, x):
+        b, ch, h, w = x.size()
+        f = x.view(b, ch, w * h)
+        f_T = f.transpose(1, 2)
+        G = f.bmm(f_T) / (h * w * ch)
+
+        return G
+
     def do_normalize_inputs(self, x):
         return (x - self.mean_.to(x.device)) / self.std_.to(x.device)
 
-    def __call__(self, x, y):
+    def __call__(self, x, y, with_gram=False):
         # Compute features
         x = self.do_normalize_inputs(x)
         y = self.do_normalize_inputs(y)
@@ -164,8 +172,16 @@ class PerceptualLoss(nn.Module):
         content_loss += self.weights[3] * self.criterion(x_vgg['relu4_1'], y_vgg['relu4_1'])
         content_loss += self.weights[4] * self.criterion(x_vgg['relu5_1'], y_vgg['relu5_1'])
 
-
-        return content_loss/5
+        if with_gram:
+            # Compute loss
+            style_loss = 0.0
+            style_loss += self.criterion(self.compute_gram(x_vgg['relu2_2']), self.compute_gram(y_vgg['relu2_2']))
+            style_loss += self.criterion(self.compute_gram(x_vgg['relu3_4']), self.compute_gram(y_vgg['relu3_4']))
+            style_loss += self.criterion(self.compute_gram(x_vgg['relu4_4']), self.compute_gram(y_vgg['relu4_4']))
+            style_loss += self.criterion(self.compute_gram(x_vgg['relu5_2']), self.compute_gram(y_vgg['relu5_2']))
+            return content_loss, style_loss
+        else:
+            return content_loss
 
 
 
