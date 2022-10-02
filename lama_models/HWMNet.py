@@ -466,7 +466,7 @@ class HWMNet(nn.Module):
             ## ada instance norm
             adaptive_pred = gamma_1 * norm_pred + beta_1
             ## post-process the mask
-            out_post = self.post_process_small_kernel(adaptive_pred)
+            out_post = self.post_process(adaptive_pred)
 
             return out_1, out_post
         else:

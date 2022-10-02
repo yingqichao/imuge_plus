@@ -146,9 +146,9 @@ class Modified_invISP(BaseModel):
         # todo: in order to reduce modification, we let KD_JPEG=RAW2RAW network, generator=invISP, netG/discrimitator_mask/localizer=three detection networks
         ####################################################################################################
         self.network_list = []
-        self.default_ISP_networks = ['generator','netG','qf_predict_network']
+        self.default_ISP_networks = ['generator','netG','qf_predict_network','localizer']
         self.default_RAW_to_RAW_networks = ['KD_JPEG']
-        self.default_detection_networks = [ 'localizer', 'discriminator_mask', 'discriminator']
+        self.default_detection_networks = [ 'discriminator_mask', 'discriminator']
         if self.args.mode == 2:  # training the full isp protection pipeline
             ####################################################################################################
             # todo: TASKS: args.mode==2 training the full isp protection pipeline
@@ -317,8 +317,8 @@ class Modified_invISP(BaseModel):
         # todo: note: these networks are supposed to be stored together. Can be further customized in the future
         ####################################################################################################
         # good_models: '/model/Rerun_4/29999'
-        load_models = self.is_load_models>0
-        load_state = False
+        # load_models = self.is_load_models>0
+        # load_state = False
 
 
         if self.args.mode == 0:
@@ -330,9 +330,9 @@ class Modified_invISP(BaseModel):
             self.model_path = str(self.is_load_models)  # last: 18999
 
             print(f"loading models: {self.network_list}")
-            if load_models:
-                self.pretrain = self.load_space_storage + self.load_storage + self.model_path
-                self.reload(self.pretrain, self.network_list)
+            # if load_models:
+            self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+            self.reload(self.pretrain, self.network_list)
         # elif self.args.mode==1:
         #     self.out_space_storage = f"{self.opt['name']}/ISP_results'
         #     self.model_storage = f'/model/{self.loading_from}/'
@@ -345,21 +345,23 @@ class Modified_invISP(BaseModel):
             # self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks # mode==2
             # self.network_list = self.default_ISP_networks + self.default_detection_networks # mode==0
 
+            ### loading ISP
             self.load_space_storage = f"{self.opt['name']}/complete_results"
             self.load_storage = f'/model/{self.loading_from}/'
             self.model_path = str(self.is_load_ISP_models)  # last time: 10999
-
-            print(f"loading tampering/ISP models: {self.network_list}")
+            load_models = self.is_load_ISP_models > 0
             if load_models:
+                print(f"loading tampering/ISP models: {self.network_list}")
                 self.pretrain = self.load_space_storage + self.load_storage + self.model_path
                 self.reload(self.pretrain, network_list=self.default_ISP_networks)
 
+            ### loading RAW2RAW localizar
             self.load_space_storage = f"{self.opt['name']}/complete_results"
             self.load_storage = f'/model/{self.loading_from}/'
             self.model_path = str(self.is_load_models)  # last time: 10999
-
-            print(f"loading models: {self.network_list}")
+            load_models = self.is_load_models > 0
             if load_models:
+                print(f"loading models: {self.network_list}")
                 self.pretrain = self.load_space_storage + self.load_storage + self.model_path
                 self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks + self.default_detection_networks)
 
@@ -751,8 +753,16 @@ class Modified_invISP(BaseModel):
                         # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
                         ####################################################################################################
 
+                        ### model selection
+                        if self.global_step%3==0:
+                            isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
+                        elif self.global_step%3==1:
+                            isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
+                        else: #if self.global_step%3==2:
+                            isp_model_0, isp_model_1 = self.netG, self.generator
+
                         #### invISP AS SUBSEQUENT ISP####
-                        modified_input_0 = self.generator(modified_raw)
+                        modified_input_0 = isp_model_0(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_0 = self.gamma_correction(modified_input_0)
                         tamper_source_0 = stored_image_generator[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
@@ -762,7 +772,7 @@ class Modified_invISP(BaseModel):
                         # ISP_style_0 = self.style_loss(modified_input_0, tamper_source_0)
                         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
-                        modified_input_1 = self.qf_predict_network(modified_raw)
+                        modified_input_1 = isp_model_1(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_1 = self.gamma_correction(modified_input_1)
                         tamper_source_1 = stored_image_qf_predict[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
@@ -771,16 +781,16 @@ class Modified_invISP(BaseModel):
                         # ISP_percept_1, ISP_style_1 = self.perceptual_loss(modified_input_1, tamper_source_1, with_gram=True)
                         modified_input_1 = self.clamp_with_grad(modified_input_1)
 
-                        #### HWMNET AS SUBSEQUENT ISP####
-                        modified_input_2 = self.netG(modified_raw)
-                        if self.use_gamma_correction:
-                            modified_input_2 = self.gamma_correction(modified_input_2)
-                        tamper_source_2 = stored_image_netG[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
-                        ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
-                        ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
-                        # ISP_percept_2, ISP_style_2 = self.perceptual_loss(modified_input_2, tamper_source_2, with_gram=True)
-                        # ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
-                        modified_input_2 = self.clamp_with_grad(modified_input_2)
+                        # #### HWMNET AS SUBSEQUENT ISP####
+                        # modified_input_2 = self.netG(modified_raw)
+                        # if self.use_gamma_correction:
+                        #     modified_input_2 = self.gamma_correction(modified_input_2)
+                        # tamper_source_2 = stored_image_netG[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                        # ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
+                        # ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
+                        # # ISP_percept_2, ISP_style_2 = self.perceptual_loss(modified_input_2, tamper_source_2, with_gram=True)
+                        # # ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
+                        # modified_input_2 = self.clamp_with_grad(modified_input_2)
 
                         # #### my_own_pipeline ON PROTECTED RAW ######
                         # modified_input_1 = torch.zeros_like(modified_input_2)
@@ -815,17 +825,19 @@ class Modified_invISP(BaseModel):
                         # todo: note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
                         # todo: thus, we are not let the ISP network approaching the ground-truth RGB.
                         ####################################################################################################
-                        alpha_0 = np.random.rand()*0.8
-                        alpha_1 = np.random.rand()*0.4
-                        alpha_1 = min(alpha_1,1-alpha_0)
-                        alpha_1 = max(0, alpha_1)
-                        alpha_2 = 1 - alpha_0 - alpha_1
+                        alpha_0 = np.random.rand()
+                        alpha_1 = 1 - alpha_0
+                        # alpha_0 = np.random.rand()*0.66
+                        # alpha_1 = np.random.rand()*0.66
+                        # alpha_1 = min(alpha_1,1-alpha_0)
+                        # alpha_1 = max(0, alpha_1)
+                        # alpha_2 = 1 - alpha_0 - alpha_1
 
                         modified_input = alpha_0*modified_input_0
-                        modified_input += alpha_2*modified_input_2
+                        # modified_input += alpha_2*modified_input_2
                         modified_input += alpha_1*modified_input_1
                         tamper_source = alpha_0*tamper_source_0
-                        tamper_source += alpha_2*tamper_source_2
+                        # tamper_source += alpha_2*tamper_source_2
                         tamper_source += alpha_1*tamper_source_1
                         tamper_source = tamper_source.detach()
 
@@ -906,9 +918,9 @@ class Modified_invISP(BaseModel):
                         ####################################################################################################
                         if self.consider_robost:
                             if self.using_weak_jpeg_plus_blurring_etc():
-                                quality_idx = np.random.randint(20, 21)
+                                quality_idx = np.random.randint(18, 21)
                             else:
-                                quality_idx = np.random.randint(12, 21)
+                                quality_idx = np.random.randint(10, 18)
                             attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
                                                                  quality_idx=quality_idx)
                         else:
@@ -959,10 +971,10 @@ class Modified_invISP(BaseModel):
 
 
                         loss = 0
-                        loss_l1 = self.L1_hyper_param * (ISP_L1_0+ISP_L1_2+ISP_L1_1)/3
+                        loss_l1 = self.L1_hyper_param * (ISP_L1_0+ISP_L1_1)/2
                         loss += loss_l1
                         loss += self.L1_hyper_param * RAW_L1
-                        loss_ssim = self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_2+ISP_SSIM_1)/3
+                        loss_ssim = self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_1)/2
                         loss += loss_ssim
                         # loss_percept = self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2+ISP_percept_1)/3
                         # loss += loss_percept
@@ -971,8 +983,8 @@ class Modified_invISP(BaseModel):
                         hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
                         loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['ISP_SSIM_NOW'] = -loss_ssim.item()
-                        logs['Percept'] = loss_percept.item()
-                        logs['Style'] = loss_style.item()
+                        # logs['Percept'] = loss_percept.item()
+                        # logs['Style'] = loss_style.item()
                         logs['Gray'] = loss_l1.item()
                         logs['loss'] = loss.item()
 
@@ -1025,10 +1037,10 @@ class Modified_invISP(BaseModel):
                             self.postprocess(modified_input_1),
                             self.postprocess(tamper_source_1),
                             self.postprocess(10 * torch.abs(modified_input_1 - tamper_source_1)),
-                            self.postprocess(modified_input_2),
-                            self.postprocess(tamper_source_2),
-                            self.postprocess(10 * torch.abs(modified_input_2 - tamper_source_2)),
-                            self.postprocess(inpainted_image),
+                            # self.postprocess(modified_input_2),
+                            # self.postprocess(tamper_source_2),
+                            # self.postprocess(10 * torch.abs(modified_input_2 - tamper_source_2)),
+                            # self.postprocess(inpainted_image),
                             self.postprocess(gt_rgb),
 
                             ### RAW2RGB
