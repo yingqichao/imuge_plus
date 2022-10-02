@@ -393,6 +393,18 @@ class HWMNet(nn.Module):
                 nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
             )
 
+            self.post_process_small_kernel = nn.Sequential(
+                nn.Conv2d(1, 16, kernel_size=3, padding=1, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=3, padding=1, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=3, padding=1, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=3, padding=1, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
+            )
+
     def forward(self, x, style_code=None):
         img = x
         scale_img = img
@@ -449,12 +461,12 @@ class HWMNet(nn.Module):
             ## minimize the affect on the CE prediction using detach
             norm_pred = self.IN(torch.sigmoid(out_1.detach()))
             ## get mean and std from msff_result
-            actv = self.global_pool(msff_result.detach())
+            actv = self.global_pool(msff_result)
             gamma_1, beta_1 = self.to_gamma_1(actv).unsqueeze(-1).unsqueeze(-1), self.to_beta_1(actv).unsqueeze(-1).unsqueeze(-1)
             ## ada instance norm
             adaptive_pred = gamma_1 * norm_pred + beta_1
             ## post-process the mask
-            out_post = self.post_process(adaptive_pred)
+            out_post = self.post_process_small_kernel(adaptive_pred)
 
             return out_1, out_post
         else:

@@ -519,9 +519,10 @@ class Modified_invISP(BaseModel):
                     loss_inpaint += loss_percept
                     loss_style = self.style_hyper_param * style_inpaint
                     loss_inpaint += loss_style
-
+                    inpainted_image = self.clamp_with_grad(inpainted_image)
+                    inpaint_PSNR = self.psnr(self.postprocess(inpainted_image), self.postprocess(self.label)).item()
                     logs['inpaint'] = loss_inpaint.item()
-
+                    logs['inpaintPSNR'] = inpaint_PSNR
                     ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                     (loss_inpaint).backward()
 
@@ -533,7 +534,7 @@ class Modified_invISP(BaseModel):
                     self.optimizer_localizer.step()
                     self.optimizer_localizer.zero_grad()
 
-                    inpainted_image = self.clamp_with_grad(inpainted_image[:num_per_clip])
+                    inpainted_image = inpainted_image[:num_per_clip]
 
 
             for idx_clip in range(self.step_acumulate):
@@ -734,11 +735,12 @@ class Modified_invISP(BaseModel):
                         ### RAW PROTECTION ###
                         modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
                         # raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
-                        RAW_L1 = self.l1_loss(input=modified_raw_one_dim, target=input_raw_one_dim)
-                        # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
-                        modified_raw_one_dim = self.clamp_with_grad(modified_raw_one_dim)
 
                         modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
+                        RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
+                        # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
+                        modified_raw = self.clamp_with_grad(modified_raw)
+
                         RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
                         logs['RAW_PSNR'] = RAW_PSNR
                         logs['RAW_L1'] = RAW_L1.item()
@@ -756,7 +758,7 @@ class Modified_invISP(BaseModel):
                         tamper_source_0 = stored_image_generator[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
                         ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
-                        ISP_percept_0, ISP_style_0 = self.perceptual_loss(modified_input_0, tamper_source_0, with_gram=True)
+                        # ISP_percept_0, ISP_style_0 = self.perceptual_loss(modified_input_0, tamper_source_0, with_gram=True)
                         # ISP_style_0 = self.style_loss(modified_input_0, tamper_source_0)
                         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
@@ -766,7 +768,7 @@ class Modified_invISP(BaseModel):
                         tamper_source_1 = stored_image_qf_predict[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_1 = self.l1_loss(input=modified_input_1, target=tamper_source_1)
                         ISP_SSIM_1 = - self.ssim_loss(modified_input_1, tamper_source_1)
-                        ISP_percept_1, ISP_style_1 = self.perceptual_loss(modified_input_1, tamper_source_1, with_gram=True)
+                        # ISP_percept_1, ISP_style_1 = self.perceptual_loss(modified_input_1, tamper_source_1, with_gram=True)
                         modified_input_1 = self.clamp_with_grad(modified_input_1)
 
                         #### HWMNET AS SUBSEQUENT ISP####
@@ -776,7 +778,7 @@ class Modified_invISP(BaseModel):
                         tamper_source_2 = stored_image_netG[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_2 = self.l1_loss(input=modified_input_2, target=tamper_source_2)
                         ISP_SSIM_2 = - self.ssim_loss(modified_input_2, tamper_source_2)
-                        ISP_percept_2, ISP_style_2 = self.perceptual_loss(modified_input_2, tamper_source_2, with_gram=True)
+                        # ISP_percept_2, ISP_style_2 = self.perceptual_loss(modified_input_2, tamper_source_2, with_gram=True)
                         # ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
                         modified_input_2 = self.clamp_with_grad(modified_input_2)
 
@@ -893,7 +895,7 @@ class Modified_invISP(BaseModel):
 
                         # attacked_forward = tamper_source_cropped
                         attacked_forward, masks, masks_GT = self.tampering(
-                            forward_image=tamper_source_cropped, masks=masks, masks_GT=masks_GT,
+                            forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
                             modified_input=scaled_cropped, percent_range=percent_range, logs=logs,
                             idx_clip=idx_clip, num_per_clip=num_per_clip,
                         )
@@ -904,9 +906,9 @@ class Modified_invISP(BaseModel):
                         ####################################################################################################
                         if self.consider_robost:
                             if self.using_weak_jpeg_plus_blurring_etc():
-                                quality_idx = np.random.randint(18, 21)
+                                quality_idx = np.random.randint(20, 21)
                             else:
-                                quality_idx = np.random.randint(10, 21)
+                                quality_idx = np.random.randint(12, 21)
                             attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
                                                                  quality_idx=quality_idx)
                         else:
@@ -926,13 +928,12 @@ class Modified_invISP(BaseModel):
                         # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
                         # logs['CE_mantra'] = CE_mantra.item()
                         ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
-                        pred_resfcn, refined_resfcn = self.discriminator_mask(attacked_image.detach().contiguous()) # .detach().contiguous()
+                        pred_resfcn, refined_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
                         l1_resfcn = self.l1_loss(refined_resfcn, masks_GT)
                         # CE_control = self.CE_loss(pred_control, label_control)
                         CE_loss = CE_resfcn + l1_resfcn #+ CE_control
-                        logs['CE_resfcn'] = CE_resfcn.item()
-                        logs['l1_resfcn'] = l1_resfcn.item()
+                        logs['CE'] = CE_resfcn.item()
                         # logs['CE_control'] = CE_control.item()
 
                         ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
@@ -948,12 +949,13 @@ class Modified_invISP(BaseModel):
 
 
                         ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
-                        detection_model = self.discriminator if self.begin_using_momentum else self.discriminator_mask
-                        pred_resfcn, _ = detection_model(attacked_image)
+                        pred_resfcn, refined_resfcn = self.discriminator_mask(attacked_image)
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        # l1_resfcn = self.l1_loss(refined_resfcn, masks_GT)
+                        l1_resfcn = self.l1_loss(refined_resfcn, masks_GT)
                         # CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn #+ CE_control
+                        CE_loss = CE_resfcn + l1_resfcn
+                        logs['CE_ema'] = CE_resfcn.item()
+                        logs['l1_ema'] = l1_resfcn.item()
 
 
                         loss = 0
@@ -962,10 +964,10 @@ class Modified_invISP(BaseModel):
                         loss += self.L1_hyper_param * RAW_L1
                         loss_ssim = self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_2+ISP_SSIM_1)/3
                         loss += loss_ssim
-                        loss_percept = self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2+ISP_percept_1)/3
-                        loss += loss_percept
-                        loss_style = self.style_hyper_param * (ISP_style_0 + ISP_style_2+ISP_style_1) / 3
-                        loss += loss_style
+                        # loss_percept = self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2+ISP_percept_1)/3
+                        # loss += loss_percept
+                        # loss_style = self.style_hyper_param * (ISP_style_0 + ISP_style_2+ISP_style_1) / 3
+                        # loss += loss_style
                         hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
                         loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['ISP_SSIM_NOW'] = -loss_ssim.item()
@@ -988,10 +990,10 @@ class Modified_invISP(BaseModel):
                                 nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
                                 # nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
                                 # nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-                                nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                                # nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
                                 # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
                             self.optimizer_KD_JPEG.step()
-                            self.optimizer_discriminator_mask.step()
+                            # self.optimizer_discriminator_mask.step()
                             # self.scaler_kd_jpeg.step(self.optimizer_KD_JPEG)
                             # self.scaler_kd_jpeg.step(self.optimizer_G)
                             # self.scaler_kd_jpeg.step(self.optimizer_localizer)
@@ -1059,7 +1061,9 @@ class Modified_invISP(BaseModel):
                 # todo: doing ema average
                 # todo:
                 ####################################################################################################
-                self._momentum_update_key_encoder()
+                # if self.begin_using_momentum:
+                #     print("Moving average...")
+                #     self._momentum_update_key_encoder()
 
                 ####################################################################################################
                 # todo: inference single image for testing
