@@ -149,20 +149,16 @@ class Modified_invISP(BaseModel):
         self.default_ISP_networks = ['generator','netG','qf_predict_network','localizer']
         self.default_RAW_to_RAW_networks = ['KD_JPEG']
         self.default_detection_networks = [ 'discriminator_mask', 'discriminator']
-        if self.args.mode == 2:  # training the full isp protection pipeline
-            ####################################################################################################
-            # todo: TASKS: args.mode==2 training the full isp protection pipeline
-            # todo:
-            ####################################################################################################
-            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
-            print(f"network list:{self.network_list}")
-        elif self.args.mode == 0:
-            ####################################################################################################
-            # todo: TASKS: args.mode==0 only traihing the detection networks
-            # todo:
-            ####################################################################################################
-            self.network_list = self.default_ISP_networks + self.default_detection_networks
-            print(f"network list:{self.network_list}")
+        # if self.args.mode == 2:  # training the full isp protection pipeline
+        ####################################################################################################
+        # todo: TASKS: args.mode==2 training the full isp protection pipeline
+        # todo:
+        ####################################################################################################
+        self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
+        print(f"network list:{self.network_list}")
+        # elif self.args.mode == 0:
+        #     self.network_list = self.default_ISP_networks + self.default_detection_networks
+        #     print(f"network list:{self.network_list}")
         # elif self.args.mode==1:
         #     ####################################################################################################
         #     # todo: TASKS: args.mode==1 only traihing the invISP network and train identical function on RAW2RAW
@@ -170,46 +166,46 @@ class Modified_invISP(BaseModel):
         #     ####################################################################################################
         #     self.network_list = self.default_ISP_networks+self.default_RAW_to_RAW_networks
         #     print(f"network list:{self.network_list}")
-        else:
-            raise NotImplementedError('大神是不是搞错了？')
+        # else:
+        #     raise NotImplementedError('大神是不是搞错了？')
 
         ####################################################################################################
         # todo: Load models according to the specific mode
         # todo:
         ####################################################################################################
-        if 'localizer' in self.network_list:
-            ####################################################################################################
-            # todo: Image Manipulation Detection Network (Downstream task) will be loaded
-            # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
-            ####################################################################################################
-            print("Building MantraNet...........please wait...")
-            self.localizer = pre_trained_model(weight_path='./MantraNetv4.pt').cuda()
-            self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
-                                                     find_unused_parameters=True)
-
-            print("Building MVSS...........please wait...")
-            model_path = './MVSS/ckpt/mvssnet_casia.pt'
-            self.netG = get_mvss(backbone='resnet50',
-                                 pretrained_base=True,
-                                 nclass=1,
-                                 sobel=True,
-                                 constrain=True,
-                                 n_input=3,
-                                 ).cuda()
-            checkpoint = torch.load(model_path, map_location='cpu')
-            self.netG.load_state_dict(checkpoint, strict=True)
-            self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
-                                                find_unused_parameters=True)
-            print("Building ResFCN...........please wait...")
-            self.discriminator_mask = ResFCN().cuda()
-            self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
-                                                              device_ids=[torch.cuda.current_device()],
-                                                              find_unused_parameters=True)
-            ## AS for ResFCN, we found no checkpoint in the official repo currently
-
-            self.scaler_localizer = torch.cuda.amp.GradScaler()
-            self.scaler_G = torch.cuda.amp.GradScaler()
-            self.scaler_discriminator_mask = torch.cuda.amp.GradScaler()
+        # if 'localizer' in self.network_list:
+        #     ####################################################################################################
+        #     # todo: Image Manipulation Detection Network (Downstream task) will be loaded
+        #     # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
+        #     ####################################################################################################
+        #     print("Building MantraNet...........please wait...")
+        #     self.localizer = pre_trained_model(weight_path='./MantraNetv4.pt').cuda()
+        #     self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
+        #                                              find_unused_parameters=True)
+        #
+        #     print("Building MVSS...........please wait...")
+        #     model_path = './MVSS/ckpt/mvssnet_casia.pt'
+        #     self.netG = get_mvss(backbone='resnet50',
+        #                          pretrained_base=True,
+        #                          nclass=1,
+        #                          sobel=True,
+        #                          constrain=True,
+        #                          n_input=3,
+        #                          ).cuda()
+        #     checkpoint = torch.load(model_path, map_location='cpu')
+        #     self.netG.load_state_dict(checkpoint, strict=True)
+        #     self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
+        #                                         find_unused_parameters=True)
+        #     print("Building ResFCN...........please wait...")
+        #     self.discriminator_mask = ResFCN().cuda()
+        #     self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
+        #                                                       device_ids=[torch.cuda.current_device()],
+        #                                                       find_unused_parameters=True)
+        #     ## AS for ResFCN, we found no checkpoint in the official repo currently
+        #
+        #     self.scaler_localizer = torch.cuda.amp.GradScaler()
+        #     self.scaler_G = torch.cuda.amp.GradScaler()
+        #     self.scaler_discriminator_mask = torch.cuda.amp.GradScaler()
 
         if 'generator' in self.network_list:
             ####################################################################################################
@@ -321,49 +317,49 @@ class Modified_invISP(BaseModel):
         # load_state = False
 
 
-        if self.args.mode == 0:
-            self.out_space_storage = f"{self.opt['name']}/tamper_results"
-            self.model_storage = f'/model/{self.loading_from}/'  # {self.task_name}_2
-
-            self.load_space_storage = f"{self.opt['name']}/tamper_results"
-            self.load_storage = f'/model/{self.loading_from}/'
-            self.model_path = str(self.is_load_models)  # last: 18999
-
-            print(f"loading models: {self.network_list}")
-            # if load_models:
-            self.pretrain = self.load_space_storage + self.load_storage + self.model_path
-            self.reload(self.pretrain, self.network_list)
+        # if self.args.mode == 0:
+        #     self.out_space_storage = f"{self.opt['name']}/tamper_results"
+        #     self.model_storage = f'/model/{self.loading_from}/'  # {self.task_name}_2
+        #
+        #     self.load_space_storage = f"{self.opt['name']}/tamper_results"
+        #     self.load_storage = f'/model/{self.loading_from}/'
+        #     self.model_path = str(self.is_load_models)  # last: 18999
+        #
+        #     print(f"loading models: {self.network_list}")
+        #     # if load_models:
+        #     self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+        #     self.reload(self.pretrain, self.network_list)
         # elif self.args.mode==1:
         #     self.out_space_storage = f"{self.opt['name']}/ISP_results'
         #     self.model_storage = f'/model/{self.loading_from}/'
         #     self.model_path = str(26999) # 29999
-        else:  # if self.args.mode==2:
-            self.out_space_storage = f"{self.opt['name']}/complete_results"
-            self.model_storage = f'/model/{self.loading_from}/'
+        # else:  # if self.args.mode==2:
+        self.out_space_storage = f"{self.opt['name']}/complete_results"
+        self.model_storage = f'/model/{self.loading_from}/'
 
-            ### quick note: networks loading
-            # self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks # mode==2
-            # self.network_list = self.default_ISP_networks + self.default_detection_networks # mode==0
+        ### quick note: networks loading
+        # self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks # mode==2
+        # self.network_list = self.default_ISP_networks + self.default_detection_networks # mode==0
 
-            ### loading ISP
-            self.load_space_storage = f"{self.opt['name']}/complete_results"
-            self.load_storage = f'/model/{self.loading_from}/'
-            self.model_path = str(self.is_load_ISP_models)  # last time: 10999
-            load_models = self.is_load_ISP_models > 0
-            if load_models:
-                print(f"loading tampering/ISP models: {self.network_list}")
-                self.pretrain = self.load_space_storage + self.load_storage + self.model_path
-                self.reload(self.pretrain, network_list=self.default_ISP_networks)
+        ### loading ISP
+        self.load_space_storage = f"{self.opt['name']}/complete_results"
+        self.load_storage = f'/model/{self.loading_from}/'
+        self.model_path = str(self.is_load_ISP_models)  # last time: 10999
+        load_models = self.is_load_ISP_models > 0
+        if load_models:
+            print(f"loading tampering/ISP models: {self.network_list}")
+            self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+            self.reload(self.pretrain, network_list=self.default_ISP_networks)
 
-            ### loading RAW2RAW localizar
-            self.load_space_storage = f"{self.opt['name']}/complete_results"
-            self.load_storage = f'/model/{self.loading_from}/'
-            self.model_path = str(self.is_load_models)  # last time: 10999
-            load_models = self.is_load_models > 0
-            if load_models:
-                print(f"loading models: {self.network_list}")
-                self.pretrain = self.load_space_storage + self.load_storage + self.model_path
-                self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks + self.default_detection_networks)
+        ### loading RAW2RAW localizar
+        self.load_space_storage = f"{self.opt['name']}/complete_results"
+        self.load_storage = f'/model/{self.loading_from}/'
+        self.model_path = str(self.is_load_models)  # last time: 10999
+        load_models = self.is_load_models > 0
+        if load_models:
+            print(f"loading models: {self.network_list}")
+            self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+            self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks + self.default_detection_networks)
 
         ####################################################################################################
         # todo: creating dirs
@@ -411,13 +407,15 @@ class Modified_invISP(BaseModel):
 
     def feed_data_router(self, batch, mode):
         if mode == 0.0:
-            self.feed_data_COCO_like(batch, mode='train') # feed_data_COCO_like(batch)
+            # self.feed_data_COCO_like(batch, mode='train') # feed_data_COCO_like(batch)
+            self.feed_data_ISP(batch, mode='train')
         else:
             self.feed_data_ISP(batch, mode='train')
 
     def feed_data_val_router(self, batch, mode):
         if mode == 0.0:
-            self.feed_data_COCO_like(batch, mode='val')  # feed_data_COCO_like(batch)
+            # self.feed_data_COCO_like(batch, mode='val')  # feed_data_COCO_like(batch)
+            self.feed_data_ISP(batch, mode='val')
         else:
             self.feed_data_ISP(batch, mode='val')
 
@@ -449,7 +447,7 @@ class Modified_invISP(BaseModel):
 
     def optimize_parameters_router(self, mode, step=None):
         if mode == 0.0:
-            return self.optimize_parameters_prepare(step=step)
+            return self.get_protected_RAW_and_corresponding_images(step=step)
         # elif mode==1.0:
         #     return self.optimize_parameters_main()
         else:
