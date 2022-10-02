@@ -261,8 +261,8 @@ def main(args,opt):
     if ('CLRNet' in which_model or 'PAMI' in which_model or 'ISP' in which_model):
         if 'PAMI' in which_model:
             variables_list = []
-        elif 'ISP' in which_model and args.mode==0:
-            variables_list = ['loss', 'CE_MVSS', 'CE_mantra', 'CE_resfcn','ISP_PSNR']
+        # elif 'ISP' in which_model and args.mode==0:
+        #     variables_list = ['loss', 'CE_MVSS', 'CE_mantra', 'CE_resfcn','ISP_PSNR']
         # elif 'ISP' in which_model and args.mode==1:
         #     variables_list = ['ISP_PSNR', 'RAW_PSNR','loss']
         #     print(f"variables_list: {variables_list}")

@@ -411,13 +411,13 @@ class Modified_invISP(BaseModel):
 
     def feed_data_router(self, batch, mode):
         if mode == 0.0:
-            self.feed_data_ISP(batch, mode='train') # feed_data_COCO_like(batch)
+            self.feed_data_COCO_like(batch, mode='train') # feed_data_COCO_like(batch)
         else:
             self.feed_data_ISP(batch, mode='train')
 
     def feed_data_val_router(self, batch, mode):
         if mode == 0.0:
-            self.feed_data_ISP(batch, mode='val')  # feed_data_COCO_like(batch)
+            self.feed_data_COCO_like(batch, mode='val')  # feed_data_COCO_like(batch)
         else:
             self.feed_data_ISP(batch, mode='val')
 
@@ -437,10 +437,15 @@ class Modified_invISP(BaseModel):
             self.bayer_pattern_val = batch['bayer_pattern'].cuda()
             self.camera_name_val = batch['camera_name']
 
-    def feed_data_COCO_like(self, batch):
-        img, label, canny_image = batch
-        self.real_H = img.cuda()
-        self.canny_image = canny_image.cuda()
+    def feed_data_COCO_like(self, batch, mode='train'):
+        if mode == 'train':
+            img, label, canny_image = batch
+            self.real_H = img.cuda()
+            self.canny_image = canny_image.cuda()
+        else:
+            img, label, canny_image = batch
+            self.real_H_val = img.cuda()
+            self.canny_image_val = canny_image.cuda()
 
     def optimize_parameters_router(self, mode, step=None):
         if mode == 0.0:
@@ -868,19 +873,7 @@ class Modified_invISP(BaseModel):
                         # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
 
                         if self.conduct_augmentation:
-                            if self.global_step%4==0:
-                            ## careful!
-                                modified_adjusted = F.adjust_hue(modified_input, hue_factor=-0.1+0.2*np.random.rand()) # 0.5 ave
-                            elif self.global_step%4==1:
-                                modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=0.5+1.5*np.random.rand()) # 1 ave
-                            # elif self.global_step%5==2:
-                            ## not applicable
-                            # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
-                            elif self.global_step%4==2:
-                                modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=0.5+1.5*np.random.rand())
-                            else:
-                                modified_adjusted = F.adjust_brightness(modified_input, brightness_factor=0.5+1.5*np.random.rand()) # 1 ave
-                            modified_adjusted = self.clamp_with_grad(modified_adjusted)
+                            modified_adjusted = self.data_augmentation_on_rendered_rgb(modified_input)
                         else:
                             modified_adjusted = modified_input
 
@@ -1113,11 +1106,83 @@ class Modified_invISP(BaseModel):
         # print(debug_logs)
         return logs, debug_logs, did_val
 
+    def data_augmentation_on_rendered_rgb(self, modified_input):
+        if self.global_step % 4 == 0:
+            ## careful!
+            modified_adjusted = F.adjust_hue(modified_input, hue_factor=-0.1 + 0.2 * np.random.rand())  # 0.5 ave
+        elif self.global_step % 4 == 1:
+            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
+        # elif self.global_step%5==2:
+        ## not applicable
+        # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
+        elif self.global_step % 4 == 2:
+            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=0.5 + 1.5 * np.random.rand())
+        else:
+            modified_adjusted = F.adjust_brightness(modified_input,
+                                                    brightness_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
+        modified_adjusted = self.clamp_with_grad(modified_adjusted)
+
+        return modified_adjusted
+
     def raw_py_test(self):
         pass
 
     @torch.no_grad()
-    def inference_single_image(self):#,*, input_raw_one_dim, file_name, input_raw, gt_rgb, bayer_pattern,camera_name, camera_white_balance):
+    def inference_single_image(self):
+        self.get_protected_RAW_and_corresponding_images(save_image=False)
+
+    @torch.no_grad()
+    def get_predicted_mask(self, save_image=True, conduct_augmentation=False, do_attack=None):
+        modified_input = self.real_H_val
+        masks_GT = self.canny_image_val
+        logs = {}
+
+
+        if conduct_augmentation:
+            modified_adjusted = self.data_augmentation_on_rendered_rgb(modified_input)
+        else:
+            modified_adjusted = modified_input
+
+        attacked_forward = modified_adjusted
+
+        ####################################################################################################
+        # todo: Benign attacks
+        # todo: including JPEG compression Gaussian Blurring, Median blurring and resizing
+        ####################################################################################################
+        if do_attack is not None:
+            self.global_step = do_attack
+            if self.using_weak_jpeg_plus_blurring_etc():
+                quality_idx = np.random.randint(18, 21)
+            else:
+                quality_idx = np.random.randint(10, 18)
+            attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
+                                                 quality_idx=quality_idx)
+        else:
+            attacked_image = attacked_forward
+
+        # ERROR = attacked_image-attacked_forward
+        error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(
+            attacked_forward)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+        logs['ERROR'] = error_l1
+        ####################################################################################################
+        # todo: Image Manipulation Detection Network (Downstream task)
+        # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
+        ####################################################################################################
+        pred_resfcn, refined_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
+        CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+        l1_resfcn = self.l1_loss(refined_resfcn, masks_GT)
+        logs['CE'] = CE_resfcn.item()
+        logs['CEL1'] = l1_resfcn.item()
+        pred_resfcn = torch.sigmoid(pred_resfcn)
+        pred_resfcn = torch.where(pred_resfcn > 0.5, 1.0, 0.0)
+
+        F1, TP = self.F1score(pred_resfcn, masks_GT, thresh=0.5)
+        logs['F1'] = F1
+
+        return pred_resfcn
+
+    @torch.no_grad()
+    def get_protected_RAW_and_corresponding_images(self, save_image=True):#,*, input_raw_one_dim, file_name, input_raw, gt_rgb, bayer_pattern,camera_name, camera_white_balance):
         ####################################################################################################
         # todo: inference single image
         # todo: what is tamper_source? used for simulated inpainting, only activated if self.global_step%3==2
@@ -1134,144 +1199,77 @@ class Modified_invISP(BaseModel):
         input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
                                        white_balance=camera_white_balance)
         batch_size, num_channels, height_width, _ = input_raw.shape
-        
-        batch_size = input_raw.shape[0]
-        logs=[]
+
+        logs= {}
 
         self.KD_JPEG.eval()
+        self.netG.eval()
+        self.qf_predict_network.eval()
+        self.generator.eval()
+        ### RAW PROTECTION ###
         modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
-        modified_raw_one_dim = self.clamp_with_grad(modified_raw_one_dim)
-        RAW_PSNR = self.psnr(self.postprocess(modified_raw_one_dim), self.postprocess(input_raw_one_dim)).item()
+        # raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
 
-        modified_raw = self.visualize_raw(modified_raw_one_dim,
-                                          bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
+        modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern,
+                                          white_balance=camera_white_balance)
+        RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
+        modified_raw = self.clamp_with_grad(modified_raw)
 
-        if self.using_invISP():
-            self.generator.eval()
-            ######## we use invISP ########
-            modified_input = self.generator(modified_raw)
-            if self.use_gamma_correction:
-                modified_input = self.gamma_correction(modified_input)
-            tamper_source = self.generator(input_raw)
-        elif self.using_cycleISP():
-            self.qf_predict_network.eval()
-            modified_input = self.qf_predict_network(modified_raw)
-            if self.use_gamma_correction:
-                modified_input = self.gamma_correction(modified_input)
-            tamper_source = self.qf_predict_network(input_raw)
-        elif self.using_my_own_pipeline():
-            self.netG.eval()
-            ######## we use invISP ########
-            modified_input = self.netG(modified_raw)
-            if self.use_gamma_correction:
-                modified_input = self.gamma_correction(modified_input)
-            tamper_source = self.netG(input_raw)
-            # modified_input = torch.zeros_like(gt_rgb)
-            # for img_idx in range(batch_size):
-            #     numpy_rgb = modified_pack_raw[img_idx].clone().detach().permute(1, 2, 0).contiguous()
-            #     file_name = self.file_name[img_idx]
-            #     metadata = self.train_set.metadata_list[file_name]
-            #     numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
-            #                                       metadata=metadata['metadata'],
-            #                                       input_stage='demosaic')
-            #
-            #     modified_input[img_idx] = torch.from_numpy(
-            #         np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-            #
-            # tamper_source = torch.zeros_like(gt_rgb)
-            # for img_idx in range(batch_size):
-            #     numpy_rgb = modified_raw[img_idx].clone().detach().permute(1, 2, 0).contiguous()
-            #     file_name = self.file_name[img_idx]
-            #     metadata = self.train_set.metadata_list[file_name]
-            #     numpy_rgb = pipeline_tensor2image(raw_image=numpy_rgb,
-            #                                       metadata=metadata['metadata'],
-            #                                       input_stage='demosaic')
-            #
-            #     tamper_source[img_idx] = torch.from_numpy(
-            #         np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-        else:
-            ####################################################################################################
-            # todo: rawpy transforming RAW tensor into RGB numpy
-            # todo:
-            ####################################################################################################
-            modified_input = torch.zeros((batch_size,3,self.width_height,self.width_height),device='cuda')
-            for idx in range(batch_size):
-                print(file_name[idx])
-                print(camera_name[idx])
-                numpy_rgb = rawpy_tensor2image(raw_image=modified_raw_one_dim[idx], template=file_name[idx],
-                                               camera_name=camera_name[idx],patch_size=self.width_height)
-                numpy_rgb = numpy_rgb.astype(np.float32) / 255.
-                modified_input[idx:idx+1] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+        RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
+        logs['RAW_PSNR'] = RAW_PSNR
+        logs['RAW_L1'] = RAW_L1.item()
 
-            tamper_source = torch.zeros((batch_size, 3, self.width_height, self.width_height), device='cuda')
-            for idx in range(batch_size):
-                numpy_rgb = rawpy_tensor2image(raw_image=input_raw_one_dim[idx], template=file_name[idx],
-                                               camera_name=camera_name[idx], patch_size=self.width_height)
-                numpy_rgb = numpy_rgb.astype(np.float32) / 255.
-                tamper_source[idx:idx + 1] = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-            # raise NotImplementedError("大神搞错了吧？只能支持三种pipeline作为训练")
+        ####################################################################################################
+        # todo: RAW2RGB pipelines
+        ####################################################################################################
+        #### invISP AS SUBSEQUENT ISP####
+        modified_input_0 = self.generator(modified_raw)
+        if self.use_gamma_correction:
+            modified_input_0 = self.gamma_correction(modified_input_0)
+        modified_input_0 = self.clamp_with_grad(modified_input_0)
 
-        ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(tamper_source)).item()
-        modified_input = self.clamp_with_grad(modified_input)
-        if tamper_source is not None:
-            tamper_source = self.clamp_with_grad(tamper_source)
+        modified_input_1 = self.qf_predict_network(modified_raw)
+        if self.use_gamma_correction:
+            modified_input_1 = self.gamma_correction(modified_input_1)
+        modified_input_1 = self.clamp_with_grad(modified_input_1)
 
-        locs, cropped, scaled_cropped = self.cropping_mask_generation(
-            forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
-        h_start, h_end, w_start, w_end = locs
-        tamper_source_crop = None
-        _, _, tamper_source_crop = self.cropping_mask_generation(forward_image=tamper_source, locs=locs,
-                                                                logs=logs)
+        modified_input_2 = self.netG(modified_raw)
+        if self.use_gamma_correction:
+            modified_input_2 = self.gamma_correction(modified_input_2)
+        modified_input_2 = self.clamp_with_grad(modified_input_2)
 
-        percent_range = (0.05, 0.30)
-        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
 
-        attacked_forward, masks, masks_GT = self.tampering(
-            forward_image=tamper_source_crop, masks=masks, masks_GT=masks_GT,
-            modified_input=scaled_cropped, percent_range=percent_range, logs=logs,
-            )
+        if save_image:
+            name = f"{self.out_space_storage}/test_protected_images/{self.task_name}"
+            # print('\nsaving sample ' + name)
+            for image_no in range(batch_size):
+                camera_ready = modified_input_0[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(self.global_step).zfill(5)}_0_{str(self.rank)}.png", nrow=1,
+                                             padding=0, normalize=False)
 
-        if self.consider_robost:
-            if self.using_weak_jpeg_plus_blurring_etc():
-                quality_idx = np.random.randint(19, 21)
-            else:
-                quality_idx = np.random.randint(14, 21)
-            attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
-                                                 quality_idx=quality_idx)
-        else:
-            attacked_image = attacked_forward
+                camera_ready = modified_input_1[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(self.global_step).zfill(5)}_1_{str(self.rank)}.png", nrow=1,
+                                             padding=0, normalize=False)
 
-        self.discriminator_mask.eval()
-        pred_resfcn = self.discriminator_mask(attacked_image)
-        CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
 
-        info_str = f'[Eval result: RAW_PSNR: {RAW_PSNR}, ISP_PSNR: {ISP_PSNR} CE: {CE_resfcn.item()} ] '
-        print(info_str)
+                camera_ready = modified_input_2[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(self.global_step).zfill(5)}_2_{str(self.rank)}.png", nrow=1,
+                                             padding=0, normalize=False)
 
-        images = stitch_images(
-            self.postprocess(input_raw),
-            self.postprocess(gt_rgb),
-            ### RAW2RAW
-            self.postprocess(modified_raw),
-            self.postprocess(10 * torch.abs(modified_raw - input_raw)),
-            ### RAW2RGB
-            self.postprocess(modified_input),
-            self.postprocess(tamper_source),
-            self.postprocess(10 * torch.abs(modified_input - tamper_source)),
-            ### tampering and benign attack
-            self.postprocess(attacked_forward),
-            self.postprocess(attacked_image),
-            self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
-            ### tampering detection
-            self.postprocess(masks_GT),
-            self.postprocess(torch.sigmoid(pred_resfcn)),
-            img_per_row=1
-        )
+                camera_ready = gt_rgb[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(self.global_step).zfill(5)}_gt_{str(self.rank)}.png", nrow=1,
+                                             padding=0, normalize=False)
 
-        name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-               f"_3_ {str(self.rank)}_eval.png"
-        print(f'Bayer: {bayer_pattern}. Saving sample {name}')
-        images.save(name)
+                np.save(f"{name}/{str(self.global_step).zfill(5)}_gt_{str(self.rank)}", modified_raw.detach().cpu().numpy())
+
+                print("Saved:{}".format(f"{name}/{str(self.global_step).zfill(5)}"))
+
+        return modified_raw, modified_input_0, modified_input_1, modified_input_2
+
 
     def evaluate_with_unseen_isp_pipelines(self, ):
         ####################################################################################################
