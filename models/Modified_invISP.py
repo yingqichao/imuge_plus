@@ -908,12 +908,12 @@ class Modified_invISP(BaseModel):
                         std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
 
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        l1_resfcn = self.l2_loss(refined_resfcn, masks_GT)
+                        l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
                         l1_mean = self.l2_loss(mean_pred, mean_gt)
                         l1_std = self.l2_loss(std_pred, std_gt)
 
                         # CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn + 5*(l1_resfcn + l1_mean + l1_std) #+ CE_control
+                        CE_loss = CE_resfcn + l1_resfcn + 5*(l1_mean + l1_std) #+ CE_control
                         logs['CE'] = CE_resfcn.item()
                         # logs['CE_control'] = CE_control.item()
 
@@ -934,12 +934,12 @@ class Modified_invISP(BaseModel):
                         refined_resfcn, std_pred, mean_pred = post_pack
 
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        l1_resfcn = self.l1_loss(refined_resfcn, masks_GT)
+                        l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
                         l1_mean = self.l2_loss(mean_pred, mean_gt)
                         l1_std = self.l2_loss(std_pred, std_gt)
 
                         # CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn + 5*(l1_resfcn + l1_mean + l1_std)  # + CE_control
+                        CE_loss = CE_resfcn + l1_resfcn + 5*(l1_mean + l1_std)  # + CE_control
                         logs['CE_ema'] = CE_resfcn.item()
                         logs['l1_ema'] = l1_resfcn.item()
                         logs['Mean'] = l1_mean.item()
@@ -1155,9 +1155,11 @@ class Modified_invISP(BaseModel):
         # todo: Image Manipulation Detection Network (Downstream task)
         # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
         ####################################################################################################
-        pred_resfcn, refined_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
+        pred_resfcn, post_pack = self.discriminator_mask(attacked_image.detach().contiguous())
+        refined_resfcn, std_pred, mean_pred = post_pack
+
         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-        l1_resfcn = self.l1_loss(refined_resfcn, masks_GT)
+        l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
         logs['CE'] = CE_resfcn.item()
         logs['CEL1'] = l1_resfcn.item()
         pred_resfcn = torch.sigmoid(pred_resfcn)
