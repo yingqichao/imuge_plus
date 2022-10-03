@@ -96,9 +96,10 @@ def main(args,opt):
     ####################################################################################################
     # seed = opt['train']['manual_seed']
     # if seed is None:
-    seed = random.randint(1, 100)
-    if rank <= 0:
-        print('Random seed: {}'.format(seed))
+    # seed = random.randint(1, 1000)
+    import time
+    seed = int(time.time())%1000
+    print('Random seed: {}'.format(seed))
     util.set_random_seed(seed)
     ## Slower but more reproducible
     # torch.backends.cudnn.deterministic = True
@@ -126,7 +127,7 @@ def main(args,opt):
     #     from data.tianchi_dataset import LQGTDataset as D
     #     train_set = D()
     #     # train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model']:
+    elif "ISP" in opt['model'] and args.mode!=1:
         print("dataset with ISP")
         from data.fivek_dataset import FiveKDataset_total
         with open("./data/camera.txt",'r') as t:
@@ -142,6 +143,11 @@ def main(args,opt):
 
         # from data.LQGT_dataset import LQGTDataset as D
         # train_set = D(opt, dataset_opt)
+    elif "ISP" in opt['model'] and args.mode==1:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        train_set = D(opt, dataset_opt)
+
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
@@ -197,7 +203,7 @@ def main(args,opt):
     #     from data.tianchi_dataset import LQGTDataset as D
     #     val_set = D()
     #     # train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model']:
+    elif "ISP" in opt['model'] and args.mode!=1:
         print("dataset with ISP")
         from data.fivek_dataset import FiveKDataset_skip
         dataset_root = ['/ssd/invISP_skip/','/ssd/invISP_skip/']
@@ -208,6 +214,10 @@ def main(args,opt):
 
         # from data.LQGT_dataset import LQGTDataset as D
         # val_set = D(opt, dataset_opt)
+    elif "ISP" in opt['model'] and args.mode==1:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        val_set = D(opt, dataset_opt)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
@@ -261,20 +271,20 @@ def main(args,opt):
     if ('CLRNet' in which_model or 'PAMI' in which_model or 'ISP' in which_model):
         if 'PAMI' in which_model:
             variables_list = []
-        # elif 'ISP' in which_model and args.mode==0:
-        #     variables_list = ['loss', 'CE_MVSS', 'CE_mantra', 'CE_resfcn','ISP_PSNR']
-        elif 'ISP' in which_model and args.mode==2:
+        elif 'ISP' in which_model and args.mode==0:
             variables_list = ['RAW_L1', 'RAW_PSNR','loss']
-            print(f"variables_list: {variables_list}")
+        elif 'ISP' in which_model and args.mode==1:
+            variables_list = ['ERROR', 'CE','CEL1','F1','F1_1']
         elif 'ISP' in which_model and args.mode==2:
-            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'l1_ema', 'CE_control', 'CYCLE_PSNR', 'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
+            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'l1_ema', 'Mean', 'Std', 'CE_control', 'CYCLE_PSNR',
+                              'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
                               'RAW_L1', 'RAW_PSNR', 'PSNR_DIFF', 'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray', 'Style',
                               'ERROR', 'inpaint', 'inpaintPSNR'
                               ]
-            print(f"variables_list: {variables_list}")
         elif 'CLRNet' in which_model:
             variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
 
+        print(f"variables_list: {variables_list}")
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far

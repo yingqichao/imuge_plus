@@ -6,7 +6,7 @@ use_tb_logger: true
 model: ISP # CVPR
 distortion: sr
 scale: 4
-gpu_ids: [1,2,3] #[1,3,4]
+gpu_ids: [0] #[1,3,4]
 step_acumulate: 2
 train_isp_networks: false
 train_full_pipeline: true
@@ -23,7 +23,7 @@ L1_hyper_param: 1
 style_hyper_param: 10
 raw_classes: 5
 
-load_models: 1999 # 20999
+load_models: 999 # 20999
 load_ISP_models: 20999
 #### datasets
 phase: train
@@ -56,7 +56,7 @@ datasets:
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 12 # 4
+    batch_size: 1 # 4
     GT_size: 512 # 608
     #########################
     use_flip: true

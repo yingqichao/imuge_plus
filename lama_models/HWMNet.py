@@ -459,16 +459,19 @@ class HWMNet(nn.Module):
         # else:
         if self.use_norm_conv:
             ## minimize the affect on the CE prediction using detach
-            norm_pred = self.IN(torch.sigmoid(out_1.detach()))
+            # norm_pred = self.IN(torch.sigmoid(out_1.detach()))
+            sigmoid_pred = torch.sigmoid(out_1.detach())
+            std, mean = torch.std_mean(sigmoid_pred,dim=(2,3))
+            norm_pred = (sigmoid_pred-mean.unsqueeze(-1).unsqueeze(-1))/std.unsqueeze(-1).unsqueeze(-1)
             ## get mean and std from msff_result
             actv = self.global_pool(msff_result)
-            gamma_1, beta_1 = self.to_gamma_1(actv).unsqueeze(-1).unsqueeze(-1), self.to_beta_1(actv).unsqueeze(-1).unsqueeze(-1)
+            std_new, mean_new = self.to_gamma_1(actv), self.to_beta_1(actv)
             ## ada instance norm
-            adaptive_pred = gamma_1 * norm_pred + beta_1
+            adaptive_pred = std_new.unsqueeze(-1).unsqueeze(-1) * norm_pred + mean_new.unsqueeze(-1).unsqueeze(-1)
             ## post-process the mask
-            out_post = self.post_process(adaptive_pred)
+            out_post = adaptive_pred + self.post_process(adaptive_pred)
 
-            return out_1, out_post
+            return out_1, (out_post, std_new, mean_new)
         else:
             return out_1
 

@@ -60,11 +60,11 @@ class BaseModel():
     # todo: using which tampering attacks?
     ####################################################################################################
     def using_simulated_inpainting(self):
-        return False #self.global_step % 9 in [2,3,6,7]
+        return self.global_step % 9 in [1,5,7]
     def using_splicing(self):
-        return self.global_step % 9 in [0,1,4,5,9]
+        return self.global_step % 9 in [0,4,6,9]
     def using_copy_move(self):
-        return self.global_step % 9 in [2,3,6,7,8]
+        return self.global_step % 9 in [2,3,8]
 
     ####################################################################################################
     # todo: using which image processing attacks?

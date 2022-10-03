@@ -13,8 +13,8 @@ class GaussianBlur(nn.Module):
         self.kernel_size = kernel_size
         self.name = "G_Blur"
 
-    def get_gaussian_kernel(self, kernel_size=3, sigma=2, channels=3):
-        kernel_size = self.kernel_size
+    def get_gaussian_kernel(self, kernel_size=5, sigma=2, channels=3):
+        # kernel_size = self.kernel_size
         # Create a x, y coordinate grid of shape (kernel_size, kernel_size, 2)
         x_coord = torch.arange(kernel_size)
         x_grid = x_coord.repeat(kernel_size).view(kernel_size, kernel_size)

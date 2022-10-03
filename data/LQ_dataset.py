@@ -8,30 +8,32 @@ import data.util as util
 import os
 # from turbojpeg import TurboJPEG
 from PIL import Image
-from jpeg2dct.numpy import load, loads
+# from jpeg2dct.numpy import load, loads
 from skimage.feature import canny
 from skimage.color import rgb2gray, gray2rgb
+import torchvision.transforms as transforms
 import torchvision.transforms.functional as F
+import albumentations as A
+import copy
 
-class LQGTDataset(data.Dataset):
+class LQDataset(data.Dataset):
     '''
     Read LQ (Low Quality, here is LR) and GT image pairs.
     If only GT image is provided, generate LQ image on-the-fly.
     The pair is ensured by 'sorted' function, so please check the name convention.
     '''
 
-    def __init__(self, opt, dataset_opt):
-        super(LQGTDataset, self).__init__()
+    def __init__(self, opt, dataset_opt, is_train=True):
+        super(LQDataset, self).__init__()
+        self.is_train = is_train
         self.opt = opt
         self.dataset_opt = dataset_opt
         self.paths_LQ, self.paths_GT = None, None
         self.sizes_LQ, self.sizes_GT = None, None
-        self.jpeg_filepath=['/home/qcying/jpeg_test2017/10',
-                            '/home/qcying/jpeg_test2017/30',
-                            '/home/qcying/jpeg_test2017/50',
-                            '/home/qcying/jpeg_test2017/70',
-                            '/home/qcying/jpeg_test2017/90']
-        self.paths_GT, self.sizes_GT = util.get_image_paths(dataset_opt['dataroot_GT'])
+        self.GT_size = self.dataset_opt['GT_size']
+
+        self.paths_GT, _ = util.get_image_paths(dataset_opt['dataroot_GT'])
+        self.paths_MASKS, _ = util.get_image_paths(dataset_opt['dataroot_LQ'])
 
         assert self.paths_GT, 'Error: GT path is empty.'
 
@@ -42,59 +44,47 @@ class LQGTDataset(data.Dataset):
 
     def __getitem__(self, index):
 
-        scale = self.dataset_opt['scale']
-        GT_size = self.dataset_opt['GT_size']
+        # scale = self.dataset_opt['scale']
 
         # get GT image
-        img_jpeg_GT = []
         GT_path = self.paths_GT[index]
-        filepath, tempfilepath = os.path.split(GT_path)
+        GT_MASK_path = self.paths_MASKS[index]
 
-        img_jpeg_GT.append(util.read_img(GT_path))
+        # img_GT = util.read_img(GT_path)
+        img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
+        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+        mask_GT = cv2.imread(GT_MASK_path, cv2.IMREAD_GRAYSCALE)
 
-        for idx in range(0,5):
-            jpeg_path = os.path.join(self.jpeg_filepath[idx],tempfilepath)
-            img_jpeg_GT.append(util.read_img(jpeg_path))
+        # img_GT = self.transform(image=copy.deepcopy(img_GT))["image"]
 
-        out_list = []
-        for idx in range(len(img_jpeg_GT)):
-            img_GT = img_jpeg_GT[idx]
-            img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+        img_GT = img_GT.astype(np.float32) / 255.
+        if img_GT.ndim == 2:
+            img_GT = np.expand_dims(img_GT, axis=2)
+        # some images have 4 channels
+        if img_GT.shape[2] > 3:
+            img_GT = img_GT[:, :, :3]
+        mask_GT = mask_GT.astype(np.float32) / 255.
 
-            ###### directly resize instead of crop
-            if idx==0:
-                img_GT = cv2.resize(np.copy(img_GT), (GT_size, GT_size),
-                                    interpolation=cv2.INTER_LINEAR)
 
-            # H, W,_ = img_GT.shape
-            # if H<GT_size or W<GT_size:
-            #     img_GT = cv2.resize(np.copy(img_GT), (GT_size, W),
-            #                                             interpolation=cv2.INTER_LINEAR)
-            # if W<GT_size:
-            #     img_GT = cv2.resize(np.copy(img_GT), (H, GT_size),
-            #                                             interpolation=cv2.INTER_LINEAR)
-            H, W, _ = img_GT.shape
-            # randomly crop
-            # rnd_h = int(random.randint(0, max(0, H - GT_size))/8)*8
-            # rnd_w = int(random.randint(0, max(0, W - GT_size))/8)*8
-            # img_GT = img_GT[rnd_h:rnd_h + GT_size, rnd_w:rnd_w + GT_size, :]
+        ###### directly resize instead of crop
+        # img_GT = cv2.resize(np.copy(img_GT), (GT_size, GT_size),
+        #                     interpolation=cv2.INTER_LINEAR)
 
-            orig_height, orig_width, _ = img_GT.shape
-            # H, W, _ = img_GT.shape
+        orig_height, orig_width, _ = img_GT.shape
+        H, W, _ = img_GT.shape
 
-            # BGR to RGB, HWC to CHW, numpy to tensor
-            if img_GT.shape[2] == 3:
-                img_GT = img_GT[:, :, [2, 1, 0]]
+        mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float()
 
-            img_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
-            out_list.append(img_GT)
 
-        return out_list, torch.tensor([0,1,2,3,4,5]).long()
+        # BGR to RGB, HWC to CHW, numpy to tensor
+        if img_GT.shape[2] == 3:
+            img_GT = img_GT[:, :, [2, 1, 0]]
+
+
+        img_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
+
+        return (img_GT, mask_GT)
 
     def __len__(self):
         return len(self.paths_GT)
 
-    def to_tensor(self, img):
-        img = Image.fromarray(img)
-        img_t = F.to_tensor(img).float()
-        return img_t
