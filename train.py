@@ -205,12 +205,13 @@ def main(args,opt):
     #     # train_set = D(opt, dataset_opt)
     elif "ISP" in opt['model'] and args.mode!=1:
         print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset_skip
-        dataset_root = ['/ssd/invISP_skip/','/ssd/invISP_skip/']
-        camera_name = ['Canon_EOS_5D', 'NIKON_D700']
+        from data.fivek_dataset import FiveKDataset_total
+        with open("./data/camera.txt", 'r') as t:
+            camera_name = [i.strip() for i in t.readlines()]
+        dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
+        # camera_name = ['Canon_EOS_5D','NIKON_D700']
         print(f'FiveK dataset size:{GT_size}')
-        val_set = FiveKDataset_skip(dataset_root, camera_name, stage='test', rgb_scale=False, uncond_p=0.,
-                                      patch_size=GT_size)
+        val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=GT_size)
 
         # from data.LQGT_dataset import LQGTDataset as D
         # val_set = D(opt, dataset_opt)
