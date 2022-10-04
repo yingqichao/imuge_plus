@@ -57,6 +57,8 @@ class FiveKDataset_total(Dataset):
             new_raw_files, new_rgb_files = self.load(dataset_root=dataset_root, file_name=dataset_file,
                                                      camera_name=camera_name)
             if stage != 'train':
+                # if len(new_raw_files) > 100:
+                #     print(camera_name)
                 new_raw_files = new_raw_files[:file_nums]
                 new_rgb_files = new_rgb_files[:file_nums]
             # else:
@@ -1022,27 +1024,25 @@ if __name__ == '__main__':
         # metadata = train_set.metadata_list[file_name[0]]
 
         input_raw = value['input_raw'][0]
+        # 测试 my own pipeline
+        # metadata = train_set.metadata_list[file_name[0]]
+        # flip_val = metadata['flip_val']
+        # metadata = metadata['metadata']
+        # # 在metadata中加入要用的flip_val和camera_name
+        # metadata['flip_val'] = flip_val
+        # metadata['camera_name'] = camera_name
+        #
+        # # print(metadata)
+        # input_raw = input_raw.permute(1, 2, 0).squeeze(2)
+        # numpy_rgb = pipeline_tensor2image(raw_image=input_raw, metadata=metadata, input_stage='raw')
+        # numpy_rgb = (numpy_rgb * 255).astype(np.uint8)
 
         # 测试rawpy
-        # template = rawpy.imread(os.path.join(dataset_root, camera_name, 'template.dng'))
         # ###########################################################################
         # # todo：用法 直接传入raw图，template可以传入rawpy对象，也可以是file_name
         # ###########################################################################
-        # numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=template, camera_name=camera_name,
-        #                                patch_size=512)
-
-        # 测试 my own pipeline
-        metadata = train_set.metadata_list[file_name[0]]
-        flip_val = metadata['flip_val']
-        metadata = metadata['metadata']
-        # 在metadata中加入要用的flip_val和camera_name
-        metadata['flip_val'] = flip_val
-        metadata['camera_name'] = camera_name
-
-        # print(metadata)
-        input_raw = input_raw.permute(1, 2, 0).squeeze(2)
-        numpy_rgb = pipeline_tensor2image(raw_image=input_raw, metadata=metadata, input_stage='raw')
-        numpy_rgb = (numpy_rgb * 255).astype(np.uint8)
+        numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=file_name[0], camera_name=camera_name[0],
+                                       patch_size=512)
         target_rgb = value['target_rgb'][0].permute(1, 2, 0).cpu().numpy() * 255
         target_rgb = target_rgb.astype(np.uint8)
         # print(target_rgb[0])

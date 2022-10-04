@@ -71,27 +71,47 @@ raw_image: raw2raw network output, torch.tensor [C H W] C = 1
 template: the result of rawpy load template.dng
 return: rgb image, numpy variable
 """
+
+
+# def norm_raw(self, img, white_level, black_level):
+#     assert len(black_level) == 4
+#     # print(black_level)
+#     if len(set(black_level)) > 1:
+#         # todo: 需要加上全局判断
+#         norm_black_level = sum(black_level) / len(black_level)
+#     else:
+#         # 黑电平的值一致
+#         norm_black_level = black_level[0]
+#     img = img - norm_black_level
+#     img[img < 0] = 0
+#     img = img / (white_level - norm_black_level)
+#     return img
 def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
     if type(template) == str:
         # 传入的template参数s
-        default_root = '/ssd/invISP/'
+        default_root = '/ssd/FiveK_Dataset/'
         dng_path = os.path.join(default_root, camera_name, 'DNG', template+'.dng')
         template = rawpy.imread(dng_path)
     flip_val = template.sizes.flip
+    white_level = template.white_level
+    black_level = template.black_level_per_channel
+    assert len(black_level) == 4
+
+    if len(set(black_level)) > 1:
+        # todo: 需要加上全局判断
+        norm_black_level = sum(black_level) / len(black_level)
+    else:
+        # 黑电平的值一致
+        norm_black_level = black_level[0]
+
     # print(patch_size)
     raw_image = raw_image.permute(1, 2, 0).detach().cpu().numpy()
     # print(raw_image.shape)
     raw_image = np.squeeze(raw_image, axis=2)
     raw_image = np.ascontiguousarray(unflip(raw_image, flip_val))
 
-    if camera_name == 'Canon_EOS_5D':
-        max_value = 4095
-    else:
-        max_value = 16383
-    tmp_raw = raw_image * float(max_value)
-    # tmp_raw = np.squeeze(origin_raw, axis=2)
-    if camera_name == 'Canon_EOS_5D':
-        tmp_raw = tmp_raw + 127.0
+    raw_image = raw_image * (white_level - norm_black_level)
+    tmp_raw = raw_image + norm_black_level
     template.raw_image_visible[:patch_size, :patch_size] = tmp_raw.astype(np.uint16)
     im = template.postprocess(use_camera_wb=True, no_auto_bright=True)
     im = unflip(im, flip_val)
