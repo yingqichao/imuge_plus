@@ -902,7 +902,7 @@ class Modified_invISP(BaseModel):
                         # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
                         # logs['CE_mantra'] = CE_mantra.item()
                         ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
-                        pred_resfcn, post_pack = self.discriminator_mask(attacked_image.detach().contiguous())
+                        pred_resfcn, post_pack, _ = self.discriminator_mask(attacked_image.detach().contiguous())
                         refined_resfcn, std_pred, mean_pred = post_pack
                         ### get mean and std of mask_GT
                         std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
@@ -930,8 +930,12 @@ class Modified_invISP(BaseModel):
 
 
                         ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
-                        pred_resfcn, post_pack = self.discriminator_mask(attacked_image)
+                        pred_resfcn, post_pack, intermediate = self.discriminator_mask(attacked_image)
                         refined_resfcn, std_pred, mean_pred = post_pack
+                        norm_pred, adaptive_pred, diff_pred = intermediate
+                        norm_pred = self.clamp_with_grad(norm_pred)
+                        adaptive_pred = self.clamp_with_grad(adaptive_pred)
+                        diff_pred = self.clamp_with_grad(diff_pred)
 
                         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
                         l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
@@ -1036,6 +1040,10 @@ class Modified_invISP(BaseModel):
                             # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mantra))),
                             self.postprocess(torch.sigmoid(pred_resfcn)),
                             self.postprocess(refined_resfcn),
+                            # norm_pred, adaptive_pred, diff_pred
+                            self.postprocess(norm_pred),
+                            self.postprocess(adaptive_pred),
+                            self.postprocess(diff_pred),
                             # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_resfcn))),
                             img_per_row=1
                         )
@@ -1115,7 +1123,7 @@ class Modified_invISP(BaseModel):
         self.get_protected_RAW_and_corresponding_images(save_image=False)
 
     @torch.no_grad()
-    def get_predicted_mask(self, modified_input=None, masks_GT=None, save_image=True, conduct_augmentation=False, do_attack=None, step=None):
+    def get_predicted_mask(self, modified_input=None, masks_GT=None, save_image=True, conduct_augmentation=False, do_attack=None, quality_idx=None, step=None):
         self.discriminator_mask.eval()
         if modified_input is None:
             modified_input = self.real_H
@@ -1138,10 +1146,11 @@ class Modified_invISP(BaseModel):
         ####################################################################################################
         if do_attack is not None:
             self.global_step = do_attack
-            if self.using_weak_jpeg_plus_blurring_etc():
-                quality_idx = np.random.randint(18, 21)
-            else:
-                quality_idx = np.random.randint(10, 18)
+            if quality_idx is None:
+                if self.using_weak_jpeg_plus_blurring_etc():
+                    quality_idx = np.random.randint(18, 21)
+                else:
+                    quality_idx = np.random.randint(10, 18)
             attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
                                                  quality_idx=quality_idx)
         else:
@@ -1155,7 +1164,7 @@ class Modified_invISP(BaseModel):
         # todo: Image Manipulation Detection Network (Downstream task)
         # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
         ####################################################################################################
-        pred_resfcn, post_pack = self.discriminator_mask(attacked_image.detach().contiguous())
+        pred_resfcn, post_pack, _ = self.discriminator_mask(attacked_image.detach().contiguous())
         refined_resfcn, std_pred, mean_pred = post_pack
 
         CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
@@ -1163,12 +1172,12 @@ class Modified_invISP(BaseModel):
         logs['CE'] = CE_resfcn.item()
         logs['CEL1'] = l1_resfcn.item()
         pred_resfcn = torch.sigmoid(pred_resfcn)
-        pred_resfcn = torch.where(pred_resfcn > 0.5, 1.0, 0.0)
+        pred_resfcn_bn = torch.where(pred_resfcn > 0.5, 1.0, 0.0)
 
-        refined_resfcn = torch.where(refined_resfcn > 0.5, 1.0, 0.0)
+        refined_resfcn_bn = torch.where(refined_resfcn > 0.5, 1.0, 0.0)
 
-        F1, TP = self.F1score(pred_resfcn, masks_GT, thresh=0.5)
-        F1_1, TP_1 = self.F1score(refined_resfcn, masks_GT, thresh=0.5)
+        F1, TP = self.F1score(pred_resfcn_bn, masks_GT, thresh=0.5)
+        F1_1, TP_1 = self.F1score(refined_resfcn_bn, masks_GT, thresh=0.5)
         logs['F1'] = F1
         logs['F1_1'] = F1_1
 
@@ -1178,12 +1187,22 @@ class Modified_invISP(BaseModel):
             for image_no in range(batch_size):
                 camera_ready = pred_resfcn[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_pred_ce_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_pred_ce_{self.model_path}_{str(do_attack)}_{str(quality_idx)}.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = pred_resfcn_bn[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_pred_cebn_{self.model_path}.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = refined_resfcn[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_pred_L1_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_pred_L1_{self.model_path}.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = refined_resfcn_bn[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_pred_L1bn_{self.model_path}.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = attacked_image[image_no].unsqueeze(0)
@@ -1248,16 +1267,36 @@ class Modified_invISP(BaseModel):
             modified_input_0 = self.gamma_correction(modified_input_0)
         modified_input_0 = self.clamp_with_grad(modified_input_0)
 
+        original_0 = self.generator(input_raw)
+        if self.use_gamma_correction:
+            original_0 = self.gamma_correction(original_0)
+        original_0 = self.clamp_with_grad(original_0)
+        RAW_PSNR = self.psnr(self.postprocess(original_0), self.postprocess(gt_rgb)).item()
+        logs['RGB_PSNR_0'] = RAW_PSNR
+
         modified_input_1 = self.qf_predict_network(modified_raw)
         if self.use_gamma_correction:
             modified_input_1 = self.gamma_correction(modified_input_1)
         modified_input_1 = self.clamp_with_grad(modified_input_1)
+
+        original_1 = self.qf_predict_network(input_raw)
+        if self.use_gamma_correction:
+            original_1 = self.gamma_correction(original_1)
+        original_1 = self.clamp_with_grad(original_1)
+        RAW_PSNR = self.psnr(self.postprocess(original_1), self.postprocess(gt_rgb)).item()
+        logs['RGB_PSNR_1'] = RAW_PSNR
 
         modified_input_2 = self.netG(modified_raw)
         if self.use_gamma_correction:
             modified_input_2 = self.gamma_correction(modified_input_2)
         modified_input_2 = self.clamp_with_grad(modified_input_2)
 
+        original_2 = self.qf_predict_network(input_raw)
+        if self.use_gamma_correction:
+            original_2 = self.gamma_correction(original_2)
+        original_2 = self.clamp_with_grad(original_2)
+        RAW_PSNR = self.psnr(self.postprocess(original_2), self.postprocess(gt_rgb)).item()
+        logs['RGB_PSNR_2'] = RAW_PSNR
 
         if save_image:
             name = f"{self.out_space_storage}/test_protected_images/{self.task_name}"
@@ -1268,15 +1307,30 @@ class Modified_invISP(BaseModel):
                                              f"{name}/{str(step).zfill(5)}_0_{str(self.rank)}.png", nrow=1,
                                              padding=0, normalize=False)
 
+                camera_ready = original_0[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_0_ori_{str(self.rank)}.png", nrow=1,
+                                             padding=0, normalize=False)
+
                 camera_ready = modified_input_1[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
                                              f"{name}/{str(step).zfill(5)}_1_{str(self.rank)}.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = original_1[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_1_ori_{str(self.rank)}.png", nrow=1,
                                              padding=0, normalize=False)
 
 
                 camera_ready = modified_input_2[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
                                              f"{name}/{str(step).zfill(5)}_2_{str(self.rank)}.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = original_2[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_2_ori_{str(self.rank)}.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = gt_rgb[image_no].unsqueeze(0)
@@ -1322,7 +1376,7 @@ class Modified_invISP(BaseModel):
                         test_input = eval(f"modified_input_{idx_isp}")[image_no].unsqueeze(0)[image_no].unsqueeze(0)*(1-mask_GT)+tamper_source*mask_GT
 
                         logs_pred, pred_resfcn, _ = self.get_predicted_mask(modified_input=test_input,
-                                                                            masks_GT=mask_GT, do_attack=2, step=step)
+                                                                            masks_GT=mask_GT, do_attack=3, quality_idx=16 ,step=step)
 
                         logs.update(logs_pred)
 

@@ -23,7 +23,7 @@ L1_hyper_param: 1
 style_hyper_param: 10
 raw_classes: 5
 
-load_models: 999 # 20999
+load_models: 13999 # 20999
 load_ISP_models: 20999
 #### datasets
 phase: train
@@ -107,7 +107,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 2e-5   # 2e-5
+  lr_scratch: !!float 1e-5   # 2e-5
   lr_finetune: !!float 1e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

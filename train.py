@@ -272,7 +272,8 @@ def main(args,opt):
         if 'PAMI' in which_model:
             variables_list = []
         elif 'ISP' in which_model and args.mode==0:
-            variables_list = ['RAW_L1', 'RAW_PSNR','loss']
+            variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1',
+                              'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
         elif 'ISP' in which_model and args.mode==1:
             variables_list = ['ERROR', 'CE','CEL1','F1','F1_1']
         elif 'ISP' in which_model and args.mode==2:
@@ -294,7 +295,7 @@ def main(args,opt):
             print('Start training from epoch: {:d}, iter: {:d}, total: {:d}'.format(start_epoch, current_step, total))
         latest_values = None
 
-        print_step, restart_step = 15, 1000
+        print_step, restart_step = 10, 1000
         start = time.time()
 
         # train_generator_1 = iter(train_loader_1)
