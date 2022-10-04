@@ -1,17 +1,174 @@
+import copy
+import logging
 import os
-from collections import OrderedDict
-import torch
-import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel
+import math
+import cv2
 import numpy as np
+import torch
+import torch.distributed as dist
+import torch.nn as nn
+import torchvision
+from collections import OrderedDict
+import torchvision.transforms.functional as F
+from PIL import Image
+from skimage.color import rgb2gray
+from skimage.feature import canny
+from torch.nn.parallel import DistributedDataParallel
+from cycleisp_models.cycleisp import Raw2Rgb
+import pytorch_ssim
+from MVSS.models.mvssnet import get_mvss
+from MVSS.models.resfcn import ResFCN
+from metrics import PSNR
+from models.modules.Quantization import diff_round
+from noise_layers import *
+from noise_layers.crop import Crop
+from noise_layers.dropout import Dropout
+from noise_layers.gaussian import Gaussian
+from noise_layers.gaussian_blur import GaussianBlur
+from noise_layers.middle_filter import MiddleBlur
+from noise_layers.resize import Resize
+from utils import stitch_images
+from utils.JPEG import DiffJPEG
+from data.pipeline import pipeline_tensor2image
+# import matlab.engine
+import torch.nn.functional as Functional
+from utils.commons import create_folder
+from data.pipeline import rawpy_tensor2image
+# print("Starting MATLAB engine...")
+# engine = matlab.engine.start_matlab()
+# print("MATLAB engine loaded successful.")
+# logger = logging.getLogger('base')
+# json_path = '/qichaoying/Documents/COCOdataset/annotations/incnances_val2017.json'
+# load coco data
+# coco = COCO(annotation_file=json_path)
+#
+# # get all image index info
+# ids = list(sorted(coco.imgs.keys()))
+# print("number of images: {}".format(len(ids)))
+#
+# # get all coco class labels
+# coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
+# import lpips
+from MantraNet.mantranet import pre_trained_model
+from .invertible_net import Inveritible_Decolorization_PAMI
+from models.networks import UNetDiscriminator
+from loss import PerceptualLoss, StyleLoss
+from .networks import SPADE_UNet
+from lama_models.HWMNet import HWMNet
+# import contextual_loss as cl
+# import contextual_loss.functional as F
+from loss import GrayscaleLoss
 
 class BaseModel():
-    def __init__(self, opt,  args, train_set):
+    def __init__(self, opt,  args, train_set=None):
+
         self.opt = opt
         self.device = torch.device('cuda' if opt['gpu_ids'] is not None else 'cpu')
         self.is_train = opt['is_train']
         self.schedulers = []
         self.optimizers = []
+
+        self.train_set = train_set
+        self.rank = torch.distributed.get_rank()
+        self.opt = opt
+        self.args = args
+        self.train_opt = opt['train']
+        self.test_opt = opt['test']
+
+        self.task_name = args.task_name  # self.opt['datasets']['train']['name']  # self.train_opt['task_name']
+        self.loading_from = args.loading_from
+        self.is_load_models = self.opt['load_models']
+        self.is_load_ISP_models = self.opt['load_ISP_models']
+        print("Task Name: {}".format(self.task_name))
+        self.global_step = 0
+        self.new_task = self.train_opt['new_task']
+        self.use_gamma_correction = self.opt['use_gamma_correction']
+        self.conduct_augmentation = self.opt['conduct_augmentation']
+        self.conduct_cropping = self.opt['conduct_cropping']
+        self.consider_robost = self.opt['consider_robost']
+        self.CE_hyper_param = self.opt['CE_hyper_param']
+        self.perceptual_hyper_param = self.opt['perceptual_hyper_param']
+        self.L1_hyper_param = self.opt["L1_hyper_param"]
+        self.style_hyper_param = self.opt['style_hyper_param']
+        self.psnr_thresh = self.opt['psnr_thresh']
+        self.raw_classes = self.opt['raw_classes']
+        self.train_isp_networks = self.opt["train_isp_networks"]
+        self.train_full_pipeline = self.opt["train_full_pipeline"]
+        self.train_inpainting_surrogate_model = self.opt["train_inpainting_surrogate_model"]
+        self.include_isp_inference = self.opt["include_isp_inference"]
+        self.step_acumulate = self.opt["step_acumulate"]
+
+        ####################################################################################################
+        # todo: constants
+        ####################################################################################################
+        self.width_height = opt['datasets']['train']['GT_size']
+        self.kernel_RAW_k0 = torch.tensor([[[1, 0], [0, 0]], [[0, 1], [1, 0]], [[0, 0], [0, 1]]], device="cuda",
+                                          requires_grad=False).unsqueeze(0)
+        self.kernel_RAW_k1 = torch.tensor([[[0, 0], [1, 0]], [[1, 0], [0, 1]], [[0, 1], [0, 0]]], device="cuda",
+                                          requires_grad=False).unsqueeze(0)
+        self.kernel_RAW_k2 = torch.tensor([[[0, 0], [0, 1]], [[0, 1], [1, 0]], [[1, 0], [0, 0]]], device="cuda",
+                                          requires_grad=False).unsqueeze(0)
+        self.kernel_RAW_k3 = torch.tensor([[[0, 1], [0, 0]], [[0, 1], [1, 0]], [[0, 0], [1, 0]]], device="cuda",
+                                          requires_grad=False)
+        expand_times = int(self.width_height // 2)
+        self.kernel_RAW_k0 = self.kernel_RAW_k0.repeat(1, 1, expand_times, expand_times)
+        self.kernel_RAW_k1 = self.kernel_RAW_k1.repeat(1, 1, expand_times, expand_times)
+        self.kernel_RAW_k2 = self.kernel_RAW_k2.repeat(1, 1, expand_times, expand_times)
+        self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, 1, expand_times, expand_times)
+
+        self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
+
+        ####################################################################################################
+        # todo: losses and attack layers
+        # todo: JPEG attack rescaling deblurring
+        ####################################################################################################
+        self.tanh = nn.Tanh().cuda()
+        self.psnr = PSNR(255.0).cuda()
+        # self.lpips_vgg = lpips.LPIPS(net="vgg").cuda()
+        # self.exclusion_loss = ExclusionLoss().type(torch.cuda.FloatTensor).cuda()
+        self.ssim_loss = pytorch_ssim.SSIM().cuda()
+        self.crop = Crop().cuda()
+        self.dropout = Dropout().cuda()
+        self.gaussian = Gaussian().cuda()
+        self.salt_pepper = SaltPepper(prob=0.01).cuda()
+        self.gaussian_blur = GaussianBlur().cuda()
+        self.median_blur = MiddleBlur().cuda()
+        self.resize = Resize().cuda()
+        self.identity = Identity().cuda()
+        self.gray_scale_loss = GrayscaleLoss().cuda()
+        self.jpeg_simulate = [
+            [DiffJPEG(50, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(55, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(60, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(65, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(70, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(75, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(80, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(85, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(90, height=self.width_height, width=self.width_height).cuda(), ]
+            , [DiffJPEG(95, height=self.width_height, width=self.width_height).cuda(), ]
+        ]
+
+        self.bce_loss = nn.BCELoss().cuda()
+        self.bce_with_logit_loss = nn.BCEWithLogitsLoss().cuda()
+        self.l1_loss = nn.SmoothL1Loss(beta=0.5).cuda()  # reduction="sum"
+        self.l2_loss = nn.MSELoss().cuda()  # reduction="sum"
+        self.perceptual_loss = PerceptualLoss().cuda()
+        self.style_loss = StyleLoss().cuda()
+        self.Quantization = diff_round
+        # self.Quantization = Quantization().cuda()
+        # self.Reconstruction_forw = ReconstructionLoss(losstype=self.train_opt['pixel_criterion_forw']).cuda()
+        # self.Reconstruction_back = ReconstructionLoss(losstype=self.train_opt['pixel_criterion_back']).cuda()
+        # self.criterion_adv = CWLoss().cuda()  # loss for fooling target model
+        self.CE_loss = nn.CrossEntropyLoss().cuda()
+        self.width_height = opt['datasets']['train']['GT_size']
+        self.init_gaussian = None
+        # self.adversarial_loss = AdversarialLoss(type="nsgan").cuda()
+
+        self.real_H, self.real_H_path, self.previous_images, self.previous_previous_images = None, None, None, None
+        self.previous_protected = None
+        self.previous_canny = None
+
         self.optimizer_G = None
         self.optimizer_localizer = None
         self.optimizer_discriminator_mask = None
@@ -22,73 +179,467 @@ class BaseModel():
         self.netG = None
         self.localizer = None
         self.discriminator = None
+        self.discriminator_mask = None
+        self.KD_JPEG = None
         self.global_step = 0
         self.updated_step = 0
-        ####################################################################################################
-        # todo: constants
-        ####################################################################################################
-        self.width_height = opt['datasets']['train']['GT_size']
-        self.kernel_RAW_k0 = torch.tensor([[[1, 0], [0, 0]],[[0, 1], [1, 0]],[[0, 0], [0, 1]]],device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k1 = torch.tensor([[[0, 0], [1, 0]],[[1, 0], [0, 1]],[[0, 1], [0, 0]]],device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k2 = torch.tensor([[[0, 0], [0, 1]],[[0, 1], [1, 0]],[[1, 0], [0, 0]]],device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k3 = torch.tensor([[[0, 1], [0, 0]],[[0, 1], [1, 0]],[[0, 0], [1, 0]]],device="cuda",
-                                          requires_grad=False)
-        expand_times = int(self.width_height//2)
-        self.kernel_RAW_k0 = self.kernel_RAW_k0.repeat(1, 1, expand_times,expand_times)
-        self.kernel_RAW_k1 = self.kernel_RAW_k1.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k2 = self.kernel_RAW_k2.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, 1, expand_times, expand_times)
-
-
-
-        self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
 
     ####################################################################################################
     # todo: using which ISP network?
     ####################################################################################################
-    def using_invISP(self):
-        return self.global_step % 4 == 0
-    def using_cycleISP(self):
-        return self.global_step % 4 == 1
-    def using_my_own_pipeline(self):
-        return self.global_step % 4 == 2
+    # def using_invISP(self):
+    #     return self.global_step % 4 == 0
+    # def using_cycleISP(self):
+    #     return self.global_step % 4 == 1
+    # def using_my_own_pipeline(self):
+    #     return self.global_step % 4 == 2
 
     ####################################################################################################
     # todo: using which tampering attacks?
     ####################################################################################################
-    def using_simulated_inpainting(self):
-        return self.global_step % 9 in [1,5,7]
-    def using_splicing(self):
-        return self.global_step % 9 in [0,4,6,9]
-    def using_copy_move(self):
-        return self.global_step % 9 in [2,3,8]
+    # def using_simulated_inpainting(self):
+    #     return self.global_step % 9 in [1,5,7]
+    # def using_splicing(self):
+    #     return self.global_step % 9 in [0,4,6,9]
+    # def using_copy_move(self):
+    #     return self.global_step % 9 in [2,3,8]
 
     ####################################################################################################
     # todo: using which image processing attacks?
     ####################################################################################################
     def using_weak_jpeg_plus_blurring_etc(self):
         return self.global_step % 5 in {0, 1, 2}
-    def using_gaussian_blur(self):
-        return self.global_step % 5 == 1
-    def using_median_blur(self):
-        return self.global_step % 5 == 2
-    def using_resizing(self):
-        return self.global_step % 5 == 0
-    def using_jpeg_simulation_only(self):
-        return False #self.global_step % 5 == 4
-    def using_gaussian_noise(self):
-        return self.global_step % 5 == 4
+
+    def begin_using_momentum(self):
+        return False #self.global_step>=0
+    # def using_gaussian_blur(self):
+    #     return self.global_step % 5 == 1
+    # def using_median_blur(self):
+    #     return self.global_step % 5 == 2
+    # def using_resizing(self):
+    #     return self.global_step % 5 == 0
+    # def using_jpeg_simulation_only(self):
+    #     return False #self.global_step % 5 == 4
+    # def using_gaussian_noise(self):
+    #     return self.global_step % 5 == 4
 
     ####################################################################################################
     # todo: settings for beginning training
     ####################################################################################################
-    def begin_using_momentum(self):
-        return False #self.global_step>=0
+    def data_augmentation_on_rendered_rgb(self, modified_input, index=None):
+        if index is None:
+            index = self.global_step % 4
+
+        if index % 4 == 0:
+            ## careful!
+            modified_adjusted = F.adjust_hue(modified_input, hue_factor=-0.1 + 0.2 * np.random.rand())  # 0.5 ave
+        elif index % 4 == 1:
+            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
+        # elif self.global_step%5==2:
+        ## not applicable
+        # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
+        elif index % 4 == 2:
+            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=0.5 + 1.5 * np.random.rand())
+        else:
+            modified_adjusted = F.adjust_brightness(modified_input,
+                                                    brightness_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
+        modified_adjusted = self.clamp_with_grad(modified_adjusted)
+
+        return modified_adjusted
+
+    def gamma_correction(self, tensor, avg=4095, digit=2.2):
+    ## gamma correction
+    #             norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
+    #             input_raw_img = np.power(input_raw_img, 1 / 2.2)
+        norm = math.pow(avg, 1 / digit)
+        tensor = torch.pow(tensor*avg, 1/digit)
+        tensor = tensor / norm
+
+        return tensor
+
+    @torch.no_grad()
+    def _momentum_update_key_encoder(self, momentum=0.9):
+        ####################################################################################################
+        # todo:  Momentum update of the key encoder
+        # todo: param_k: momentum
+        ####################################################################################################
+
+        for param_q, param_k in zip(self.discriminator_mask.parameters(), self.discriminator.parameters()):
+            param_k.data = param_k.data * momentum + param_q.data * (1. - momentum)
+
+    def visualize_raw(self, raw_to_raw_tensor, bayer_pattern, white_balance=None, eval=False):
+        batch_size, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[2]
+        # 两个相机都是RGGB
+        # im = np.expand_dims(raw, axis=2)
+        # if self.kernel_RAW_k0.ndim!=4:
+        #     self.kernel_RAW_k0 = self.kernel_RAW_k0.unsqueeze(0).repeat(batch_size,1,1,1)
+        #     self.kernel_RAW_k1 = self.kernel_RAW_k1.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        #     self.kernel_RAW_k2 = self.kernel_RAW_k2.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        #     self.kernel_RAW_k3 = self.kernel_RAW_k3.unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        #     print(f"visualize_raw is inited. Current shape {self.kernel_RAW_k0.shape}")
+        out_tensor = None
+        for idx in range(batch_size):
+
+            used_kernel = getattr(self, f"kernel_RAW_k{bayer_pattern[idx]}")
+            v_im = raw_to_raw_tensor[idx:idx+1].repeat(1,3,1,1) * used_kernel
+
+            if white_balance is not None:
+                # v_im (1,3,512,512) white_balance (1,3)
+                # print(white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3).shape)
+                # print(v_im.shape)
+                v_im = v_im * white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3)
+
+            out_tensor = v_im if out_tensor is None else torch.cat((out_tensor, v_im), dim=0)
+
+        return out_tensor.float() #.half() if not eval else out_tensor
+
+    def pack_raw(self, raw_to_raw_tensor):
+        # 两个相机都是RGGB
+        batch_size, num_channels, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[1], raw_to_raw_tensor.shape[2]
+
+        H, W = raw_to_raw_tensor.shape[2], raw_to_raw_tensor.shape[3]
+        R = raw_to_raw_tensor[:,:, 0:H:2, 0:W:2]
+        Gr = raw_to_raw_tensor[:,:, 0:H:2, 1:W:2]
+        Gb = raw_to_raw_tensor[:,:, 1:H:2, 0:W:2]
+        B = raw_to_raw_tensor[:,:, 1:H:2, 1:W:2]
+        G_avg = (Gr + Gb) / 2
+        out = torch.cat((R, G_avg, B), dim=1)
+        print(out.shape)
+        out = Functional.interpolate(
+            out,
+            size=[height_width, height_width],
+            mode='bilinear')
+        return out
+
+    def cropping_mask_generation(self, forward_image, locs=None, min_rate=0.6, max_rate=1.0, logs=None):
+        ####################################################################################################
+        # todo: cropping
+        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
+        ####################################################################################################
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        # masks_GT = torch.ones_like(self.canny_image)
+
+        self.height_ratio = min_rate + (max_rate - min_rate) * np.random.rand()
+        self.width_ratio = min_rate + (max_rate - min_rate) * np.random.rand()
+
+        self.height_ratio = min(self.height_ratio, self.width_ratio + 0.2)
+        self.width_ratio = min(self.width_ratio, self.height_ratio + 0.2)
+
+        if locs==None:
+            h_start, h_end, w_start, w_end = self.crop.get_random_rectangle_inside(forward_image.shape,
+                                                                                   self.height_ratio,
+                                                                                   self.width_ratio)
+        else:
+            h_start, h_end, w_start, w_end = locs
+        # masks_GT[:, :, h_start: h_end, w_start: w_end] = 0
+        # masks = masks_GT.repeat(1, 3, 1, 1)
+
+        cropped = forward_image[:, :, h_start: h_end, w_start: w_end]
+
+        scaled_cropped = Functional.interpolate(
+            cropped,
+            size=[forward_image.shape[2], forward_image.shape[3]],
+            mode='bilinear')
+        scaled_cropped = self.clamp_with_grad(scaled_cropped)
+
+        return (h_start, h_end, w_start, w_end), cropped, scaled_cropped #, masks, masks_GT
+
+    def tamper_based_augmentation(self, modified_input, modified_canny, masks, masks_GT, logs):
+        # tamper-based data augmentation
+        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
+        for imgs in range(batch_size):
+            if imgs % 3 != 2:
+                modified_input[imgs, :, :, :] = (
+                            modified_input[imgs, :, :, :] * (1 - masks[imgs, :, :, :]) + self.previous_images[imgs, :,
+                                                                                         :, :] * masks[imgs, :, :,
+                                                                                                 :]).clone().detach()
+                modified_canny[imgs, :, :, :] = (
+                            modified_canny[imgs, :, :, :] * (1 - masks_GT[imgs, :, :, :]) + self.previous_canny[imgs, :,
+                                                                                            :, :] * masks_GT[imgs, :, :,
+                                                                                                    :]).clone().detach()
+
+        return modified_input, modified_canny
+
+    def mask_generation(self, modified_input, percent_range, logs):
+        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
+        masks_GT = torch.zeros(batch_size, 1, self.real_H.shape[2], self.real_H.shape[3]).cuda()
+        ## THE RECOVERY STAGE WILL ONLY WORK UNDER LARGE TAMPERING
+        ## TO LOCALIZE SMALL TAMPERING, WE ONLY UPDATE LOCALIZER NETWORK
+
+        for imgs in range(batch_size):
+            if imgs % 3 == 2:
+                ## copy-move will not be too large
+                percent_range = (0.00, 0.15)
+            masks_origin, _ = self.generate_stroke_mask(
+                [self.real_H.shape[2], self.real_H.shape[3]], percent_range=percent_range)
+            masks_GT[imgs, :, :, :] = masks_origin.cuda()
+        masks = masks_GT.repeat(1, 3, 1, 1)
+
+        # masks is just 3-channel-version masks_GT
+        return masks, masks_GT
+
+    def tampering(self, forward_image, masks, masks_GT, modified_input, percent_range, idx_clip, num_per_clip, logs, index=None):
+        batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
+        ####### Tamper ###############
+        # attacked_forward = torch.zeros_like(modified_input)
+        # for img_idx in range(batch_size):
+        if index is None:
+            index = self.global_step % 9
+
+        if index in [0,4,6,9]: #self.using_splicing():
+            ####################################################################################################
+            # todo: splicing
+            # todo: invISP
+            ####################################################################################################
+            attacked_forward = modified_input * (1 - masks) + self.previous_protected[
+                                                              idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks
+            # attack_name = "splicing"
+
+        elif index in [2,3,8]: #self.using_copy_move():
+            ####################################################################################################
+            # todo: copy-move
+            # todo: invISP
+            ####################################################################################################
+            lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
+            ###### IMPORTANT NOTE: for ideal copy-mopv, here should be modified_input. If you want to ease the condition, can be changed to forward_iamge
+            tamper = modified_input.clone().detach()
+            x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
+            while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
+                x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
+                y_shift = int((modified_input.shape[3]) * (np.random.rand() - 0.5))
+
+                ### two times padding ###
+                mask_buff = torch.zeros((masks.shape[0], masks.shape[1],
+                                            masks.shape[2] + abs(2 * x_shift),
+                                            masks.shape[3] + abs(2 * y_shift))).cuda()
+
+                mask_buff[:, :,
+                abs(x_shift) + x_shift:abs(x_shift) + x_shift + modified_input.shape[2],
+                abs(y_shift) + y_shift:abs(y_shift) + y_shift + modified_input.shape[3]] = masks
+
+                mask_buff = mask_buff[:, :,
+                                    abs(x_shift):abs(x_shift) + modified_input.shape[2],
+                                    abs(y_shift):abs(y_shift) + modified_input.shape[3]]
+
+                valid = torch.mean(mask_buff)
+                retried += 1
+                if valid>=max_valid:
+                    max_valid = valid
+                    self.mask_shifted = mask_buff
+                    self.x_shift, self.y_shift = x_shift, y_shift
+
+            self.tamper_shifted = torch.zeros((modified_input.shape[0], modified_input.shape[1],
+                                               modified_input.shape[2] + abs(2 * self.x_shift),
+                                               modified_input.shape[3] + abs(2 * self.y_shift))).cuda()
+            self.tamper_shifted[:, :, abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + modified_input.shape[2],
+            abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + modified_input.shape[3]] = tamper
 
 
+            self.tamper_shifted = self.tamper_shifted[:, :,
+                             abs(self.x_shift): abs(self.x_shift) + modified_input.shape[2],
+                             abs(self.y_shift): abs(self.y_shift) + modified_input.shape[3]]
+
+            masks = self.mask_shifted.clone().detach()
+            masks = self.clamp_with_grad(masks)
+            valid = torch.mean(masks)
+
+            masks_GT = masks[:, :1, :, :]
+            attacked_forward = modified_input * (1 - masks) + self.tamper_shifted.clone().detach() * masks
+            # del self.tamper_shifted
+            # del self.mask_shifted
+            # torch.cuda.empty_cache()
+
+        elif index in [1,5,7]: #self.using_simulated_inpainting:
+            ####################################################################################################
+            # todo: simulated inpainting
+            # todo: it is important, without protection, though the tampering can be close, it should also be detected.
+            ####################################################################################################
+            # attacked_forward = modified_input * (1 - masks) + forward_image * masks
+            attacked_forward = modified_input * (1 - masks) + self.previous_images[
+                                                              idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks
+
+        attacked_forward = self.clamp_with_grad(attacked_forward)
+        # attacked_forward = self.Quantization(attacked_forward)
+
+        return attacked_forward, masks, masks_GT
+
+    def benign_attacks(self, attacked_forward, quality_idx, logs, index=None):
+        batch_size, height_width = attacked_forward.shape[0], attacked_forward.shape[2]
+        attacked_real_jpeg = torch.rand_like(attacked_forward).cuda()
+        if index is None:
+            index = self.global_step % 5
+
+        if index==0:
+            blurring_layer = self.resize
+        elif index==1:
+            blurring_layer = self.gaussian_blur
+        elif index==2:
+            blurring_layer = self.median_blur
+        elif index==4:
+            blurring_layer = self.gaussian
+        else:
+            blurring_layer = self.identity
+
+        quality = int(quality_idx * 5)
+
+        jpeg_layer_after_blurring = self.jpeg_simulate[quality_idx - 10][0] if quality < 100 else self.identity
+        attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_layer_after_blurring(blurring_layer(attacked_forward)))
+        # if self.using_jpeg_simulation_only():
+        #     attacked_image = attacked_real_jpeg_simulate
+        # else:  # if self.global_step%5==3:
+        for idx_atkimg in range(batch_size):
+            grid = attacked_forward[idx_atkimg]
+            realworld_attack = self.real_world_attacking_on_ndarray(grid, quality, index)
+            attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
+
+        attacked_real_jpeg = attacked_real_jpeg.clone().detach()
+        attacked_image = attacked_real_jpeg_simulate + (
+                    attacked_real_jpeg - attacked_real_jpeg_simulate).clone().detach()
+
+        # error_scratch = attacked_real_jpeg - attacked_forward
+        # l_scratch = self.l1_loss(error_scratch, torch.zeros_like(error_scratch).cuda())
+        # logs.append(('SCRATCH', l_scratch.item()))
+        return attacked_image
+
+    def benign_attacks_without_simulation(self, forward_image, quality_idx, logs, index=None):
+        batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
+        attacked_real_jpeg = torch.rand_like(forward_image).cuda()
+
+        quality = int(quality_idx * 5)
+
+        for idx_atkimg in range(batch_size):
+            grid = forward_image[idx_atkimg]
+            realworld_attack = self.real_world_attacking_on_ndarray(grid, quality, index)
+            attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
+
+        return attacked_real_jpeg
+
+    def real_world_attacking_on_ndarray(self, grid, qf_after_blur, index=None):
+        # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        if index is None:
+            index = self.global_step % 5
+
+        if index == 0:
+            grid = self.resize(grid.unsqueeze(0))[0]
+        ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
+        if index == 1:
+            kernel_list = [3, 5, 7]
+            kernel = random.choice(kernel_list)
+            realworld_attack = cv2.GaussianBlur(ndarr, (kernel, kernel), 0)
+        elif index == 2:
+            kernel_list = [3, 5, 7]
+            kernel = random.choice(kernel_list)
+            realworld_attack = cv2.medianBlur(ndarr, kernel)
+        elif index == 4:
+            mean, sigma = 0, 0.1
+            gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
+            # 给图片添加高斯噪声
+            realworld_attack = ndarr + gauss
+        else:
+            realworld_attack = ndarr
+
+        _, realworld_attack = cv2.imencode('.jpeg', realworld_attack,
+                                           (int(cv2.IMWRITE_JPEG_QUALITY), qf_after_blur))
+        realworld_attack = cv2.imdecode(realworld_attack, cv2.IMREAD_UNCHANGED)
+        # realworld_attack = data.util.channel_convert(realworld_attack.shape[2], 'RGB', [realworld_attack])[0]
+        # realworld_attack = cv2.resize(copy.deepcopy(realworld_attack), (height_width, height_width),
+        #                               interpolation=cv2.INTER_LINEAR)
+        realworld_attack = realworld_attack.astype(np.float32) / 255.
+        realworld_attack = torch.from_numpy(
+            np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).contiguous().float()
+        realworld_attack = realworld_attack.unsqueeze(0).cuda()
+        return realworld_attack
+
+
+    def is_image_file(self, filename):
+        return any(filename.endswith(extension) for extension in self.IMG_EXTENSIONS)
+
+    def get_paths_from_images(self, path):
+        '''get image path list from image folder'''
+        assert os.path.isdir(path), '{:s} is not a valid directory'.format(path)
+        images = []
+        for dirpath, _, fnames in sorted(os.walk(path)):
+            for fname in sorted(fnames):
+                if self.is_image_file(fname):
+                    # img_path = os.path.join(dirpath, fname)
+                    images.append((path, dirpath[len(path) + 1:], fname))
+        assert images, '{:s} has no valid image file'.format(path)
+        return images
+
+    def print_individual_image(self, cropped_GT, name):
+        for image_no in range(cropped_GT.shape[0]):
+            camera_ready = cropped_GT[image_no].unsqueeze(0)
+            torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                         name, nrow=1, padding=0, normalize=False)
+
+    def load_image(self, path, readimg=False, Height=608, Width=608, grayscale=False):
+        import data.util as util
+        GT_path = path
+
+        img_GT = util.read_img(GT_path)
+
+        # change color space if necessary
+        # img_GT = util.channel_convert(img_GT.shape[2], 'RGB', [img_GT])[0]
+        if grayscale:
+            img_GT = rgb2gray(img_GT)
+
+        img_GT = cv2.resize(copy.deepcopy(img_GT), (Width, Height), interpolation=cv2.INTER_LINEAR)
+        return img_GT
+
+    def img_random_crop(self, img_GT, Height=608, Width=608, grayscale=False):
+        # # randomly crop
+        # H, W = img_GT.shape[0], img_GT.shape[1]
+        # rnd_h = random.randint(0, max(0, H - Height))
+        # rnd_w = random.randint(0, max(0, W - Width))
+        #
+        # img_GT = img_GT[rnd_h:rnd_h + Height, rnd_w:rnd_w + Width, :]
+        #
+        # orig_height, orig_width, _ = img_GT.shape
+        # H, W = img_GT.shape[0], img_GT.shape[1]
+
+        # BGR to RGB, HWC to CHW, numpy to tensor
+        if not grayscale:
+            img_GT = img_GT[:, :, [2, 1, 0]]
+            img_GT = torch.from_numpy(
+                np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).contiguous().float()
+        else:
+            img_GT = self.image_to_tensor(img_GT)
+
+        return img_GT.cuda()
+
+    def tensor_to_image(self, tensor):
+
+        tensor = tensor * 255.0
+        image = tensor.permute(1, 2, 0).detach().cpu().numpy()
+        # image = tensor.permute(0,2,3,1).detach().cpu().numpy()
+        return np.clip(image, 0, 255).astype(np.uint8)
+
+    def tensor_to_image_batch(self, tensor):
+
+        tensor = tensor * 255.0
+        image = tensor.permute(0, 2, 3, 1).detach().cpu().numpy()
+        # image = tensor.permute(0,2,3,1).detach().cpu().numpy()
+        return np.clip(image, 0, 255).astype(np.uint8)
+
+    def postprocess(self, img):
+        # [0, 1] => [0, 255]
+        img = img * 255.0
+        img = img.permute(0, 2, 3, 1)
+        return img.int()
+
+    def image_to_tensor(self, img):
+        img = Image.fromarray(img)
+        img_t = F.to_tensor(np.asarray(img)).float()
+        return img_t
+
+
+
+    def clamp_with_grad(self, tensor):
+        tensor_clamp = torch.clamp(tensor, 0, 1)
+        return tensor + (tensor_clamp - tensor).clone().detach()
+
+    def gaussian_batch(self, dims):
+        return self.clamp_with_grad(torch.randn(tuple(dims)).cuda())
 
     def feed_data(self, data):
         pass
@@ -240,3 +791,141 @@ class BaseModel():
         #     self.optimizers[i].load_state_dict(o)
         # for i, s in enumerate(resume_schedulers):
         #     self.schedulers[i].load_state_dict(s)
+
+    def generate_stroke_mask(self, im_size, parts=5, parts_square=2, maxVertex=6, maxLength=64, maxBrushWidth=32,
+                             maxAngle=360, percent_range=(0.0, 0.25)):
+        minVertex, maxVertex = 1, 8
+        minLength, maxLength = int(im_size[0] * 0.02), int(im_size[0] * 0.2)
+        minBrushWidth, maxBrushWidth = int(im_size[0] * 0.02), int(im_size[0] * 0.2)
+        mask = np.zeros((im_size[0], im_size[1]), dtype=np.float32)
+        lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
+
+        while True:
+            mask = mask + self.np_free_form_mask(mask, minVertex, maxVertex, minLength, maxLength, minBrushWidth,
+                                                 maxBrushWidth,
+                                                 maxAngle, im_size[0],
+                                                 im_size[1])
+            mask = np.minimum(mask, 1.0)
+            percent = np.mean(mask)
+            if percent >= lower_bound_percent:
+                break
+
+        mask = np.maximum(mask, 0.0)
+        mask_tensor = torch.from_numpy(mask).contiguous()
+        # mask = Image.fromarray(mask)
+        # mask_tensor = F.to_tensor(mask).float()
+
+        return mask_tensor, np.mean(mask)
+
+    def np_free_form_mask(self, mask_re, minVertex, maxVertex, minLength, maxLength, minBrushWidth, maxBrushWidth,
+                          maxAngle, h, w):
+        mask = np.zeros_like(mask_re)
+        numVertex = np.random.randint(minVertex, maxVertex + 1)
+        startY = np.random.randint(h)
+        startX = np.random.randint(w)
+        brushWidth = 0
+        use_rect = False  # np.random.rand()<0.5
+        for i in range(numVertex):
+            angle = np.random.randint(maxAngle + 1)
+            angle = angle / 360.0 * 2 * np.pi
+            if i % 2 == 0:
+                angle = 2 * np.pi - angle
+            length = np.random.randint(minLength, maxLength + 1)
+            brushWidth = np.random.randint(minBrushWidth, maxBrushWidth + 1) // 2 * 2
+            nextY = startY + length * np.cos(angle)
+            nextX = startX + length * np.sin(angle)
+            nextY = np.maximum(np.minimum(nextY, h - 1), 0).astype(np.int)
+            nextX = np.maximum(np.minimum(nextX, w - 1), 0).astype(np.int)
+            cv2.line(mask, (startY, startX), (nextY, nextX), 1, brushWidth)
+            ## drawing: https://docs.opencv.org/4.x/dc/da5/tutorial_py_drawing_functions.html
+            if use_rect:
+                cv2.rectangle(mask, (startY, startX), (startY + brushWidth, startX + brushWidth), 2)
+            else:
+                cv2.circle(mask, (startY, startX), brushWidth // 2, 2)
+            startY, startX = nextY, nextX
+
+        if use_rect:
+            cv2.rectangle(mask, (startY, startX), (startY + brushWidth, startX + brushWidth), 2)
+        else:
+            cv2.circle(mask, (startY, startX), brushWidth // 2, 2)
+        return mask
+
+    def get_random_rectangle_inside(self, image_width, image_height, height_ratio_range=(0.1, 0.2),
+                                    width_ratio_range=(0.1, 0.2)):
+
+        r_float_height, r_float_width = \
+            self.random_float(height_ratio_range[0], height_ratio_range[1]), self.random_float(width_ratio_range[0],
+                                                                                               width_ratio_range[1])
+        remaining_height = int(np.rint(r_float_height * image_height))
+        remaining_width = int(np.rint(r_float_width * image_width))
+
+        if remaining_height == image_height:
+            height_start = 0
+        else:
+            height_start = np.random.randint(0, image_height - remaining_height)
+
+        if remaining_width == image_width:
+            width_start = 0
+        else:
+            width_start = np.random.randint(0, image_width - remaining_width)
+
+        return height_start, height_start + remaining_height, width_start, width_start + remaining_width, r_float_height * r_float_width
+
+    def random_float(self, min, max):
+        return np.random.rand() * (max - min) + min
+
+    def F1score(self, predict_image, gt_image, thresh=0.2):
+        # gt_image = cv2.imread(src_image, 0)
+        # predict_image = cv2.imread(dst_image, 0)
+        # ret, gt_image = cv2.threshold(gt_image[0], int(255 * thresh), 255, cv2.THRESH_BINARY)
+        # ret, predicted_binary = cv2.threshold(predict_image[0], int(255*thresh), 255, cv2.THRESH_BINARY)
+        predicted_binary = self.tensor_to_image(predict_image[0])
+        ret, predicted_binary = cv2.threshold(predicted_binary, int(255 * thresh), 255, cv2.THRESH_BINARY)
+        gt_image = self.tensor_to_image(gt_image[0, :1, :, :])
+        ret, gt_image = cv2.threshold(gt_image, int(255 * thresh), 255, cv2.THRESH_BINARY)
+
+        # print(predicted_binary.shape)
+
+        [TN, TP, FN, FP] = getLabels(predicted_binary, gt_image)
+        # print("{} {} {} {}".format(TN,TP,FN,FP))
+        F1 = getF1(TP, FP, FN)
+        # cv2.imwrite(save_path, predicted_binary)
+        return F1, TP
+
+def getLabels(img, gt_img):
+    height = img.shape[0]
+    width = img.shape[1]
+    # TN, TP, FN, FP
+    result = [0, 0, 0, 0]
+    for row in range(height):
+        for column in range(width):
+            pixel = img[row, column]
+            gt_pixel = gt_img[row, column]
+            if pixel == gt_pixel:
+                result[(pixel // 255)] += 1
+            else:
+                index = 2 if pixel == 0 else 3
+                result[index] += 1
+    return result
+
+def getACC(TN, TP, FN, FP):
+    return (TP + TN) / (TP + FP + FN + TN)
+
+def getFPR(TN, FP):
+    return FP / (FP + TN)
+
+def getTPR(TP, FN):
+    return TP / (TP + FN)
+
+def getTNR(FP, TN):
+    return TN / (FP + TN)
+
+def getFNR(FN, TP):
+    return FN / (TP + FN)
+
+def getF1(TP, FP, FN):
+    return (2 * TP) / (2 * TP + FP + FN)
+
+def getBER(TN, TP, FN, FP):
+    return 1 / 2 * (getFPR(TN, FP) + FN / (FN + TP))
+
