@@ -55,6 +55,7 @@ from models.networks import UNetDiscriminator
 from loss import PerceptualLoss, StyleLoss
 from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet
+from lama_models.my_own_elastic import my_own_elastic
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 from loss import GrayscaleLoss
@@ -75,7 +76,9 @@ class Modified_invISP(BaseModel):
 
         self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
         print(f"network list:{self.network_list}")
-
+        # self.save_network_list = self.network_list
+        self.save_network_list = ["KD_JPEG"]
+        self.training_network_list = ["KD_JPEG"]
 
         ####################################################################################################
         # todo: Load models according to the specific mode
@@ -138,9 +141,11 @@ class Modified_invISP(BaseModel):
             self.localizer = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
             self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
                                                 find_unused_parameters=True)
-
+            # if 'my_own_elastic' in self.task_name:
+            #     self.discriminator_mask = my_own_elastic(nin=3,nout=1, depth=4, num_blocks=4).cuda()
+            # else:
             self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
-                                             style_control=False, use_dwt=False, use_norm_conv=True).cuda()
+                                                 style_control=False, use_dwt=False, use_norm_conv=True).cuda()
                 # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
             self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
                                                               device_ids=[torch.cuda.current_device()],
@@ -163,7 +168,11 @@ class Modified_invISP(BaseModel):
             # todo: RAW2RAW network will be loaded
             # todo:
             ####################################################################################################
-            self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
+            if 'my_own_elastic' in self.task_name:
+                print("using my_own_elastic as KD_JPEG.")
+                self.KD_JPEG = my_own_elastic(nin=1,nout=1, depth=4, num_blocks=4).cuda()
+            else:
+                self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
                 # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
                 # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
             #InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
@@ -559,10 +568,10 @@ class Modified_invISP(BaseModel):
                 ### KD_JPEG: RAW2RAW, WHICH IS A MODIFIED HWMNET WITH STYLE CONDITION
                 ### discriminator_mask: HWMNET WITH SUBTASK
                 ### discriminator: MOVING AVERAGE OF discriminator_mask
-                self.KD_JPEG.train()
+                self.KD_JPEG.train() if "KD_JPEG" in self.training_network_list else self.KD_JPEG.eval()
                 self.generator.eval()
                 self.netG.eval()
-                self.discriminator_mask.train()
+                self.discriminator_mask.train() if "discriminator_mask" in self.training_network_list else self.discriminator_mask.eval()
                 self.discriminator.eval()
                 self.qf_predict_network.eval()
                 # self.localizer.train()
@@ -968,7 +977,7 @@ class Modified_invISP(BaseModel):
         if self.global_step % 1000 == 999 or self.global_step == 9:
             if self.rank == 0:
                 print('Saving models and training states.')
-                self.save(self.global_step, folder='model', network_list=self.network_list)
+                self.save(self.global_step, folder='model', network_list=self.save_network_list)
         if self.real_H is not None:
             ### update the tampering source
             if self.previous_images is not None:
@@ -1049,10 +1058,12 @@ class Modified_invISP(BaseModel):
 
         refined_resfcn_bn = torch.where(refined_resfcn > 0.5, 1.0, 0.0)
 
-        F1, TP = self.F1score(pred_resfcn_bn, masks_GT, thresh=0.5)
-        F1_1, TP_1 = self.F1score(refined_resfcn_bn, masks_GT, thresh=0.5)
+        F1, RECALL = self.F1score(pred_resfcn_bn, masks_GT, thresh=0.5)
+        F1_1, RECALL_1 = self.F1score(refined_resfcn_bn, masks_GT, thresh=0.5)
         logs['F1'] = F1
         logs['F1_1'] = F1_1
+        logs['RECALL'] = RECALL
+        logs['RECALL_1'] = RECALL_1
 
         if save_image:
             name = f"{self.out_space_storage}/test_predicted_masks/{self.task_name}"
@@ -1065,7 +1076,7 @@ class Modified_invISP(BaseModel):
 
                 camera_ready = pred_resfcn_bn[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_{filename_append}pred_ceb_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_{filename_append}pred_cebn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = refined_resfcn[image_no].unsqueeze(0)
@@ -1093,7 +1104,7 @@ class Modified_invISP(BaseModel):
         return logs, (pred_resfcn), False
 
     @torch.no_grad()
-    def get_protected_RAW_and_corresponding_images(self, save_image=True, step=None, do_subsequent_prediction=True):
+    def get_protected_RAW_and_corresponding_images(self, save_image=False, step=None, do_subsequent_prediction=True):
         ####################################################################################################
         # todo: inference single image
         # todo: what is tamper_source? used for simulated inpainting, only activated if self.global_step%3==2
@@ -1144,7 +1155,7 @@ class Modified_invISP(BaseModel):
         if self.use_gamma_correction:
             original_0 = self.gamma_correction(original_0)
         original_0 = self.clamp_with_grad(original_0)
-        RAW_PSNR = self.psnr(self.postprocess(original_0), self.postprocess(gt_rgb)).item()
+        RAW_PSNR = self.psnr(self.postprocess(original_0), self.postprocess(modified_input_0)).item()
         logs['RGB_PSNR_0'] = RAW_PSNR
 
         modified_input_1 = self.qf_predict_network(modified_raw)
@@ -1156,7 +1167,7 @@ class Modified_invISP(BaseModel):
         if self.use_gamma_correction:
             original_1 = self.gamma_correction(original_1)
         original_1 = self.clamp_with_grad(original_1)
-        RAW_PSNR = self.psnr(self.postprocess(original_1), self.postprocess(gt_rgb)).item()
+        RAW_PSNR = self.psnr(self.postprocess(original_1), self.postprocess(modified_input_1)).item()
         logs['RGB_PSNR_1'] = RAW_PSNR
 
         modified_input_2 = self.netG(modified_raw)
@@ -1168,93 +1179,148 @@ class Modified_invISP(BaseModel):
         if self.use_gamma_correction:
             original_2 = self.gamma_correction(original_2)
         original_2 = self.clamp_with_grad(original_2)
-        RAW_PSNR = self.psnr(self.postprocess(original_2), self.postprocess(gt_rgb)).item()
+        RAW_PSNR = self.psnr(self.postprocess(original_2), self.postprocess(modified_input_2)).item()
         logs['RGB_PSNR_2'] = RAW_PSNR
 
-        if save_image:
-            name = f"{self.out_space_storage}/test_protected_images/{self.task_name}"
-            # print('\nsaving sample ' + name)
-            for image_no in range(batch_size):
+
+        name = f"{self.out_space_storage}/test_protected_images/{self.task_name}"
+        # print('\nsaving sample ' + name)
+        for image_no in range(batch_size):
+            if save_image:
+                camera_ready = modified_raw[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_protect_raw.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = input_raw[image_no].unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_ori_raw.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = (10*torch.abs(input_raw[image_no]-modified_raw[image_no])).unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_diff_raw.png", nrow=1,
+                                             padding=0, normalize=False)
+
                 camera_ready = modified_input_0[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_0_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_0.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = original_0[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_0_ori_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_0_ori.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = (10 * torch.abs(modified_input_0[image_no] - original_0[image_no])).unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_0_diff.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = modified_input_1[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_1_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_1.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = original_1[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_1_ori_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_1_ori.png", nrow=1,
                                              padding=0, normalize=False)
 
+                camera_ready = (10 * torch.abs(modified_input_1[image_no] - original_1[image_no])).unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_1_diff.png", nrow=1,
+                                             padding=0, normalize=False)
 
                 camera_ready = modified_input_2[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_2_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_2.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = original_2[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_2_ori_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_2_ori.png", nrow=1,
+                                             padding=0, normalize=False)
+
+                camera_ready = (10 * torch.abs(modified_input_2[image_no] - original_2[image_no])).unsqueeze(0)
+                torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                             f"{name}/{str(step).zfill(5)}_2_diff.png", nrow=1,
                                              padding=0, normalize=False)
 
                 camera_ready = gt_rgb[image_no].unsqueeze(0)
                 torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_gt_{str(self.rank)}.png", nrow=1,
+                                             f"{name}/{str(step).zfill(5)}_gt.png", nrow=1,
                                              padding=0, normalize=False)
 
-                np.save(f"{name}/{str(step).zfill(5)}_gt_{str(self.rank)}", modified_raw.detach().cpu().numpy())
+                np.save(f"{name}/{str(step).zfill(5)}_gt", modified_raw.detach().cpu().numpy())
 
                 print("Saved:{}".format(f"{name}/{str(step).zfill(5)}"))
 
-                if do_subsequent_prediction:
-                    for idx_isp in range(3):
-                        file_name = f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
-                        folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
-                        mask_file_name = f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
-                        mask_folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
-                        # print(f"reading {folder_name+file_name}")
-                        img_GT = cv2.imread(folder_name+file_name, cv2.IMREAD_COLOR)
-                        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
-                        # print(f"reading {mask_folder_name + file_name}")
-                        mask_GT = cv2.imread(mask_folder_name+mask_file_name, cv2.IMREAD_GRAYSCALE)
+            if do_subsequent_prediction:
+                logs_pred_accu = {}
+                for idx_isp in range(3):
+                    file_name = f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
+                    folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
+                    mask_file_name = f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
+                    mask_folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
+                    # print(f"reading {folder_name+file_name}")
+                    img_GT = cv2.imread(folder_name+file_name, cv2.IMREAD_COLOR)
+                    # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+                    # print(f"reading {mask_folder_name + file_name}")
+                    mask_GT = cv2.imread(mask_folder_name+mask_file_name, cv2.IMREAD_GRAYSCALE)
 
-                        img_GT = img_GT.astype(np.float32) / 255.
-                        if img_GT.ndim == 2:
-                            img_GT = np.expand_dims(img_GT, axis=2)
-                        # some images have 4 channels
-                        if img_GT.shape[2] > 3:
-                            img_GT = img_GT[:, :, :3]
-                        mask_GT = mask_GT.astype(np.float32) / 255.
+                    img_GT = img_GT.astype(np.float32) / 255.
+                    if img_GT.ndim == 2:
+                        img_GT = np.expand_dims(img_GT, axis=2)
+                    # some images have 4 channels
+                    if img_GT.shape[2] > 3:
+                        img_GT = img_GT[:, :, :3]
+                    mask_GT = mask_GT.astype(np.float32) / 255.
 
-                        orig_height, orig_width, _ = img_GT.shape
-                        H, W, _ = img_GT.shape
+                    orig_height, orig_width, _ = img_GT.shape
+                    H, W, _ = img_GT.shape
 
-                        mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float().unsqueeze(0).unsqueeze(0).cuda()
+                    mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float().unsqueeze(0).unsqueeze(0).cuda()
 
-                        # BGR to RGB, HWC to CHW, numpy to tensor
-                        if img_GT.shape[2] == 3:
-                            img_GT = img_GT[:, :, [2, 1, 0]]
+                    # BGR to RGB, HWC to CHW, numpy to tensor
+                    if img_GT.shape[2] == 3:
+                        img_GT = img_GT[:, :, [2, 1, 0]]
 
-                        tamper_source = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float().unsqueeze(0).cuda()
+                    tamper_source = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float().unsqueeze(0).cuda()
 
-                        test_input = eval(f"modified_input_{idx_isp}")[image_no].unsqueeze(0)[image_no].unsqueeze(0)*(1-mask_GT)+tamper_source*mask_GT
+                    test_input = eval(f"modified_input_{idx_isp}")[image_no].unsqueeze(0)[image_no].unsqueeze(0)*(1-mask_GT)+tamper_source*mask_GT
 
+                    ### attacks generate them all
+                    attack_lists = [
+                        (None,None,None),(None,None,0),(None,None,1),
+                        (0, 20, None), (0, 20, 2), (0, 20, 1),
+                        (1, 20, None), (1, 20, 3), (1, 20, 0),
+                        (2, 20, None), (2, 20, 1), (2, 20, 2),
+                        (3, 10, None), (3, 10, 3), (3, 10, 0),
+                        (3, 14, None), (3, 14, 2), (3, 14, 1),
+                        (3, 18, None), (3, 18, 0), (3, 18, 3),
+                        (4, 20, None), (4, 20, 1), (4, 20, 2),
+                    ]
+                    begin_idx = 20
+                    for idx_attacks in range(begin_idx, begin_idx+1): # len(attack_lists)
+                        do_attack, quality_idx, do_augment = attack_lists[idx_attacks]
                         logs_pred, pred_resfcn, _ = self.get_predicted_mask(modified_input=test_input,
-                                                                            masks_GT=mask_GT, do_attack=1, quality_idx=20,
-                                                                            do_augment=None,
+                                                                            masks_GT=mask_GT, do_attack=do_attack,
+                                                                            quality_idx=quality_idx,
+                                                                            do_augment=do_augment,
                                                                             step=step,
-                                                                            filename_append=str(idx_isp))
+                                                                            filename_append=str(idx_isp),
+                                                                            save_image=save_image
+                                                                            )
+                        if len(logs_pred_accu)==0:
+                            logs_pred_accu.update(logs_pred)
+                        else:
+                            for key in logs_pred:
+                                logs_pred_accu[key] += logs_pred[key]
 
-                        logs.update(logs_pred)
+                for key in logs_pred_accu:
+                    logs_pred_accu[key] = logs_pred_accu[key]/3/1
+                logs.update(logs_pred_accu)
 
         return logs, (modified_raw, modified_input_0, modified_input_1, modified_input_2), True
 
@@ -1265,13 +1331,10 @@ class Modified_invISP(BaseModel):
     #     # todo: kept frozen are the networks: invISP, mantranet (+2 more)
     #     # todo: training: RAW2RAW network (which is denoted as KD-JPEG)
     #     ####################################################################################################
-    #
-    #
     #     self.generator.train()
     #     self.netG.train()
     #     self.discriminator_mask.train()
     #     self.localizer.train()
-    #
     #
     #     logs, debug_logs = {}, []
     #

@@ -197,12 +197,12 @@ class BaseModel():
     ####################################################################################################
     # todo: using which tampering attacks?
     ####################################################################################################
-    # def using_simulated_inpainting(self):
-    #     return self.global_step % 9 in [1,5,7]
-    # def using_splicing(self):
-    #     return self.global_step % 9 in [0,4,6,9]
-    # def using_copy_move(self):
-    #     return self.global_step % 9 in [2,3,8]
+    def using_simulated_inpainting(self):
+        return self.global_step % 9 in [1,5,7]
+    def using_splicing(self):
+        return self.global_step % 9 in [0,4,6,9]
+    def using_copy_move(self):
+        return self.global_step % 9 in [2,3,8]
 
     ####################################################################################################
     # todo: using which image processing attacks?
@@ -889,8 +889,9 @@ class BaseModel():
         [TN, TP, FN, FP] = getLabels(predicted_binary, gt_image)
         # print("{} {} {} {}".format(TN,TP,FN,FP))
         F1 = getF1(TP, FP, FN)
+        RECALL = getTPR(TP, FN)
         # cv2.imwrite(save_path, predicted_binary)
-        return F1, TP
+        return F1, RECALL
 
 def getLabels(img, gt_img):
     height = img.shape[0]

@@ -273,7 +273,7 @@ def main(args,opt):
         if 'PAMI' in which_model:
             variables_list = []
         elif 'ISP' in which_model and args.mode==0:
-            variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1',
+            variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1','RECALL','RECALL_1',
                               'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
         elif 'ISP' in which_model and args.mode==1:
             variables_list = ['ERROR', 'CE','CEL1','F1','F1_1']
