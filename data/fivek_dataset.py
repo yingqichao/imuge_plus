@@ -185,7 +185,12 @@ class FiveKDataset_total(Dataset):
         assert self.data_mode == 'RAW'
         raw = np.load(raw_path)
         input_raw_img = raw['raw']
-        input_raw_img, target_rgb_img = random_crop(self.patch_size, input_raw_img, target_rgb_img, not self.npz_uint16)
+        if self.stage != 'train':
+            input_raw_img, target_rgb_img = center_crop(self.patch_size, input_raw_img, target_rgb_img,
+                                                        not self.npz_uint16)
+        else:
+            input_raw_img, target_rgb_img = random_crop(self.patch_size, input_raw_img, target_rgb_img,
+                                                        not self.npz_uint16)
 
         white_level = metadata['white_level'][0]
         black_level = metadata['black_level']
@@ -407,7 +412,11 @@ class FiveKDataset_skip(Dataset):
         assert self.data_mode == 'RAW'
         raw = np.load(raw_path)
         input_raw_img = raw['raw']
-        input_raw_img, target_rgb_img = random_crop(self.patch_size, input_raw_img, target_rgb_img, not self.npz_uint16)
+        if self.stage != 'train':
+            input_raw_img, target_rgb_img = center_crop(self.patch_size, input_raw_img, target_rgb_img,
+                                                        not self.npz_uint16)
+        else:
+            input_raw_img, target_rgb_img = random_crop(self.patch_size, input_raw_img, target_rgb_img, not self.npz_uint16)
         norm_value = 4095 if camera_name == 'Canon_EOS_5D' else 16383
 
         target_rgb_img = self.norm_img(target_rgb_img, 255, self.rgb_scale)
@@ -651,11 +660,21 @@ def split_dataset(dataset_root, camera_name):
 
 
 def center_crop(patch_size, input_raw, target_rgb, flow=True):
-    h, w, _ = input_raw.shape
+    # raw输入是1通道
+    raw_channel_1 = (len(input_raw.shape) == 2)
+    if raw_channel_1:
+        h, w = input_raw.shape
+    else:
+        h, w, _ = input_raw.shape
     x1 = int(round((w - patch_size) / 2.))
     y1 = int(round((h - patch_size) / 2.))
-    patch_input_raw = input_raw[y1:y1 + patch_size, x1:x1 + patch_size, :]
-    if flow:
+    x1 = x1 - x1 % 2
+    y1 = y1 - y1 % 2
+    if raw_channel_1:
+        patch_input_raw = input_raw[y1:y1 + patch_size, x1:x1 + patch_size]
+    else:
+        patch_input_raw = input_raw[y1:y1 + patch_size, x1:x1 + patch_size, :]
+    if flow or raw_channel_1:
         patch_target_rgb = target_rgb[y1:y1 + patch_size, x1:x1 + patch_size, :]
     else:
         patch_target_rgb = target_rgb[y1 * 2: y1 * 2 + patch_size * 2, x1 * 2: x1 * 2 + patch_size * 2, :]
