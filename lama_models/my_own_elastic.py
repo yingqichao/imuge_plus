@@ -53,19 +53,19 @@ class HalfFourierBlock(nn.Module):
 
         self.conv_local = depthwise_separable_conv(nin=in_channels//2,nout=out_channels, kernels_per_layer=2,
                                                    kernel_size=3, stride=1, padding=1)
-        self.ln_local = LayerNorm2d(out_channels//2)
+        self.ln_local = nn.GroupNorm(num_groups=4, num_channels=out_channels//2)
 
         self.conv_layer = depthwise_separable_conv(nin=in_channels + (2 if spectral_pos_encoding else 0),
                                           nout=out_channels*2, kernels_per_layer=2,
                                           kernel_size=3, stride=1, padding=1)
-        self.ln = LayerNorm2d(out_channels)
+        self.ln = nn.GroupNorm(num_groups=4, num_channels=out_channels)
         self.simple_gate = SimpleGate()
 
         self.spectral_pos_encoding = spectral_pos_encoding
 
         self.fft_norm = fft_norm
 
-        self.sca_layer = SimplifiedChannelAttention(out_channels)
+        # self.sca_layer = SimplifiedChannelAttention(out_channels)
         self.conv_final = torch.nn.Conv2d(
             out_channels, out_channels, kernel_size=1, padding=0, stride=1, bias=False)
 
@@ -102,8 +102,8 @@ class HalfFourierBlock(nn.Module):
         identity_conv = self.ln_local(identity_conv)
 
         ### 1x1 conv to fuse features ###
-        out = torch.cat([output, identity_conv], dim=1)
-        hwa_out = self.sca_layer(out)
+        hwa_out = torch.cat([output, identity_conv], dim=1)
+        # hwa_out = self.sca_layer(out)
         hwa_out = self.conv_final(hwa_out)
         return input + hwa_out
 
@@ -219,8 +219,11 @@ class elastic_layer(nn.Module):
         else:
             self.skff_blocks = nn.Sequential(*[
                 SKFF(in_channels=nch, height=self.depth),
-                depthwise_separable_conv(nin=nch,nout=nout,kernels_per_layer=1),
+                nn.Conv2d(nch, nout, kernel_size=1, padding=0, stride=1, bias=False),
             ])
+
+        self.conv_final = torch.nn.Conv2d(
+            nch, nch, kernel_size=1, padding=0, stride=1, bias=False)
 
 
     def forward(self, x_feats: list):
@@ -246,7 +249,9 @@ class elastic_layer(nn.Module):
                         input_x_hwas = self.bili_ups[i_scale - j_scale](x_hwas_shares[j_scale])
                         skff_input.append(input_x_hwas)
                     skff_out = self.skff_blocks[i_scale](skff_input)
-                    x_skff.append(torch.cat([x_hwas_identity, skff_out],dim=1))
+
+                    skff_out = self.conv_final(torch.cat([x_hwas_identity, skff_out],dim=1))
+                    x_skff.append(skff_out)
 
             return x_skff
 
@@ -331,16 +336,22 @@ class my_own_elastic(nn.Module):
 
 if __name__ == '__main__':
     # model = HalfFourierBlock(in_channels=16, out_channels=16)
-    X = torch.randn(1, 3, 256,256)
+    with torch.no_grad():
+        X = torch.randn(1, 1, 512,512).cuda()
 
-    # model = SKFF(in_channels=16)
-    # X = [torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64)]
-    print(X.shape)
+        # model = SKFF(in_channels=16)
+        # X = [torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64)]
+        print(X.shape)
 
-    model = my_own_elastic(nin=3,nout=1, depth=4, num_blocks=8)
-    Y = model(X)
-    print(Y.shape)
-    from thop import profile
-    flops, params = profile(model, (X,))
-    print(flops)
-    print(params)
+        model = my_own_elastic(nin=1,nout=1, depth=4, num_blocks=16).cuda()
+        Y = model(X)
+        print(Y.shape)
+        from thop import profile
+        flops, params = profile(model, (X,))
+        print(flops)
+        print(params)
+        from lama_models.HWMNet import HWMNet
+        model_1 = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
+        flops, params = profile(model_1, (X,))
+        print(flops)
+        print(params)

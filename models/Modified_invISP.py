@@ -77,8 +77,8 @@ class Modified_invISP(BaseModel):
         self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
         print(f"network list:{self.network_list}")
         # self.save_network_list = self.network_list
-        self.save_network_list = ["KD_JPEG"]
-        self.training_network_list = ["KD_JPEG"]
+        self.save_network_list = self.network_list if self.task_name is not "my_own_elastic" else ["KD_JPEG"]
+        self.training_network_list = ["KD_JPEG", "discriminator_mask"] if self.task_name is not "my_own_elastic" else ["KD_JPEG"]
 
         ####################################################################################################
         # todo: Load models according to the specific mode
@@ -142,6 +142,7 @@ class Modified_invISP(BaseModel):
             self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
                                                 find_unused_parameters=True)
             # if 'my_own_elastic' in self.task_name:
+            # print("using my_own_elastic as discriminator_mask.")
             #     self.discriminator_mask = my_own_elastic(nin=3,nout=1, depth=4, num_blocks=4).cuda()
             # else:
             self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
@@ -235,15 +236,25 @@ class Modified_invISP(BaseModel):
             self.pretrain = self.load_space_storage + self.load_storage + self.model_path
             self.reload(self.pretrain, network_list=self.default_ISP_networks)
 
-        ### loading RAW2RAW localizar
+        ### loading RAW2RAW
         self.load_space_storage = f"{self.opt['name']}/complete_results"
-        self.load_storage = f'/model/{self.loading_from}/'
-        self.model_path = str(self.is_load_models)  # last time: 10999
-        load_models = self.is_load_models > 0
+        self.load_storage = f'/model/{self.task_name}/'
+        self.model_path = str(self.is_load_raw_models)  # last time: 10999
+        load_models = self.is_load_raw_models > 0
         if load_models:
             print(f"loading models: {self.network_list}")
             self.pretrain = self.load_space_storage + self.load_storage + self.model_path
-            self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks + self.default_detection_networks)
+            self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks)
+
+        ### loading localizer
+        self.load_space_storage = f"{self.opt['name']}/complete_results"
+        self.load_storage = f'/model/{self.loading_from}/'
+        self.model_path = str(self.is_load_localizer_models)  # last time: 10999
+        load_models = self.is_load_localizer_models > 0
+        if load_models:
+            print(f"loading models: {self.network_list}")
+            self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+            self.reload(self.pretrain, network_list=self.default_detection_networks)
 
         ####################################################################################################
         # todo: creating dirs
@@ -727,6 +738,34 @@ class Modified_invISP(BaseModel):
                             torch.cat((collected_protected_image, modified_input.detach()), dim=0)
 
                         ####################################################################################################
+                        # todo: cropping
+                        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
+                        ####################################################################################################
+
+                        if self.conduct_cropping:
+                            locs, cropped, scaled_cropped = self.cropping_mask_generation(
+                                forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
+                            h_start, h_end, w_start, w_end = locs
+                            _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
+                        else:
+                            scaled_cropped = modified_input
+                            tamper_source_cropped = tamper_source
+
+                        ####################################################################################################
+                        # todo: TAMPERING
+                        # todo: including using_simulated_inpainting copy-move and splicing
+                        ####################################################################################################
+                        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
+                        masks, masks_GT = self.mask_generation(modified_input=scaled_cropped, percent_range=percent_range, logs=logs)
+
+                        # attacked_forward = tamper_source_cropped
+                        attacked_forward, masks, masks_GT = self.tampering(
+                            forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
+                            modified_input=scaled_cropped, percent_range=percent_range, logs=logs,
+                            idx_clip=idx_clip, num_per_clip=num_per_clip,
+                        )
+
+                        ####################################################################################################
                         # todo: white-balance, gamma, tone mapping, etc.
                         # todo:
                         ####################################################################################################
@@ -739,37 +778,9 @@ class Modified_invISP(BaseModel):
                         # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
                         skip_augment = np.random.rand() > 0.8
                         if not skip_augment and self.conduct_augmentation:
-                            modified_adjusted = self.data_augmentation_on_rendered_rgb(modified_input)
+                            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
                         else:
-                            modified_adjusted = modified_input
-
-                        ####################################################################################################
-                        # todo: cropping
-                        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
-                        ####################################################################################################
-
-                        if self.conduct_cropping:
-                            locs, cropped, scaled_cropped = self.cropping_mask_generation(
-                                forward_image=modified_adjusted,  min_rate=0.7, max_rate=1.0, logs=logs)
-                            h_start, h_end, w_start, w_end = locs
-                            _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
-                        else:
-                            scaled_cropped = modified_adjusted
-                            tamper_source_cropped = tamper_source
-
-                        ####################################################################################################
-                        # todo: TAMPERING
-                        # todo: including using_simulated_inpainting copy-move and splicing
-                        ####################################################################################################
-                        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
-                        masks, masks_GT = self.mask_generation(modified_input=modified_adjusted, percent_range=percent_range, logs=logs)
-
-                        # attacked_forward = tamper_source_cropped
-                        attacked_forward, masks, masks_GT = self.tampering(
-                            forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
-                            modified_input=scaled_cropped, percent_range=percent_range, logs=logs,
-                            idx_clip=idx_clip, num_per_clip=num_per_clip,
-                        )
+                            attacked_adjusted = attacked_forward
 
                         ####################################################################################################
                         # todo: Benign attacks
@@ -781,10 +792,10 @@ class Modified_invISP(BaseModel):
                                 quality_idx = np.random.randint(18, 21)
                             else:
                                 quality_idx = np.random.randint(10, 19)
-                            attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs,
+                            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
                                                                  quality_idx=quality_idx)
                         else:
-                            attacked_image = attacked_forward
+                            attacked_image = attacked_adjusted
 
                         # ERROR = attacked_image-attacked_forward
                         error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_forward)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
@@ -800,95 +811,101 @@ class Modified_invISP(BaseModel):
                         # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
                         # logs['CE_mantra'] = CE_mantra.item()
                         ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
-                        pred_resfcn, post_pack, _ = self.discriminator_mask(attacked_image.detach().contiguous())
-                        refined_resfcn, std_pred, mean_pred = post_pack
                         ### get mean and std of mask_GT
                         std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
 
-                        CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
-                        l1_mean = self.l2_loss(mean_pred, mean_gt)
-                        l1_std = self.l2_loss(std_pred, std_gt)
-
-                        # CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn + l1_resfcn + 5*(l1_mean + l1_std) #+ CE_control
-                        logs['CE'] = CE_resfcn.item()
-                        # logs['CE_control'] = CE_control.item()
-
                         ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
-                        (CE_loss/self.step_acumulate).backward()
-                        if idx_clip % self.step_acumulate == self.step_acumulate-1:
-                            # self.optimizer_generator.zero_grad()
-                            # loss.backward()
-                            # self.scaler_generator.scale(loss).backward()
-                            if self.train_opt['gradient_clipping']:
-                                nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                            self.optimizer_discriminator_mask.step()
-                            self.optimizer_discriminator_mask.zero_grad()
+                        if "discriminator_mask" in self.training_network_list:
+                            pred_resfcn, post_pack, _ = self.discriminator_mask(attacked_image.detach().contiguous())
+                            refined_resfcn, std_pred, mean_pred = post_pack
+
+                            CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+                            l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
+                            l1_mean = self.l2_loss(mean_pred, mean_gt)
+                            l1_std = self.l2_loss(std_pred, std_gt)
+
+                            # CE_control = self.CE_loss(pred_control, label_control)
+                            CE_loss = CE_resfcn + l1_resfcn + 5 * (l1_mean + l1_std)  # + CE_control
+                            logs['CE'] = CE_resfcn.item()
+                            logs['CE_ema'] = CE_resfcn.item()
+                            logs['l1_ema'] = l1_resfcn.item()
+                            logs['Mean'] = l1_mean.item()
+                            logs['Std'] = l1_std.item()
+                            # logs['CE_control'] = CE_control.item()
+                            (CE_loss/self.step_acumulate).backward()
+                            if idx_clip % self.step_acumulate == self.step_acumulate-1:
+                                # self.optimizer_generator.zero_grad()
+                                # loss.backward()
+                                # self.scaler_generator.scale(loss).backward()
+                                if self.train_opt['gradient_clipping']:
+                                    nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                                self.optimizer_discriminator_mask.step()
+                                self.optimizer_discriminator_mask.zero_grad()
 
 
                         ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
-                        pred_resfcn, post_pack, intermediate = self.discriminator_mask(attacked_image)
-                        refined_resfcn, std_pred, mean_pred = post_pack
-                        norm_pred, adaptive_pred, diff_pred = intermediate
-                        norm_pred = self.clamp_with_grad(norm_pred)
-                        adaptive_pred = self.clamp_with_grad(adaptive_pred)
-                        diff_pred = self.clamp_with_grad(diff_pred)
+                        if "KD_JPEG" in self.training_network_list:
+                            pred_resfcn, post_pack, intermediate = self.discriminator_mask(attacked_image)
+                            refined_resfcn, std_pred, mean_pred = post_pack
+                            norm_pred, adaptive_pred, diff_pred = intermediate
+                            norm_pred = self.clamp_with_grad(norm_pred)
+                            adaptive_pred = self.clamp_with_grad(adaptive_pred)
+                            diff_pred = self.clamp_with_grad(diff_pred)
 
-                        CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-                        l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
-                        l1_mean = self.l2_loss(mean_pred, mean_gt)
-                        l1_std = self.l2_loss(std_pred, std_gt)
+                            CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+                            l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
+                            l1_mean = self.l2_loss(mean_pred, mean_gt)
+                            l1_std = self.l2_loss(std_pred, std_gt)
 
-                        # CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn + l1_resfcn + 5*(l1_mean + l1_std)  # + CE_control
-                        logs['CE_ema'] = CE_resfcn.item()
-                        logs['l1_ema'] = l1_resfcn.item()
-                        logs['Mean'] = l1_mean.item()
-                        logs['Std'] = l1_std.item()
+                            # CE_control = self.CE_loss(pred_control, label_control)
+                            CE_loss = CE_resfcn + l1_resfcn + 5*(l1_mean + l1_std)  # + CE_control
+                            logs['CE_ema'] = CE_resfcn.item()
+                            logs['l1_ema'] = l1_resfcn.item()
+                            logs['Mean'] = l1_mean.item()
+                            logs['Std'] = l1_std.item()
 
 
-                        loss = 0
-                        loss_l1 = self.L1_hyper_param * (ISP_L1_0+ISP_L1_1)/2
-                        loss += loss_l1
-                        loss += 5*self.L1_hyper_param * RAW_L1
-                        loss_ssim = self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_1)/2
-                        loss += loss_ssim
-                        # loss_percept = self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2+ISP_percept_1)/3
-                        # loss += loss_percept
-                        # loss_style = self.style_hyper_param * (ISP_style_0 + ISP_style_2+ISP_style_1) / 3
-                        # loss += loss_style
-                        hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
-                        loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
-                        logs['ISP_SSIM_NOW'] = -loss_ssim.item()
-                        # logs['Percept'] = loss_percept.item()
-                        # logs['Style'] = loss_style.item()
-                        logs['Gray'] = loss_l1.item()
-                        logs['loss'] = loss.item()
+                            loss = 0
+                            loss_l1 = self.L1_hyper_param * (ISP_L1_0+ISP_L1_1)/2
+                            loss += loss_l1
+                            loss += 5*self.L1_hyper_param * RAW_L1
+                            loss_ssim = self.perceptual_hyper_param * (ISP_SSIM_0+ISP_SSIM_1)/2
+                            loss += loss_ssim
+                            # loss_percept = self.perceptual_hyper_param * (ISP_percept_0+ISP_percept_2+ISP_percept_1)/3
+                            # loss += loss_percept
+                            # loss_style = self.style_hyper_param * (ISP_style_0 + ISP_style_2+ISP_style_1) / 3
+                            # loss += loss_style
+                            hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
+                            loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                            logs['ISP_SSIM_NOW'] = -loss_ssim.item()
+                            # logs['Percept'] = loss_percept.item()
+                            # logs['Style'] = loss_style.item()
+                            logs['Gray'] = loss_l1.item()
+                            logs['loss'] = loss.item()
 
-                        ####################################################################################################
-                        # todo: Grad Accumulation
-                        # todo: added 20220919, steo==0, do not update, step==1 update
-                        ####################################################################################################
-                        (loss/self.step_acumulate).backward()
-                        # self.scaler_kd_jpeg.scale(loss).backward()
-                        if idx_clip % self.step_acumulate == self.step_acumulate-1:
-                            # self.optimizer_generator.zero_grad()
-                            # loss.backward()
-                            # self.scaler_generator.scale(loss).backward()
-                            if self.train_opt['gradient_clipping']:
-                                nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
-                                # nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-                                # nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-                                # nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                                # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                            self.optimizer_KD_JPEG.step()
-                            # self.optimizer_discriminator_mask.step()
-                            # self.scaler_kd_jpeg.step(self.optimizer_KD_JPEG)
-                            # self.scaler_kd_jpeg.step(self.optimizer_G)
-                            # self.scaler_kd_jpeg.step(self.optimizer_localizer)
-                            # self.scaler_kd_jpeg.step(self.optimizer_discriminator_mask)
-                            # self.scaler_kd_jpeg.update()
+                            ####################################################################################################
+                            # todo: Grad Accumulation
+                            # todo: added 20220919, steo==0, do not update, step==1 update
+                            ####################################################################################################
+                            (loss/self.step_acumulate).backward()
+                            # self.scaler_kd_jpeg.scale(loss).backward()
+                            if idx_clip % self.step_acumulate == self.step_acumulate-1:
+                                # self.optimizer_generator.zero_grad()
+                                # loss.backward()
+                                # self.scaler_generator.scale(loss).backward()
+                                if self.train_opt['gradient_clipping']:
+                                    nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
+                                    # nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
+                                    # nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
+                                    # nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                                    # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+                                self.optimizer_KD_JPEG.step()
+                                # self.optimizer_discriminator_mask.step()
+                                # self.scaler_kd_jpeg.step(self.optimizer_KD_JPEG)
+                                # self.scaler_kd_jpeg.step(self.optimizer_G)
+                                # self.scaler_kd_jpeg.step(self.optimizer_localizer)
+                                # self.scaler_kd_jpeg.step(self.optimizer_discriminator_mask)
+                                # self.scaler_kd_jpeg.update()
 
                             self.optimizer_KD_JPEG.zero_grad()
                             self.optimizer_G.zero_grad()
@@ -926,8 +943,8 @@ class Modified_invISP(BaseModel):
                             # self.postprocess(tamper_source),
                             # self.postprocess(10 * torch.abs(modified_input - tamper_source)),
                             ### tampering and benign attack
-                            self.postprocess(modified_adjusted),
                             self.postprocess(attacked_forward),
+                            self.postprocess(attacked_adjusted),
                             self.postprocess(attacked_image),
                             self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
                             ### tampering detection
