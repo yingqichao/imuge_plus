@@ -6,7 +6,7 @@ use_tb_logger: true
 model: ISP # CVPR
 distortion: sr
 scale: 4
-gpu_ids: [0,1] #[1,3,4]
+gpu_ids: [2,3] #[1,3,4]
 step_acumulate: 2
 train_isp_networks: false
 train_full_pipeline: true
@@ -24,7 +24,7 @@ style_hyper_param: 10
 raw_classes: 5
 
 load_localizer_models: 13999
-load_RAW_models: 13999 # 13999
+load_RAW_models: 1999 # 13999
 load_ISP_models: 20999
 #### datasets
 phase: train
@@ -108,7 +108,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 2e-5   # 2e-5
+  lr_scratch: !!float 1e-4   # 2e-5
   lr_finetune: !!float 1e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

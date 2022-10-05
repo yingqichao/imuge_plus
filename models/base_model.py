@@ -77,7 +77,9 @@ class BaseModel():
 
         self.task_name = args.task_name  # self.opt['datasets']['train']['name']  # self.train_opt['task_name']
         self.loading_from = args.loading_from
-        self.is_load_models = self.opt['load_models']
+        self.is_load_raw_models = self.opt['load_RAW_models']
+        self.is_load_localizer_models = self.opt['load_RAW_models']
+        self.is_load_RAW_models = self.opt['load_RAW_models']
         self.is_load_ISP_models = self.opt['load_ISP_models']
         print("Task Name: {}".format(self.task_name))
         self.global_step = 0
