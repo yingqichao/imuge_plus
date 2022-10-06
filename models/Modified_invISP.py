@@ -77,8 +77,8 @@ class Modified_invISP(BaseModel):
         self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
         print(f"network list:{self.network_list}")
         # self.save_network_list = self.network_list
-        self.save_network_list = self.network_list if self.task_name is not "my_own_elastic" else ["KD_JPEG"]
-        self.training_network_list = ["KD_JPEG", "discriminator_mask"] if self.task_name is not "my_own_elastic" else ["KD_JPEG"]
+        self.save_network_list = self.network_list if self.task_name != "my_own_elastic" else ["KD_JPEG", "discriminator_mask"]
+        self.training_network_list = ["KD_JPEG", "discriminator_mask"] if self.task_name != "my_own_elastic" else ["discriminator_mask"]
 
         ####################################################################################################
         # todo: Load models according to the specific mode
@@ -141,12 +141,12 @@ class Modified_invISP(BaseModel):
             self.localizer = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
             self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
                                                 find_unused_parameters=True)
-            # if 'my_own_elastic' in self.task_name:
-            # print("using my_own_elastic as discriminator_mask.")
-            #     self.discriminator_mask = my_own_elastic(nin=3,nout=1, depth=4, num_blocks=4).cuda()
-            # else:
-            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
-                                                 style_control=False, use_dwt=False, use_norm_conv=True).cuda()
+            if 'my_own_elastic' in self.task_name:
+                print("using my_own_elastic as discriminator_mask.")
+                self.discriminator_mask = my_own_elastic(nin=3,nout=1, depth=4, nch=32, num_blocks=8, use_norm_conv=True).cuda()
+            else:
+                self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
+                                                     style_control=False, use_dwt=False, use_norm_conv=True).cuda()
                 # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
             self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
                                                               device_ids=[torch.cuda.current_device()],
@@ -171,7 +171,7 @@ class Modified_invISP(BaseModel):
             ####################################################################################################
             if 'my_own_elastic' in self.task_name:
                 print("using my_own_elastic as KD_JPEG.")
-                self.KD_JPEG = my_own_elastic(nin=1,nout=1, depth=4, num_blocks=4).cuda()
+                self.KD_JPEG = my_own_elastic(nin=1,nout=1, depth=4, nch=32, num_blocks=8, use_norm_conv=False).cuda()
             else:
                 self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
                 # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
@@ -308,6 +308,8 @@ class Modified_invISP(BaseModel):
             self.feed_data_COCO_like(batch, mode='train')
         elif mode == 2.0:
             self.feed_data_ISP(batch, mode='train')
+        # elif mode == 3.0:
+        #     self.feed_data_ISP(batch, mode='val')
 
     def feed_data_val_router(self, batch, mode):
         if mode == 0.0:
@@ -348,8 +350,10 @@ class Modified_invISP(BaseModel):
             return self.get_protected_RAW_and_corresponding_images(step=step)
         elif mode==1.0:
             return self.get_predicted_mask(step=step)
-        else:
+        elif mode==2.0:
             return self.optimize_parameters_main(step=step)
+        # elif mode==3.0:
+        #     return self.inference_single_image(step=step)
 
 
     def optimize_parameters_main(self, step=None):
@@ -742,26 +746,26 @@ class Modified_invISP(BaseModel):
                         # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
                         ####################################################################################################
 
-                        if self.conduct_cropping:
-                            locs, cropped, scaled_cropped = self.cropping_mask_generation(
-                                forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
-                            h_start, h_end, w_start, w_end = locs
-                            _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
-                        else:
-                            scaled_cropped = modified_input
-                            tamper_source_cropped = tamper_source
+                        # if self.conduct_cropping:
+                        #     locs, cropped, scaled_cropped = self.cropping_mask_generation(
+                        #         forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
+                        #     h_start, h_end, w_start, w_end = locs
+                        #     _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
+                        # else:
+                        #     scaled_cropped = modified_input
+                        #     tamper_source_cropped = tamper_source
 
                         ####################################################################################################
                         # todo: TAMPERING
                         # todo: including using_simulated_inpainting copy-move and splicing
                         ####################################################################################################
                         percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
-                        masks, masks_GT = self.mask_generation(modified_input=scaled_cropped, percent_range=percent_range, logs=logs)
+                        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
 
                         # attacked_forward = tamper_source_cropped
                         attacked_forward, masks, masks_GT = self.tampering(
                             forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
-                            modified_input=scaled_cropped, percent_range=percent_range, logs=logs,
+                            modified_input=modified_input, percent_range=percent_range, logs=logs,
                             idx_clip=idx_clip, num_per_clip=num_per_clip,
                         )
 
@@ -776,7 +780,7 @@ class Modified_invISP(BaseModel):
                         # white_balance_again = torch.cat((white_balance_again_red,white_balance_again_green,white_balance_again_blue),dim=1).unsqueeze(2).unsqueeze(3)
                         # modified_wb = white_balance_again * modified_input
                         # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
-                        skip_augment = np.random.rand() > 0.8
+                        skip_augment = np.random.rand() > 0.85
                         if not skip_augment and self.conduct_augmentation:
                             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
                         else:
@@ -786,7 +790,7 @@ class Modified_invISP(BaseModel):
                         # todo: Benign attacks
                         # todo: including JPEG compression Gaussian Blurring, Median blurring and resizing
                         ####################################################################################################
-                        skip_robust = np.random.rand()>0.8
+                        skip_robust = np.random.rand()>0.85
                         if not skip_robust and self.consider_robost:
                             if self.using_weak_jpeg_plus_blurring_etc():
                                 quality_idx = np.random.randint(18, 21)
@@ -816,10 +820,14 @@ class Modified_invISP(BaseModel):
 
                         ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                         if "discriminator_mask" in self.training_network_list:
-                            pred_resfcn, post_pack, _ = self.discriminator_mask(attacked_image.detach().contiguous())
+                            pred_resfcn, post_pack, intermediate = self.discriminator_mask(attacked_image.detach().contiguous())
                             refined_resfcn, std_pred, mean_pred = post_pack
+                            norm_pred, adaptive_pred, diff_pred = intermediate
+                            norm_pred = self.clamp_with_grad(norm_pred)
+                            adaptive_pred = self.clamp_with_grad(adaptive_pred)
+                            diff_pred = self.clamp_with_grad(diff_pred)
 
-                            CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+                            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
                             l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
                             l1_mean = self.l2_loss(mean_pred, mean_gt)
                             l1_std = self.l2_loss(std_pred, std_gt)
@@ -852,7 +860,7 @@ class Modified_invISP(BaseModel):
                             adaptive_pred = self.clamp_with_grad(adaptive_pred)
                             diff_pred = self.clamp_with_grad(diff_pred)
 
-                            CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+                            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
                             l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
                             l1_mean = self.l2_loss(mean_pred, mean_gt)
                             l1_std = self.l2_loss(std_pred, std_gt)
@@ -932,6 +940,7 @@ class Modified_invISP(BaseModel):
                             self.postprocess(modified_input_1),
                             self.postprocess(tamper_source_1),
                             self.postprocess(10 * torch.abs(modified_input_1 - tamper_source_1)),
+                            self.postprocess(modified_input),
                             # self.postprocess(modified_input_2),
                             # self.postprocess(tamper_source_2),
                             # self.postprocess(10 * torch.abs(modified_input_2 - tamper_source_2)),
@@ -1015,7 +1024,7 @@ class Modified_invISP(BaseModel):
 
     @torch.no_grad()
     def inference_single_image(self):
-        self.get_protected_RAW_and_corresponding_images(save_image=False)
+        pass
 
     @torch.no_grad()
     def get_predicted_mask(self, modified_input=None, masks_GT=None, save_image=True,
@@ -1066,7 +1075,7 @@ class Modified_invISP(BaseModel):
         pred_resfcn, post_pack, _ = self.discriminator_mask(attacked_image.detach().contiguous())
         refined_resfcn, std_pred, mean_pred = post_pack
 
-        CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
+        CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
         l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
         logs['CE'] = CE_resfcn.item()
         logs['CEL1'] = l1_resfcn.item()
@@ -1086,46 +1095,34 @@ class Modified_invISP(BaseModel):
             name = f"{self.out_space_storage}/test_predicted_masks/{self.task_name}"
             # print('\nsaving sample ' + name)
             for image_no in range(batch_size):
-                camera_ready = pred_resfcn[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_{filename_append}pred_ce_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = pred_resfcn_bn[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_{filename_append}pred_cebn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = refined_resfcn[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = refined_resfcn_bn[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1bn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = attacked_image[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_{filename_append}tamper_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = masks_GT[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_gt.png", nrow=1,
-                                             padding=0, normalize=False)
+                self.print_this_image(pred_resfcn[image_no],
+                                      f"{name}/{str(step).zfill(5)}_{filename_append}pred_ce_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                self.print_this_image(pred_resfcn_bn[image_no],
+                                      f"{name}/{str(step).zfill(5)}_{filename_append}pred_cebn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                self.print_this_image(refined_resfcn[image_no],
+                                      f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                self.print_this_image(refined_resfcn_bn[image_no],
+                                      f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1bn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                self.print_this_image(attacked_image[image_no],
+                                      f"{name}/{str(step).zfill(5)}_{filename_append}tamper_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                self.print_this_image(masks_GT[image_no],
+                                      f"{name}/{str(step).zfill(5)}_gt.png")
 
                 print("tampering localization saved at:{}".format(f"{name}/{str(step).zfill(5)}"))
 
         return logs, (pred_resfcn), False
 
     @torch.no_grad()
-    def get_protected_RAW_and_corresponding_images(self, save_image=False, step=None, do_subsequent_prediction=True):
+    def get_protected_RAW_and_corresponding_images(self, step=None):
         ####################################################################################################
         # todo: inference single image
         # todo: what is tamper_source? used for simulated inpainting, only activated if self.global_step%3==2
         ####################################################################################################
+        save_image = self.opt['inference_save_image']
+        tamper_index = self.opt['inference_tamper_index']
+        do_subsequent_prediction = self.opt['inference_do_subsequent_prediction']
+        load_real_world_tamper = self.opt['inference_load_real_world_tamper']
+
         input_raw_one_dim = self.real_H_val
         file_name = self.file_name_val
         camera_name = self.camera_name_val
@@ -1204,71 +1201,23 @@ class Modified_invISP(BaseModel):
         # print('\nsaving sample ' + name)
         for image_no in range(batch_size):
             if save_image:
-                camera_ready = modified_raw[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_protect_raw.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = input_raw[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_ori_raw.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = (10*torch.abs(input_raw[image_no]-modified_raw[image_no])).unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_diff_raw.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = modified_input_0[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_0.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = original_0[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_0_ori.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = (10 * torch.abs(modified_input_0[image_no] - original_0[image_no])).unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_0_diff.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = modified_input_1[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_1.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = original_1[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_1_ori.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = (10 * torch.abs(modified_input_1[image_no] - original_1[image_no])).unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_1_diff.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = modified_input_2[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_2.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = original_2[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_2_ori.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = (10 * torch.abs(modified_input_2[image_no] - original_2[image_no])).unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_2_diff.png", nrow=1,
-                                             padding=0, normalize=False)
-
-                camera_ready = gt_rgb[image_no].unsqueeze(0)
-                torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                             f"{name}/{str(step).zfill(5)}_gt.png", nrow=1,
-                                             padding=0, normalize=False)
-
+                self.print_this_image(modified_raw[image_no], f"{name}/{str(step).zfill(5)}_protect_raw.png")
+                self.print_this_image(input_raw[image_no], f"{name}/{str(step).zfill(5)}_ori_raw.png")
+                self.print_this_image((10*torch.abs(input_raw[image_no]-modified_raw[image_no])).unsqueeze(0),
+                                      f"{name}/{str(step).zfill(5)}_diff_raw.png")
+                self.print_this_image(modified_input_0[image_no], f"{name}/{str(step).zfill(5)}_0.png")
+                self.print_this_image(original_0[image_no], f"{name}/{str(step).zfill(5)}_0_ori.png")
+                self.print_this_image((10 * torch.abs(modified_input_0[image_no] - original_0[image_no])),
+                                      f"{name}/{str(step).zfill(5)}_0_diff.png")
+                self.print_this_image(modified_input_1[image_no], f"{name}/{str(step).zfill(5)}_1.png")
+                self.print_this_image(original_1[image_no], f"{name}/{str(step).zfill(5)}_1_ori.png")
+                self.print_this_image((10 * torch.abs(modified_input_1[image_no] - original_1[image_no])),
+                                      f"{name}/{str(step).zfill(5)}_1_diff.png")
+                self.print_this_image(modified_input_2[image_no], f"{name}/{str(step).zfill(5)}_2.png")
+                self.print_this_image(original_2[image_no], f"{name}/{str(step).zfill(5)}_2_ori.png")
+                self.print_this_image((10 * torch.abs(modified_input_2[image_no] - original_2[image_no])),
+                                      f"{name}/{str(step).zfill(5)}_2_diff.png")
+                self.print_this_image(gt_rgb[image_no], f"{name}/{str(step).zfill(5)}_gt.png")
                 np.save(f"{name}/{str(step).zfill(5)}_gt", modified_raw.detach().cpu().numpy())
 
                 print("Saved:{}".format(f"{name}/{str(step).zfill(5)}"))
@@ -1276,36 +1225,62 @@ class Modified_invISP(BaseModel):
             if do_subsequent_prediction:
                 logs_pred_accu = {}
                 for idx_isp in range(3):
-                    file_name = f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
-                    folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
-                    mask_file_name = f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
-                    mask_folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
-                    # print(f"reading {folder_name+file_name}")
-                    img_GT = cv2.imread(folder_name+file_name, cv2.IMREAD_COLOR)
-                    # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
-                    # print(f"reading {mask_folder_name + file_name}")
-                    mask_GT = cv2.imread(mask_folder_name+mask_file_name, cv2.IMREAD_GRAYSCALE)
+                    source_image = eval(f"modified_input_{idx_isp}")[image_no:image_no+1]
+                    ### get tampering source and mask
+                    if load_real_world_tamper:
+                        file_name = f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
+                        folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
+                        mask_file_name = f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
+                        mask_folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
+                        # print(f"reading {folder_name+file_name}")
+                        img_GT = cv2.imread(folder_name+file_name, cv2.IMREAD_COLOR)
+                        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+                        # print(f"reading {mask_folder_name + file_name}")
+                        mask_GT = cv2.imread(mask_folder_name+mask_file_name, cv2.IMREAD_GRAYSCALE)
 
-                    img_GT = img_GT.astype(np.float32) / 255.
-                    if img_GT.ndim == 2:
-                        img_GT = np.expand_dims(img_GT, axis=2)
-                    # some images have 4 channels
-                    if img_GT.shape[2] > 3:
-                        img_GT = img_GT[:, :, :3]
-                    mask_GT = mask_GT.astype(np.float32) / 255.
+                        img_GT = img_GT.astype(np.float32) / 255.
+                        if img_GT.ndim == 2:
+                            img_GT = np.expand_dims(img_GT, axis=2)
+                        # some images have 4 channels
+                        if img_GT.shape[2] > 3:
+                            img_GT = img_GT[:, :, :3]
+                        mask_GT = mask_GT.astype(np.float32) / 255.
 
-                    orig_height, orig_width, _ = img_GT.shape
-                    H, W, _ = img_GT.shape
+                        orig_height, orig_width, _ = img_GT.shape
+                        H, W, _ = img_GT.shape
 
-                    mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float().unsqueeze(0).unsqueeze(0).cuda()
+                        mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float().unsqueeze(0).unsqueeze(0).cuda()
 
-                    # BGR to RGB, HWC to CHW, numpy to tensor
-                    if img_GT.shape[2] == 3:
-                        img_GT = img_GT[:, :, [2, 1, 0]]
+                        # BGR to RGB, HWC to CHW, numpy to tensor
+                        if img_GT.shape[2] == 3:
+                            img_GT = img_GT[:, :, [2, 1, 0]]
 
-                    tamper_source = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float().unsqueeze(0).cuda()
+                        tamper_source = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float().unsqueeze(0).cuda()
 
-                    test_input = eval(f"modified_input_{idx_isp}")[image_no].unsqueeze(0)[image_no].unsqueeze(0)*(1-mask_GT)+tamper_source*mask_GT
+                        test_input = source_image * (1 - mask_GT) + tamper_source * mask_GT
+
+                    else: ## using simulated tampering
+
+                        #### tampering source from the training set
+
+                        if self.previous_protected is not None:
+                            self.previous_protected = self.label[0:1]
+                        self.previous_images = self.label[0:1]
+
+
+                        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
+                        masks, masks_GT = self.mask_generation(modified_input=source_image,
+                                                               percent_range=percent_range, logs=logs)
+
+                        test_input, masks, mask_GT = self.tampering(
+                            forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
+                            modified_input=source_image, percent_range=percent_range, logs=logs,
+                            idx_clip=None, num_per_clip=None, index=tamper_index,
+                        )
+
+                        self.previous_protected = source_image.clone().detach()
+
+
 
                     ### attacks generate them all
                     attack_lists = [
@@ -1318,7 +1293,7 @@ class Modified_invISP(BaseModel):
                         (3, 18, None), (3, 18, 0), (3, 18, 3),
                         (4, 20, None), (4, 20, 1), (4, 20, 2),
                     ]
-                    begin_idx = 20
+                    begin_idx = self.opt['inference_benign_attack_begin_idx']
                     for idx_attacks in range(begin_idx, begin_idx+1): # len(attack_lists)
                         do_attack, quality_idx, do_augment = attack_lists[idx_attacks]
                         logs_pred, pred_resfcn, _ = self.get_predicted_mask(modified_input=test_input,

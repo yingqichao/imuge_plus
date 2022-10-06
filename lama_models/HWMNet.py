@@ -463,14 +463,17 @@ class HWMNet(nn.Module):
             sigmoid_pred = torch.sigmoid(out_1.detach())
             std, mean = torch.std_mean(sigmoid_pred,dim=(2,3))
             norm_pred = (sigmoid_pred-mean.unsqueeze(-1).unsqueeze(-1))/std.unsqueeze(-1).unsqueeze(-1)
+
+
             ## get mean and std from msff_result
             actv = self.global_pool(msff_result.detach())
             std_new, mean_new = self.to_gamma_1(actv), self.to_beta_1(actv)
             ## ada instance norm
-            adaptive_pred = std_new.unsqueeze(-1).unsqueeze(-1) * norm_pred + mean_new.unsqueeze(-1).unsqueeze(-1)
+            adapt_pred = std_new.unsqueeze(-1).unsqueeze(-1) * norm_pred + mean_new.unsqueeze(-1).unsqueeze(-1)
+
             ## post-process the mask
-            diff_pred = self.post_process(adaptive_pred)
-            out_post = adaptive_pred + diff_pred
+            diff_pred = self.post_process(adapt_pred)
+            post_pred = adapt_pred + diff_pred
 
             # print(f"original mean/std {mean} {std}")
             # print(f"learned mean/std {mean_new} {std_new}")
@@ -478,7 +481,7 @@ class HWMNet(nn.Module):
             # print(f"debug mean/std {mean_debug} {std_debug}")
             # std_diff, mean_diff = torch.std_mean(diff_pred, dim=(2, 3))
             # print(f"diff mean/std {mean_diff} {std_diff}")
-            return out_1, (out_post, std_new, mean_new), (norm_pred, adaptive_pred, diff_pred)
+            return out_1, (post_pred, std_new, mean_new), (norm_pred, adapt_pred, diff_pred)
         else:
             return out_1
 

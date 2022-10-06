@@ -253,7 +253,7 @@ class elastic_layer(nn.Module):
                     skff_out = self.conv_final(torch.cat([x_hwas_identity, skff_out],dim=1))
                     x_skff.append(skff_out)
 
-            return x_skff
+            return x_skff, None
 
         else:
             ## hwa block
@@ -266,12 +266,13 @@ class elastic_layer(nn.Module):
             for j_scale in range(0, self.depth):
                 input_x_hwas = self.bili_ups[self.depth-1 - j_scale](x_hwas[j_scale])
                 skff_input.append(input_x_hwas)
-            x_skff = self.skff_blocks(skff_input)
+            x_skff_before_final_conv = self.skff_blocks[0](skff_input)
+            x_skff = self.skff_blocks[1](x_skff_before_final_conv)
+        return x_skff, x_skff_before_final_conv
 
-        return x_skff
-
+from lama_models.HWMNet import sequential
 class my_own_elastic(nn.Module):
-    def __init__(self, nin, nch=16, depth=4, nout=None, num_blocks=8):
+    def __init__(self, nin, nch=16, depth=4, nout=None, num_blocks=8, use_norm_conv=False):
         super(my_own_elastic, self).__init__()
         if nout is None:
             nout = nin
@@ -279,6 +280,7 @@ class my_own_elastic(nn.Module):
         self.nout = nout
         self.depth = depth
         self.num_blocks = num_blocks
+        self.use_norm_conv = use_norm_conv
         self.init_convs = nn.ModuleList([])
         self.elastic_layers = nn.ModuleList([])
         self.bili_downs = nn.ModuleList([])
@@ -306,6 +308,30 @@ class my_own_elastic(nn.Module):
                                                      bili_downs=self.bili_downs, bili_ups=self.bili_ups,
                                                      activate_last=(i==self.num_blocks-1)))
 
+        if self.use_norm_conv:
+            if self.use_norm_conv:
+                self.global_pool = sequential(
+                    torch.nn.AdaptiveAvgPool2d((1, 1)),
+                    torch.nn.Flatten(),
+                    torch.nn.Linear(nch, nch),
+                    nn.ReLU(),
+                    # nn.Sigmoid()
+                )
+                self.to_gamma_1 = sequential(torch.nn.Linear(nch, 1), nn.Sigmoid())
+                self.to_beta_1 = sequential(torch.nn.Linear(nch, 1), nn.Tanh())
+
+                self.IN = nn.InstanceNorm2d(1, affine=False)
+                self.post_process = nn.Sequential(
+                    nn.Conv2d(1, 16, kernel_size=7, padding=3, dilation=1),
+                    nn.ELU(),
+                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                    nn.ELU(),
+                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                    nn.ELU(),
+                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                    nn.ELU(),
+                    nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
+                )
 
 
     def forward(self, X):
@@ -327,31 +353,76 @@ class my_own_elastic(nn.Module):
             x_feats.append(self.init_convs[i_scale](x_inits[i_scale]))
 
         ## elastic layers
+        out_1 = None
         for i_layers in range(self.num_blocks):
-            x_feats = self.elastic_layers[i_layers](x_feats)
+            x_feats, out_1 = self.elastic_layers[i_layers](x_feats)
 
-        return x_feats if self.nin!=self.nout else X+x_feats
+        x_feats = x_feats if self.nin!=self.nout else X+x_feats
+
+        ### identical to that in HWMNet
+        if self.use_norm_conv:
+            ## minimize the affect on the CE prediction using detach
+            # norm_pred = self.IN(torch.sigmoid(out_1.detach()))
+            sigmoid_pred = torch.sigmoid(x_feats.detach())
+            std, mean = torch.std_mean(sigmoid_pred,dim=(2,3))
+            norm_pred = (sigmoid_pred-mean.unsqueeze(-1).unsqueeze(-1))/std.unsqueeze(-1).unsqueeze(-1)
+            ## get mean and std from msff_result
+            actv = self.global_pool(out_1.detach())
+            std_new, mean_new = self.to_gamma_1(actv), self.to_beta_1(actv)
+            ## ada instance norm
+            adaptive_pred = std_new.unsqueeze(-1).unsqueeze(-1) * norm_pred + mean_new.unsqueeze(-1).unsqueeze(-1)
+            ## post-process the mask
+            diff_pred = self.post_process(adaptive_pred)
+            out_post = adaptive_pred + diff_pred
+
+            # print(f"original mean/std {mean} {std}")
+            # print(f"learned mean/std {mean_new} {std_new}")
+            # std_debug, mean_debug = torch.std_mean(adaptive_pred, dim=(2, 3))
+            # print(f"debug mean/std {mean_debug} {std_debug}")
+            # std_diff, mean_diff = torch.std_mean(diff_pred, dim=(2, 3))
+            # print(f"diff mean/std {mean_diff} {std_diff}")
+            return x_feats, (out_post, std_new, mean_new), (norm_pred, adaptive_pred, diff_pred)
+
+        else:
+            return x_feats
 
 
 
 if __name__ == '__main__':
     # model = HalfFourierBlock(in_channels=16, out_channels=16)
     with torch.no_grad():
+        from thop import profile
+        from lama_models.HWMNet import HWMNet
         X = torch.randn(1, 1, 512,512).cuda()
-
+        print(torch.cuda.memory_allocated())
+        print(torch.cuda.memory_reserved())
         # model = SKFF(in_channels=16)
         # X = [torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64)]
-        print(X.shape)
+        # print(X.shape)
 
-        model = my_own_elastic(nin=1,nout=1, depth=4, num_blocks=16).cuda()
-        Y = model(X)
-        print(Y.shape)
-        from thop import profile
+        # model = my_own_elastic(nin=1,nout=1, nch=32, depth=4, num_blocks=8).cuda()
+        model = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
+        # Y = model(X)
+        # print(Y.shape)
+
         flops, params = profile(model, (X,))
         print(flops)
         print(params)
-        from lama_models.HWMNet import HWMNet
-        model_1 = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
-        flops, params = profile(model_1, (X,))
-        print(flops)
-        print(params)
+        print(torch.cuda.memory_allocated())
+        print(torch.cuda.memory_reserved())
+
+        # from torchscan import summary
+        from torchstat import stat
+        # import torchvision.models as models
+        # from torchsummary import summary as s
+
+        # model = models.vgg16()
+        stat(model, (1, 512,512))
+        # summary(model, (3, 224, 224))
+        # s(model, input_size=(3, 224, 224), batch_size=1, device='cpu')
+
+        # from lama_models.HWMNet import HWMNet
+        # model_1 = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
+        # flops, params = profile(model_1, (X,))
+        # print(flops)
+        # print(params)

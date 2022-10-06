@@ -6,7 +6,7 @@ use_tb_logger: true
 model: ISP # CVPR
 distortion: sr
 scale: 4
-gpu_ids: [2,3] #[1,3,4]
+gpu_ids: [0,1,2,3] #[1,3,4]
 step_acumulate: 2
 train_isp_networks: false
 train_full_pipeline: true
@@ -23,8 +23,8 @@ L1_hyper_param: 1
 style_hyper_param: 10
 raw_classes: 5
 
-load_localizer_models: 13999
-load_RAW_models: 1999 # 13999
+load_localizer_models: 2999
+load_RAW_models: 2999 # 13999
 load_ISP_models: 20999
 #### datasets
 phase: train
@@ -70,35 +70,6 @@ datasets:
     dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
 
-
-#### network structures
-
-network_G:
-  which_model_G:
-      subnet_type: DBNet
-  in_nc: 3
-  out_nc: 3
-  block_num: [6, 6]
-  scale: 4
-  init: xavier
-
-
-#### path
-
-path:
-#  pretrain_model: ../experiments/pretrained_RHI3_fine_models/12100        # RHI3
-#  pretrain_model: ../experiments/pretrained_crop_fine_models/32100        # Crop
-#  pretrain_model: ../experiments/pretrained_models/fine_models/COCO/22100  # Imuge++ 2100
-#  pretrain_model: ../experiments/pretrained_models/fine_models/CelebA/2100  # Imuge++ 2100
-#  pretrain_model: ../experiments/pretrained_models/230100
-#  pretrain_model: ../experiments/pretrained_models/64100
-  ######## Imuge #########
-  pretrain_model: /qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
-  #########################
-  strict_load: true
-  resume_state: ~
-
-
 #### training settings: learning rate scheme, loss
 
 train:
@@ -108,7 +79,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 1e-4   # 2e-5
+  lr_scratch: !!float 2e-5   # 2e-5
   lr_finetune: !!float 1e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
@@ -133,6 +104,34 @@ train:
   gradient_clipping: 10
 
   current_step: 0
+
+
+#### network structures
+
+network_G:
+  which_model_G:
+      subnet_type: DBNet
+  in_nc: 3
+  out_nc: 3
+  block_num: [6, 6]
+  scale: 4
+  init: xavier
+
+#### path
+
+path:
+#  pretrain_model: ../experiments/pretrained_RHI3_fine_models/12100        # RHI3
+#  pretrain_model: ../experiments/pretrained_crop_fine_models/32100        # Crop
+#  pretrain_model: ../experiments/pretrained_models/fine_models/COCO/22100  # Imuge++ 2100
+#  pretrain_model: ../experiments/pretrained_models/fine_models/CelebA/2100  # Imuge++ 2100
+#  pretrain_model: ../experiments/pretrained_models/230100
+#  pretrain_model: ../experiments/pretrained_models/64100
+  ######## Imuge #########
+  pretrain_model: /qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
+  #########################
+  strict_load: true
+  resume_state: ~
+
 
 
 #### logger

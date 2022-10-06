@@ -362,6 +362,12 @@ class BaseModel():
 
         return modified_input, modified_canny
 
+    def print_this_image(self, image, filename):
+        camera_ready = image.unsqueeze(0)
+        torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                     filename, nrow=1,
+                                     padding=0, normalize=False)
+
     def mask_generation(self, modified_input, percent_range, logs):
         batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         masks_GT = torch.zeros(batch_size, 1, self.real_H.shape[2], self.real_H.shape[3]).cuda()
@@ -393,8 +399,7 @@ class BaseModel():
             # todo: splicing
             # todo: invISP
             ####################################################################################################
-            attacked_forward = modified_input * (1 - masks) + self.previous_protected[
-                                                              idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks
+            attacked_forward = modified_input * (1 - masks) + (self.previous_protected if idx_clip is None else self.previous_protected[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks)
             # attack_name = "splicing"
 
         elif index in [2,3,8]: #self.using_copy_move():
@@ -457,8 +462,7 @@ class BaseModel():
             # todo: it is important, without protection, though the tampering can be close, it should also be detected.
             ####################################################################################################
             # attacked_forward = modified_input * (1 - masks) + forward_image * masks
-            attacked_forward = modified_input * (1 - masks) + self.previous_images[
-                                                              idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks
+            attacked_forward = modified_input * (1 - masks) + (self.previous_images if idx_clip is None else self.previous_images[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks)
 
         attacked_forward = self.clamp_with_grad(attacked_forward)
         # attacked_forward = self.Quantization(attacked_forward)
@@ -533,7 +537,7 @@ class BaseModel():
             kernel = random.choice(kernel_list)
             realworld_attack = cv2.medianBlur(ndarr, kernel)
         elif index == 4:
-            mean, sigma = 0, 0.1
+            mean, sigma = 0, 1
             gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
             # 给图片添加高斯噪声
             realworld_attack = ndarr + gauss
@@ -546,6 +550,23 @@ class BaseModel():
         # realworld_attack = data.util.channel_convert(realworld_attack.shape[2], 'RGB', [realworld_attack])[0]
         # realworld_attack = cv2.resize(copy.deepcopy(realworld_attack), (height_width, height_width),
         #                               interpolation=cv2.INTER_LINEAR)
+
+        # ### jpeg in the file
+        # cv2.imwrite('./temp.jpeg', realworld_attack,
+        #                                    (int(cv2.IMWRITE_JPEG_QUALITY), qf_after_blur))
+        # realworld_attack = cv2.imread('./temp.jpeg', cv2.IMREAD_COLOR)
+        # realworld_attack = realworld_attack.astype(np.float32) / 255.
+        # if realworld_attack.ndim == 2:
+        #     realworld_attack = np.expand_dims(realworld_attack, axis=2)
+        # # some images have 4 channels
+        # if realworld_attack.shape[2] > 3:
+        #     realworld_attack = realworld_attack[:, :, :3]
+        # orig_height, orig_width, _ = realworld_attack.shape
+        # H, W, _ = realworld_attack.shape
+        # # BGR to RGB, HWC to CHW, numpy to tensor
+        # if realworld_attack.shape[2] == 3:
+        #     realworld_attack = realworld_attack[:, :, [2, 1, 0]]
+
         realworld_attack = realworld_attack.astype(np.float32) / 255.
         realworld_attack = torch.from_numpy(
             np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).contiguous().float()
