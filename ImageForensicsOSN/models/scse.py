@@ -9,7 +9,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from torch.utils import model_zoo
-from models.senet import SCSEModule, senet154
+from ImageForensicsOSN.models.senet import SCSEModule, senet154
 
 
 encoder_params = {

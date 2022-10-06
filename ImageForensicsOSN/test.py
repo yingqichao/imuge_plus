@@ -8,10 +8,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from sklearn.metrics import roc_auc_score
-from models.scse import SCSEUnet
+from ImageForensicsOSN.models.scse import SCSEUnet
 
-# gpu_ids = '0, 1'
-# os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids
+gpu_ids = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids
 
 
 class MyDataset(Dataset):
@@ -22,7 +22,7 @@ class MyDataset(Dataset):
         self.transform = transforms.Compose([
             np.float32,
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
         ])
 
     def __getitem__(self, idx):
@@ -32,7 +32,7 @@ class MyDataset(Dataset):
         return len(self.filelist)
 
     def load_item(self, idx):
-        fname1, fname2 = self.test_path + self.filelist[idx], ''
+        fname1, fname2 = os.path.join(self.test_path, self.filelist[idx]), ''
 
         img = cv2.imread(fname1)[..., ::-1]
         H, W, _ = img.shape
@@ -279,9 +279,52 @@ def get_model(save_pth_dir):
     return model
 
 
+# default as batch_size = 1
+def inference(model, data_root, forged_folder='forged', mask_folder='mask', pre_folder='pre_osn'):
+    forged_path = os.path.join(data_root, forged_folder)
+    test_dataset = MyDataset(test_path=forged_path, size=0)
+    path_out = os.path.join(data_root, pre_folder)
+    os.makedirs(path_out, exist_ok=True)
+    test_loader = DataLoader(dataset=test_dataset, batch_size=1, shuffle=False, num_workers=1)
+    for items in test_loader:
+        Ii, Mg = (item.cuda() for item in items[:-1])
+        filename = items[-1]
+        Mo = model(Ii)
+        Mo = Mo * 255.
+        Mo = Mo.permute(0, 2, 3, 1).cpu().detach().numpy()
+        for i in range(len(Mo)):
+            Mo_tmp = Mo[i][..., ::-1]
+            cv2.imwrite(os.path.join(path_out, filename[i][:-4] + '.png'), Mo_tmp)
+    print('Prediction complete.')
+    path_gt = os.path.join(data_root, mask_folder)
+    path_pre = path_out
+    if os.path.exists(path_gt):
+        flist = sorted(os.listdir(path_pre))
+        auc, f1, iou = [], [], []
+        for file in flist:
+            pre = cv2.imread(os.path.join(path_pre, file))
+            gt = cv2.imread(os.path.join(path_gt, file[:-4] + '.png'))
+            H, W, C = pre.shape
+            Hg, Wg, C = gt.shape
+            if H != Hg or W != Wg:
+                gt = cv2.resize(gt, (W, H))
+                gt[gt > 127] = 255
+                gt[gt <= 127] = 0
+            if np.max(gt) != np.min(gt):
+                auc.append(roc_auc_score((gt.reshape(H * W * C) / 255).astype('int'), pre.reshape(H * W * C) / 255.))
+            pre[pre > 127] = 255
+            pre[pre <= 127] = 0
+            a, b = metric(pre / 255, gt / 255)
+            f1.append(a)
+            iou.append(b)
+        print('Evaluation: AUC: %5.4f, F1: %5.4f, IOU: %5.4f' % (np.mean(auc), np.mean(f1), np.mean(iou)))
+    return 0
+
 if __name__ == '__main__':
     # 调用方法看这里
     model = get_model('/groupshare/ISP_results/models/')
     # 输入是rgb图像三通道 输出一通道
-    x_image = torch.randn(4, 3, 512, 512)
-    print(model(x_image).shape)
+    # x_image = torch.randn(4, 3, 512, 512)
+    # print(model(x_image).shape)
+    data_root = '/ssd/ImageForensicsOSN/'
+    inference(model, data_root)
