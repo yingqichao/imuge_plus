@@ -124,6 +124,8 @@ class BaseModel():
         # todo: losses and attack layers
         # todo: JPEG attack rescaling deblurring
         ####################################################################################################
+        self.psup = nn.PixelShuffle(upscale_factor=2).cuda()
+        self.psdown = nn.PixelUnshuffle(downscale_factor=2).cuda()
         self.tanh = nn.Tanh().cuda()
         self.psnr = PSNR(255.0).cuda()
         # self.lpips_vgg = lpips.LPIPS(net="vgg").cuda()
@@ -247,7 +249,7 @@ class BaseModel():
                                                     brightness_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
         modified_adjusted = self.clamp_with_grad(modified_adjusted)
 
-        return modified_adjusted
+        return modified_input + (modified_adjusted - modified_input).detach()
 
     def gamma_correction(self, tensor, avg=4095, digit=2.2):
     ## gamma correction

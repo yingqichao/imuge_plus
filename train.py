@@ -277,7 +277,7 @@ def main(args,opt):
                               'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
         elif 'ISP' in which_model and args.mode==1:
             variables_list = ['ERROR', 'CE','CEL1','F1','F1_1']
-        elif 'ISP' in which_model and args.mode==2:
+        elif 'ISP' in which_model and args.mode>=2:
             variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'l1_ema', 'Mean', 'Std', 'CE_control', 'CYCLE_PSNR',
                               'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
                               'RAW_L1', 'RAW_PSNR', 'PSNR_DIFF', 'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray', 'Style',
@@ -358,8 +358,8 @@ def main(args,opt):
                     lr = logs['lr']
                     info_str = f'[{epoch + 1}, {valid_idx + 1} {idx*model.real_H.shape[0]} {rank} {lr}] '
                     for i in range(len(variables_list)):
-                        info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.3f} '
-                    info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.3f} s'
+                        info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.4f} '
+                    info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.4f} s'
                     print(info_str)
                     start = time.time()
                     if valid_idx>=restart_step:
@@ -369,9 +369,6 @@ def main(args,opt):
                 current_step += 1
                 # if rank <= 0:
                 #     progbar.add(len(model.real_H), values=logs)
-        ####################################################################################################
-        ## todo: END OF DEFINITION
-        ####################################################################################################
 
     elif which_model == 'CLRNet' and args.mode==1.0:
         ####################################################################################################
@@ -397,9 +394,7 @@ def main(args,opt):
             print(data_tampersource)
             print(data_mask)
             model.evaluate(data_origin,data_immunize,data_tampered,data_tampersource,data_mask)
-        ####################################################################################################
-        ## todo: END OF DEFINITION
-        ####################################################################################################
+
     elif which_model == 'CVPR' and args.mode==2.0:
         ####################################################################################################
         # todo: Training the KD-JPEG
@@ -426,9 +421,7 @@ def main(args,opt):
                 logs, debug_logs = model.KD_JPEG_Generator_training(current_step,latest_values)
                 if rank <= 0:
                     progbar.add(len(model.real_H), values=logs)
-        ####################################################################################################
-        ## todo: END OF DEFINITION
-        ####################################################################################################
+
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
