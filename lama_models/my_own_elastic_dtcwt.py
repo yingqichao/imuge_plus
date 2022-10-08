@@ -56,7 +56,7 @@ class BottleNeck(nn.Module):
                                                    kernels_per_layer=kernels_per_layer,
                                                    kernel_size=3, stride=1, padding=1)
         if self.use_act:
-            self.ln_local = LayerNorm2d(out_channels)
+            self.ln_local = nn.BatchNorm2d(out_channels)
         if self.use_norm:
             self.simple_gate = nn.GELU()  # SimpleGate()
 
@@ -81,7 +81,7 @@ class MyOwnResBlock(nn.Module):
         kernels_per_layer = math.ceil(out_channels/in_channels)
         self.conv_local = depthwise_separable_conv(nin=in_channels, nout=out_channels, kernels_per_layer=kernels_per_layer,
                                                    kernel_size=3, stride=1, padding=1)
-        self.ln_local = LayerNorm2d(out_channels)
+        self.ln_local = nn.BatchNorm2d(out_channels)
         self.simple_gate = nn.GELU()  # SimpleGate()
         # self.sca_layer = SimplifiedChannelAttention(out_channels)
         self.conv_final = torch.nn.Conv2d(
@@ -109,13 +109,13 @@ class HalfFourierBlock(nn.Module):
         kernels_per_layer = math.ceil(out_channels / in_channels)
         self.conv_local = depthwise_separable_conv(nin=in_channels//2,nout=out_channels//2, kernels_per_layer=kernels_per_layer,
                                                    kernel_size=3, stride=1, padding=1)
-        self.ln_local = LayerNorm2d(out_channels//2)
+        self.ln_local = nn.BatchNorm2d(out_channels//2)
 
         ### fourier branch, input in_channels//2, output in_channels//2
         self.conv_layer = depthwise_separable_conv(nin=in_channels + (2 if spectral_pos_encoding else 0),
                                           nout=out_channels, kernels_per_layer=kernels_per_layer,
                                           kernel_size=3, stride=1, padding=1)
-        self.ln = LayerNorm2d(out_channels)
+        self.ln = nn.BatchNorm2d(out_channels)
 
         self.simple_gate = nn.GELU() # SimpleGate()
 
@@ -237,7 +237,7 @@ def bili_resize(factor):
 
 class elastic_layer(nn.Module):
     def __init__(self, nch=16, depth=4, nout=None, activate_last=False, bilis=None,
-                 feature_split_ratio=0.75, layer_res=[64,128,64,32]):
+                 feature_split_ratio=0.75, layer_res=[32,64,128,64]):
         super(elastic_layer, self).__init__()
         self.nch = nch
         self.depth = depth
@@ -378,7 +378,7 @@ class my_own_elastic(nn.Module):
         # self.begin_block = BottleNeck(in_channels=nin,out_channels=nch,use_norm=False,use_act=True)
         # self.last_block = BottleNeck(in_channels=nch, out_channels=nout,use_norm=False,use_act=False)
         self.init_convs = nn.ModuleList([])
-        nch_ori = [nin,nin*6*2,nin*6*2,nin*6*2]
+        nch_ori = [nin*6*2,nin*6*2,nin*6*2,nin]
         nch = max(nch, nin*6*2)
         for i in range(self.depth):
             self.init_convs.append(
@@ -395,7 +395,7 @@ class my_own_elastic(nn.Module):
                                                      bilis=self.bilis,
                                                      activate_last=False))
 
-        nch_out = [nout, nout * 6 * 2, nout * 6 * 2, nout * 6 * 2]
+        nch_out = [nout * 6 * 2, nout * 6 * 2, nout * 6 * 2,nout]
         self.last_conv = nn.ModuleList([])
         for i in range(self.depth):
             self.last_conv.append(
@@ -452,7 +452,7 @@ class my_own_elastic(nn.Module):
         Y_scale2 = Yh[1].permute(0, 1, 2, 5, 3, 4).contiguous().view(batchsize, self.nin * 6 * 2, h // 4, w // 4) # 1,36,H/4,W/4
         Y_scale3 = Yh[2].permute(0, 1, 2, 5, 3, 4).contiguous().view(batchsize, self.nin * 6 * 2, h // 8, w // 8) # 1,36,H/8,W/8
         # Y_scale0 = self.begin_block(Yl)
-        x_feats_ori = [Yl, Y_scale1, Y_scale2, Y_scale3]
+        x_feats_ori = [Y_scale3, Y_scale2, Y_scale1, Yl]
         ###
         ### init
         x_feats = []
@@ -469,7 +469,7 @@ class my_own_elastic(nn.Module):
         for i_scale in range(self.depth):
             x_feats_end.append(self.last_conv[i_scale](x_feats[i_scale]))
 
-        Y_scale0m, Y_scale1m, Y_scale2m, Y_scale3m = x_feats_end
+        Y_scale3m, Y_scale2m, Y_scale1m, Y_scale0m = x_feats_end
         Yh1m = Y_scale1m.view(batchsize, self.nout, 6, 2, h // 2, w // 2).permute(0, 1, 2, 4, 5, 3).contiguous()  # 1,36,H/2,W/2
         Yh2m = Y_scale2m.view(batchsize, self.nout, 6, 2, h // 4, w // 4).permute(0, 1, 2, 4, 5, 3).contiguous()  # 1,36,H/4,W/4
         Yh3m = Y_scale3m.view(batchsize, self.nout, 6, 2, h // 8, w // 8).permute(0, 1, 2, 4, 5, 3).contiguous()  # 1,36,H/8,W/8

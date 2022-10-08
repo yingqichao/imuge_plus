@@ -1,6 +1,8 @@
+import math
+
 import torch
 import torch.nn as nn
-from models.invertible_net import HaarUpsampling, HaarDownsampling
+# from models.invertible_net import HaarUpsampling, HaarDownsampling
 # from lama_models.ffc import SpectralTransform, FF
 
 
@@ -43,6 +45,59 @@ class LayerNorm2d(nn.Module):
     def forward(self, x):
         return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
 
+class BottleNeck(nn.Module):
+    def __init__(self, in_channels, out_channels, use_act, use_norm):
+        # bn_layer not used
+        super(BottleNeck, self).__init__()
+        self.use_act = use_act
+        self.use_norm = use_norm
+        kernels_per_layer = math.ceil(out_channels / in_channels / 4)
+        self.conv_local = depthwise_separable_conv(nin=in_channels, nout=out_channels,
+                                                   kernels_per_layer=kernels_per_layer,
+                                                   kernel_size=3, stride=1, padding=1)
+        if self.use_act:
+            self.ln_local = LayerNorm2d(out_channels)
+        if self.use_norm:
+            self.simple_gate = nn.GELU()  # SimpleGate()
+
+    def forward(self, input):
+        output = self.conv_local(input)
+        if self.use_act:
+            output = self.simple_gate(output)
+        if self.use_norm:
+            output = self.ln_local(output)
+
+        return output
+
+
+class MyOwnResBlock(nn.Module):
+
+    def __init__(self, in_channels, out_channels=None):
+        # bn_layer not used
+        super(MyOwnResBlock, self).__init__()
+        if out_channels is None:
+            out_channels = in_channels
+        ### local branch, input in_channels//2, output in_channels//2
+        kernels_per_layer = math.ceil(out_channels/in_channels)
+        self.conv_local = depthwise_separable_conv(nin=in_channels, nout=out_channels, kernels_per_layer=kernels_per_layer,
+                                                   kernel_size=3, stride=1, padding=1)
+        self.ln_local = LayerNorm2d(out_channels)
+        self.simple_gate = nn.GELU()  # SimpleGate()
+        # self.sca_layer = SimplifiedChannelAttention(out_channels)
+        self.conv_final = torch.nn.Conv2d(
+            out_channels, out_channels, kernel_size=1, padding=0, stride=1, bias=False)
+
+    def forward(self, input):
+
+        ### local path ###
+        identity_conv = self.conv_local(input)
+        identity_conv = self.simple_gate(identity_conv)
+        identity_conv = self.ln_local(identity_conv)
+
+        ### 1x1 conv to fuse features ###
+        hwa_out = self.conv_final(identity_conv)
+        return input + hwa_out
+
 class HalfFourierBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels=None, spectral_pos_encoding=False, fft_norm='ortho'):
@@ -50,16 +105,19 @@ class HalfFourierBlock(nn.Module):
         super(HalfFourierBlock, self).__init__()
         if out_channels is None:
             out_channels = in_channels
-
-        self.conv_local = depthwise_separable_conv(nin=in_channels//2,nout=out_channels, kernels_per_layer=2,
+        ### local branch, input in_channels//2, output in_channels//2
+        kernels_per_layer = math.ceil(out_channels / in_channels)
+        self.conv_local = depthwise_separable_conv(nin=in_channels//2,nout=out_channels//2, kernels_per_layer=kernels_per_layer,
                                                    kernel_size=3, stride=1, padding=1)
-        self.ln_local = nn.GroupNorm(num_groups=4, num_channels=out_channels//2)
+        self.ln_local = LayerNorm2d(out_channels//2)
 
+        ### fourier branch, input in_channels//2, output in_channels//2
         self.conv_layer = depthwise_separable_conv(nin=in_channels + (2 if spectral_pos_encoding else 0),
-                                          nout=out_channels*2, kernels_per_layer=2,
+                                          nout=out_channels, kernels_per_layer=kernels_per_layer,
                                           kernel_size=3, stride=1, padding=1)
-        self.ln = nn.GroupNorm(num_groups=4, num_channels=out_channels)
-        self.simple_gate = SimpleGate()
+        self.ln = LayerNorm2d(out_channels)
+
+        self.simple_gate = nn.GELU() # SimpleGate()
 
         self.spectral_pos_encoding = spectral_pos_encoding
 
@@ -178,36 +236,25 @@ def bili_resize(factor):
     return nn.Upsample(scale_factor=factor, mode='bilinear', align_corners=False)
 
 class elastic_layer(nn.Module):
-    def __init__(self, nin, nch=16, depth=4, nout=None, activate_last=False, bili_downs=None, bili_ups=None,
-                 feature_split_ratio=0.75):
+    def __init__(self, nch=16, depth=4, nout=None, activate_last=False, bilis=None,
+                 feature_split_ratio=0.75, layer_res=[32,64,128,256]):
         super(elastic_layer, self).__init__()
         self.nch = nch
         self.depth = depth
         self.feature_split_ratio = feature_split_ratio
         self.activate_last = activate_last
         self.ch_split = int(self.nch * (1 - self.feature_split_ratio))
-        if bili_downs is None:
-            self.bili_downs = nn.ModuleList([])
-            self.bili_downs.append(nn.Identity())
-            ### 1,0.5,0.25,0.125
-            for i in range(1, self.depth):
-                self.bili_downs.append(bili_resize(0.5 ** (i)))
-        else:
-            self.bili_downs = bili_downs
 
-        if bili_ups is None:
-            self.bili_ups = nn.ModuleList([])
-            self.bili_ups.append(nn.Identity())
-            ### 1,2,4,8
-            for i in range(1, self.depth):
-                self.bili_ups.append(bili_resize(2 ** (i)))
-        else:
-            self.bili_ups = bili_ups
+        self.bilis = bilis
+        self.layer_res = layer_res
 
         self.hwa_blocks = nn.ModuleList([])
         self.depth = depth
         for i in range(self.depth):
-            self.hwa_blocks.append(HalfFourierBlock(in_channels=nch))
+            if i==0:
+                self.hwa_blocks.append(HalfFourierBlock(in_channels=nch))
+            else:
+                self.hwa_blocks.append(MyOwnResBlock(in_channels=nch))
 
         if not self.activate_last:
             self.skff_blocks = nn.ModuleList([])
@@ -246,14 +293,14 @@ class elastic_layer(nn.Module):
                     x_hwas_identity = x_hwas_identitys[i_scale]
                     skff_input = []
                     for j_scale in range(0, i_scale + 1):
-                        input_x_hwas = self.bili_ups[i_scale - j_scale](x_hwas_shares[j_scale])
+                        input_x_hwas = self.bilis[self.layer_res[i_scale]/self.layer_res[j_scale]](x_hwas_shares[j_scale])
                         skff_input.append(input_x_hwas)
                     skff_out = self.skff_blocks[i_scale](skff_input)
 
                     skff_out = self.conv_final(torch.cat([x_hwas_identity, skff_out],dim=1))
                     x_skff.append(skff_out)
 
-            return x_skff, None
+            return x_skff
 
         else:
             ## hwa block
@@ -264,13 +311,38 @@ class elastic_layer(nn.Module):
 
             skff_input = []
             for j_scale in range(0, self.depth):
-                input_x_hwas = self.bili_ups[self.depth-1 - j_scale](x_hwas[j_scale])
+                input_x_hwas = self.bilis[self.layer_res[self.depth-1] / self.layer_res[j_scale]](x_hwas[j_scale])
                 skff_input.append(input_x_hwas)
-            x_skff_before_final_conv = self.skff_blocks[0](skff_input)
-            x_skff = self.skff_blocks[1](x_skff_before_final_conv)
-        return x_skff, x_skff_before_final_conv
+            x_skff = self.skff_blocks(skff_input)
 
-from lama_models.HWMNet import sequential
+        return x_skff
+
+
+from collections import OrderedDict
+def sequential(*args):
+    """Advanced nn.Sequential.
+
+    Args:
+        nn.Sequential, nn.Module
+
+    Returns:
+        nn.Sequential
+    """
+    if len(args) == 1:
+        if isinstance(args[0], OrderedDict):
+            raise NotImplementedError('sequential does not support OrderedDict input.')
+        return args[0]  # No sequential is needed.
+    modules = []
+    for module in args:
+        if isinstance(module, nn.Sequential):
+            for submodule in module.children():
+                modules.append(submodule)
+        elif isinstance(module, nn.Module):
+            modules.append(module)
+    return nn.Sequential(*modules)
+
+
+from pytorch_wavelets import DTCWTForward, DTCWTInverse
 class my_own_elastic(nn.Module):
     def __init__(self, nin, nch=16, depth=4, nout=None, num_blocks=8, use_norm_conv=False):
         super(my_own_elastic, self).__init__()
@@ -281,110 +353,110 @@ class my_own_elastic(nn.Module):
         self.depth = depth
         self.num_blocks = num_blocks
         self.use_norm_conv = use_norm_conv
+
+        self.bilis = {}
+        self.bilis[1] = nn.Identity()
+        for i in range(1, self.depth):
+            self.bilis[0.5 ** (i)] = bili_resize(0.5 ** (i))
+            self.bilis[2 ** (i)] = bili_resize(2 ** (i))
+
+
         self.init_convs = nn.ModuleList([])
-        self.elastic_layers = nn.ModuleList([])
-        self.bili_downs = nn.ModuleList([])
-        self.bili_downs.append(nn.Identity())
-        ### 1,0.5,0.25,0.125
-        for i in range(1, self.depth):
-            self.bili_downs.append(bili_resize(0.5 ** (i)))
-
-        self.bili_ups = nn.ModuleList([])
-        self.bili_ups.append(nn.Identity())
-        ### 1,2,4,8
-        for i in range(1, self.depth):
-            self.bili_ups.append(bili_resize(2 ** (i)))
-
-        for i in range(self.num_blocks):
+        nch_ori = [nin,nin,nin,nin]
+        # nch = max(nch, nin*6*2)
+        for i in range(self.depth):
             self.init_convs.append(
                 nn.Sequential(*[
-                    depthwise_separable_conv(nin=nin,nout=nch*2,kernels_per_layer=16),
-                    SimpleGate(),
+                    depthwise_separable_conv(nin=nch_ori[i],nout=nch,kernels_per_layer=math.ceil(nch/nch_ori[i])),
+                    nn.GELU() #SimpleGate(),
                               ]
                 )
             )
 
-            self.elastic_layers.append(elastic_layer(nin, nch, depth, nout,
-                                                     bili_downs=self.bili_downs, bili_ups=self.bili_ups,
+        self.elastic_layers = nn.ModuleList([])
+        for i in range(self.num_blocks):
+            self.elastic_layers.append(elastic_layer(nch, depth, nout,
+                                                     bilis=self.bilis,
                                                      activate_last=(i==self.num_blocks-1)))
 
-        if self.use_norm_conv:
-            if self.use_norm_conv:
-                self.global_pool = sequential(
-                    torch.nn.AdaptiveAvgPool2d((1, 1)),
-                    torch.nn.Flatten(),
-                    torch.nn.Linear(nch, nch),
-                    nn.ReLU(),
-                    # nn.Sigmoid()
-                )
-                self.to_gamma_1 = sequential(torch.nn.Linear(nch, 1), nn.Sigmoid())
-                self.to_beta_1 = sequential(torch.nn.Linear(nch, 1), nn.Tanh())
 
-                self.IN = nn.InstanceNorm2d(1, affine=False)
-                self.post_process = nn.Sequential(
-                    nn.Conv2d(1, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
-                )
+        # if self.use_norm_conv:
+        #     if self.use_norm_conv:
+        #         self.global_pool = sequential(
+        #             torch.nn.AdaptiveAvgPool2d((1, 1)),
+        #             torch.nn.Flatten(),
+        #             torch.nn.Linear(nch, nch),
+        #             nn.ReLU(),
+        #             # nn.Sigmoid()
+        #         )
+        #         self.to_gamma_1 = sequential(torch.nn.Linear(nch, 1), nn.Sigmoid())
+        #         self.to_beta_1 = sequential(torch.nn.Linear(nch, 1), nn.Tanh())
+        #
+        #         self.IN = nn.InstanceNorm2d(1, affine=False)
+        #         self.post_process = nn.Sequential(
+        #             nn.Conv2d(1, 16, kernel_size=7, padding=3, dilation=1),
+        #             nn.ELU(),
+        #             nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+        #             nn.ELU(),
+        #             nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+        #             nn.ELU(),
+        #             nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+        #             nn.ELU(),
+        #             nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
+        #         )
 
 
     def forward(self, X):
-        ### decomposit X into hiearchical input ###
-        batch, channel, H, W = X.shape
-        x_inits = []
-        x_previous = self.bili_downs[self.depth-1](X)
-        x_inits.append(x_previous)
-        for i in range(1,self.depth):
-            x_current_gt = self.bili_downs[self.depth-1-i](X)
-            x_previous = self.bili_ups[1](x_previous)
-            x_diff = x_current_gt-x_previous
-            x_inits.append(x_diff)
-            x_previous = x_current_gt
 
+
+        x_inits = []
+        x_now = self.bilis[1/8](X)
+        x_inits.append(x_now)
+        for i in range(1,self.depth):
+            x_now = self.bilis[2](x_now)
+            x_inits.append(x_now)
+
+
+        ###
         ### init
         x_feats = []
         for i_scale in range(self.depth):
             x_feats.append(self.init_convs[i_scale](x_inits[i_scale]))
 
         ## elastic layers
-        out_1 = None
         for i_layers in range(self.num_blocks):
-            x_feats, out_1 = self.elastic_layers[i_layers](x_feats)
+            x_feats = self.elastic_layers[i_layers](x_feats)
 
-        x_feats = x_feats if self.nin!=self.nout else X+x_feats
 
-        ### identical to that in HWMNet
-        if self.use_norm_conv:
-            ## minimize the affect on the CE prediction using detach
-            # norm_pred = self.IN(torch.sigmoid(out_1.detach()))
-            sigmoid_pred = torch.sigmoid(x_feats.detach())
-            std, mean = torch.std_mean(sigmoid_pred,dim=(2,3))
-            norm_pred = (sigmoid_pred-mean.unsqueeze(-1).unsqueeze(-1))/std.unsqueeze(-1).unsqueeze(-1)
-            ## get mean and std from msff_result
-            actv = self.global_pool(out_1.detach())
-            std_new, mean_new = self.to_gamma_1(actv), self.to_beta_1(actv)
-            ## ada instance norm
-            adaptive_pred = std_new.detach().unsqueeze(-1).unsqueeze(-1) * norm_pred + mean_new.detach().unsqueeze(-1).unsqueeze(-1)
-            ## post-process the mask
-            diff_pred = self.post_process(adaptive_pred)
-            out_post = adaptive_pred + diff_pred
+        return x_feats
 
-            # print(f"original mean/std {mean} {std}")
-            # print(f"learned mean/std {mean_new} {std_new}")
-            # std_debug, mean_debug = torch.std_mean(adaptive_pred, dim=(2, 3))
-            # print(f"debug mean/std {mean_debug} {std_debug}")
-            # std_diff, mean_diff = torch.std_mean(diff_pred, dim=(2, 3))
-            # print(f"diff mean/std {mean_diff} {std_diff}")
-            return x_feats, (out_post, std_new, mean_new), (norm_pred, adaptive_pred, diff_pred)
-
-        else:
-            return x_feats
+        # x_feats = x_feats if self.nin != self.nout else X + x_feats
+        # ### identical to that in HWMNet
+        # if self.use_norm_conv:
+        #     ## minimize the affect on the CE prediction using detach
+        #     # norm_pred = self.IN(torch.sigmoid(out_1.detach()))
+        #     sigmoid_pred = torch.sigmoid(x_feats.detach())
+        #     std, mean = torch.std_mean(sigmoid_pred,dim=(2,3))
+        #     norm_pred = (sigmoid_pred-mean.unsqueeze(-1).unsqueeze(-1))/std.unsqueeze(-1).unsqueeze(-1)
+        #     ## get mean and std from msff_result
+        #     actv = self.global_pool(out_1.detach())
+        #     std_new, mean_new = self.to_gamma_1(actv), self.to_beta_1(actv)
+        #     ## ada instance norm
+        #     adaptive_pred = std_new.detach().unsqueeze(-1).unsqueeze(-1) * norm_pred + mean_new.detach().unsqueeze(-1).unsqueeze(-1)
+        #     ## post-process the mask
+        #     diff_pred = self.post_process(adaptive_pred)
+        #     out_post = adaptive_pred + diff_pred
+        #
+        #     # print(f"original mean/std {mean} {std}")
+        #     # print(f"learned mean/std {mean_new} {std_new}")
+        #     # std_debug, mean_debug = torch.std_mean(adaptive_pred, dim=(2, 3))
+        #     # print(f"debug mean/std {mean_debug} {std_debug}")
+        #     # std_diff, mean_diff = torch.std_mean(diff_pred, dim=(2, 3))
+        #     # print(f"diff mean/std {mean_diff} {std_diff}")
+        #     return x_feats, (out_post, std_new, mean_new), (norm_pred, adaptive_pred, diff_pred)
+        #
+        # else:
+        #     return x_feats
 
 
 
@@ -392,18 +464,20 @@ if __name__ == '__main__':
     # model = HalfFourierBlock(in_channels=16, out_channels=16)
     with torch.no_grad():
         from thop import profile
-        from lama_models.HWMNet import HWMNet
-        X = torch.randn(1, 1, 512,512).cuda()
-        print(torch.cuda.memory_allocated())
-        print(torch.cuda.memory_reserved())
+        # from lama_models.HWMNet import HWMNet
+
+        nin, nout = 3, 1
+        X = torch.randn(1,nin, 256,256).cuda()
+        # print(torch.cuda.memory_allocated())
+        # print(torch.cuda.memory_reserved())
         # model = SKFF(in_channels=16)
         # X = [torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64)]
         # print(X.shape)
 
-        # model = my_own_elastic(nin=1,nout=1, nch=32, depth=4, num_blocks=8).cuda()
-        model = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
-        # Y = model(X)
-        # print(Y.shape)
+        model = my_own_elastic(nin=nin,nout=nout, nch=36, depth=4, num_blocks=8).cuda()
+        # model = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
+        Y = model(X)
+        print(Y.shape)
 
         flops, params = profile(model, (X,))
         print(flops)
@@ -411,15 +485,15 @@ if __name__ == '__main__':
         print(torch.cuda.memory_allocated())
         print(torch.cuda.memory_reserved())
 
-        # from torchscan import summary
-        from torchstat import stat
-        # import torchvision.models as models
-        # from torchsummary import summary as s
-
-        # model = models.vgg16()
-        stat(model, (1, 512,512))
-        # summary(model, (3, 224, 224))
-        # s(model, input_size=(3, 224, 224), batch_size=1, device='cpu')
+        # # from torchscan import summary
+        # from torchstat import stat
+        # # import torchvision.models as models
+        # # from torchsummary import summary as s
+        #
+        # # model = models.vgg16()
+        # stat(model, (1, 512,512))
+        # # summary(model, (3, 224, 224))
+        # # s(model, input_size=(3, 224, 224), batch_size=1, device='cpu')
 
         # from lama_models.HWMNet import HWMNet
         # model_1 = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()

@@ -58,6 +58,12 @@ from lama_models.HWMNet import HWMNet
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 from loss import GrayscaleLoss
+from .invertible_net import Inveritible_Decolorization_PAMI
+from models.networks import UNetDiscriminator
+from loss import PerceptualLoss, StyleLoss
+from .networks import SPADE_UNet
+from lama_models.HWMNet import HWMNet
+from lama_models.my_own_elastic import my_own_elastic
 
 class BaseModel():
     def __init__(self, opt,  args, train_set=None):
@@ -187,6 +193,7 @@ class BaseModel():
         self.KD_JPEG = None
         self.global_step = 0
         self.updated_step = 0
+        self.out_space_storage = ""
 
     ####################################################################################################
     # todo: using which ISP network?
@@ -197,6 +204,43 @@ class BaseModel():
     #     return self.global_step % 4 == 1
     # def using_my_own_pipeline(self):
     #     return self.global_step % 4 == 2
+
+    def create_folders_for_the_experiment(self):
+        create_folder(self.out_space_storage)
+        create_folder(self.out_space_storage + "/model")
+        create_folder(self.out_space_storage + "/images")
+        create_folder(self.out_space_storage + "/isp_images/")
+        create_folder(self.out_space_storage + "/model/" + self.task_name)
+        create_folder(self.out_space_storage + "/images/" + self.task_name)
+        create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
+
+    def define_RAW2RAW_network(self):
+        if 'UNet' not in self.task_name:
+            print("using my_own_elastic as KD_JPEG.")
+            n_channels = 3 if "ablation" in self.task_name else 4 # 36/48 12
+            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=16, num_blocks=8,
+                                          use_norm_conv=False).cuda()
+        else:
+            self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
+                                  use_dwt=False).cuda()
+            # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
+            # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
+        # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
+        self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
+                                               find_unused_parameters=True)
+
+    def define_tampering_localization_network(self):
+        if 'UNet' not in self.task_name:
+            print("using my_own_elastic as discriminator_mask.")
+            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=16, num_blocks=8,
+                                                     use_norm_conv=True).cuda()
+        else:
+            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
+                                             style_control=False, use_dwt=False, use_norm_conv=True).cuda()
+            # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
+        self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
+                                                          device_ids=[torch.cuda.current_device()],
+                                                          find_unused_parameters=True)
 
     ####################################################################################################
     # todo: using which tampering attacks?
@@ -249,7 +293,7 @@ class BaseModel():
                                                     brightness_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
         modified_adjusted = self.clamp_with_grad(modified_adjusted)
 
-        return modified_input + (modified_adjusted - modified_input).detach()
+        return modified_adjusted #modified_input + (modified_adjusted - modified_input).detach()
 
     def gamma_correction(self, tensor, avg=4095, digit=2.2):
     ## gamma correction
@@ -389,7 +433,7 @@ class BaseModel():
         return masks, masks_GT
 
     def tampering(self, forward_image, masks, masks_GT, modified_input, percent_range, idx_clip, num_per_clip, logs, index=None):
-        batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
+        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         ####### Tamper ###############
         # attacked_forward = torch.zeros_like(modified_input)
         # for img_idx in range(batch_size):

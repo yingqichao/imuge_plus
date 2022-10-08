@@ -278,7 +278,7 @@ def main(args,opt):
         elif 'ISP' in which_model and args.mode==1:
             variables_list = ['ERROR', 'CE','CEL1','F1','F1_1']
         elif 'ISP' in which_model and args.mode>=2:
-            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'l1_ema', 'Mean', 'Std', 'CE_control', 'CYCLE_PSNR',
+            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'l1_ema', 'Mean', 'Std', 'CYCLE_PSNR',
                               'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
                               'RAW_L1', 'RAW_PSNR', 'PSNR_DIFF', 'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray', 'Style',
                               'ERROR', 'inpaint', 'inpaintPSNR'
