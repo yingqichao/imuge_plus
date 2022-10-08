@@ -10,7 +10,7 @@ from torchvision import transforms
 from sklearn.metrics import roc_auc_score
 from ImageForensicsOSN.models.scse import SCSEUnet
 
-gpu_ids = '0'
+gpu_ids = '2'
 os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids
 
 
@@ -325,6 +325,19 @@ if __name__ == '__main__':
     model = get_model('/groupshare/ISP_results/models/')
     # 输入是rgb图像三通道 输出一通道
     # x_image = torch.randn(4, 3, 512, 512)
+    import pickle
+    with open('/ssd/ISP_protection/debug.pickle', 'rb') as f:
+        data = pickle.load(f)
+    data = data.unsqueeze(0)
+    print(data.shape)
+    Mo = model(data)
+    Mo = Mo * 255.
+    Mo = Mo.permute(0, 2, 3, 1).cpu().detach().numpy()
+    for i in range(len(Mo)):
+        Mo_tmp = Mo[i][..., ::-1]
+        cv2.imwrite(os.path.join('./test.png'), Mo_tmp)
+    print('Prediction complete.')
     # print(model(x_image).shape)
-    data_root = '/ssd/ImageForensicsOSN/'
-    inference(model, data_root)
+    # data_root = '/ssd/ImageForensicsOSN/'
+    # inference(model, data_root)
+    # forensics_test(model)

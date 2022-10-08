@@ -31,7 +31,7 @@ class FiveKDataset_total(Dataset):
     """
 
     def __init__(self, dataset_roots: list, camera_names: list, stage, patch_size=256, data_mode='RAW',
-                 file_nums=100, npz_uint16=True):
+                 file_nums=200, npz_uint16=True):
         ####################################################################################################
         # todo: Settings
         # todo:

@@ -138,9 +138,11 @@ class Modified_invISP(BaseModel):
             self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                                    find_unused_parameters=True)
 
-            self.localizer = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
-            self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
-                                                find_unused_parameters=True)
+            from ImageForensicsOSN.test import get_model
+            # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
+            # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
+            #                                     find_unused_parameters=True)
+            self.localizer = get_model('/groupshare/ISP_results/models/')
 
             self.define_tampering_localization_network()
 
@@ -1318,10 +1320,10 @@ class Modified_invISP(BaseModel):
             # todo: load real world tamper from outer source
             # todo: you should load the tamper source from your folder
             ####################################################################################################
-            file_name = #f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
-            folder_name = #f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
-            mask_file_name = #f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
-            mask_folder_name = #f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
+            file_name = "%05d.png" % step #f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
+            folder_name = '/groupshare/ISP_results/test_results/forged/' #f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
+            mask_file_name = file_name #f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
+            mask_folder_name = '/groupshare/ISP_results/test_results/mask/' #f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
             # print(f"reading {folder_name+file_name}")
             img_GT = cv2.imread(folder_name + file_name, cv2.IMREAD_COLOR)
             mask_GT = cv2.imread(mask_folder_name + mask_file_name, cv2.IMREAD_GRAYSCALE)
@@ -1452,11 +1454,15 @@ class Modified_invISP(BaseModel):
         pred_resfcn = target_model(attacked_image.detach().contiguous())
         # refined_resfcn, std_pred, mean_pred = post_pack
 
-        CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
+        # CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
+        # # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
+        # logs['CE'] = CE_resfcn.item()
+        # # logs['CEL1'] = l1_resfcn.item()
+        # pred_resfcn = torch.sigmoid(pred_resfcn)
+        CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
         # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
         logs['CE'] = CE_resfcn.item()
         # logs['CEL1'] = l1_resfcn.item()
-        pred_resfcn = torch.sigmoid(pred_resfcn)
         pred_resfcn_bn = torch.where(pred_resfcn > 0.5, 1.0, 0.0)
 
         # refined_resfcn_bn = torch.where(refined_resfcn > 0.5, 1.0, 0.0)
@@ -1472,6 +1478,9 @@ class Modified_invISP(BaseModel):
             name = f"{self.out_space_storage}/test_predicted_masks/{self.task_name}"
             # print('\nsaving sample ' + name)
             for image_no in range(batch_size):
+                # self.print_this_image(modified_input[image_no],
+                #                       f"{name}/{str(step).zfill(5)}_{filename_append}tampered_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+
                 self.print_this_image(pred_resfcn[image_no],
                                       f"{name}/{str(step).zfill(5)}_{filename_append}pred_ce_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
                 self.print_this_image(pred_resfcn_bn[image_no],
@@ -1484,7 +1493,6 @@ class Modified_invISP(BaseModel):
                                       f"{name}/{str(step).zfill(5)}_{filename_append}tamper_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
                 self.print_this_image(masks_GT[image_no],
                                       f"{name}/{str(step).zfill(5)}_gt.png")
-
                 print("tampering localization saved at:{}".format(f"{name}/{str(step).zfill(5)}"))
 
         return logs, (pred_resfcn), False
