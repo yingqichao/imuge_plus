@@ -636,16 +636,19 @@ class Modified_invISP(BaseModel):
                         ### model selection
                         if self.global_step%3==0:
                             isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
+                            stored_list_0, stored_list_1 = stored_image_generator, stored_image_qf_predict
                         elif self.global_step%3==1:
                             isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
+                            stored_list_0, stored_list_1 = stored_image_netG, stored_image_qf_predict
                         else: #if self.global_step%3==2:
                             isp_model_0, isp_model_1 = self.netG, self.generator
+                            stored_list_0, stored_list_1 = stored_image_netG, stored_image_generator
 
                         #### invISP AS SUBSEQUENT ISP####
                         modified_input_0 = isp_model_0(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_0 = self.gamma_correction(modified_input_0)
-                        tamper_source_0 = stored_image_generator[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                        tamper_source_0 = stored_list_0[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
                         ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
                         # ISP_percept_0, ISP_style_0 = self.perceptual_loss(modified_input_0, tamper_source_0, with_gram=True)
@@ -655,7 +658,7 @@ class Modified_invISP(BaseModel):
                         modified_input_1 = isp_model_1(modified_raw)
                         if self.use_gamma_correction:
                             modified_input_1 = self.gamma_correction(modified_input_1)
-                        tamper_source_1 = stored_image_qf_predict[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                        tamper_source_1 = stored_list_1[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
                         ISP_L1_1 = self.l1_loss(input=modified_input_1, target=tamper_source_1)
                         ISP_SSIM_1 = - self.ssim_loss(modified_input_1, tamper_source_1)
                         # ISP_percept_1, ISP_style_1 = self.perceptual_loss(modified_input_1, tamper_source_1, with_gram=True)
@@ -1299,16 +1302,16 @@ class Modified_invISP(BaseModel):
         load_real_world_tamper = self.opt['inference_load_real_world_tamper']
         gt_rgb = self.label_val
 
-        # input_raw_one_dim = self.real_H_val
-        # file_name = self.file_name_val
-        # camera_name = self.camera_name_val
-        #
-        # ### tensor sized (B,3)
-        # camera_white_balance = self.camera_white_balance_val
-        # ### tensor sized (B,1) ranging from [0,3]
-        # bayer_pattern = self.bayer_pattern_val
-        # input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
-        #                                white_balance=camera_white_balance)
+        input_raw_one_dim = self.real_H_val
+        file_name = self.file_name_val
+        camera_name = self.camera_name_val
+
+        ### tensor sized (B,3)
+        camera_white_balance = self.camera_white_balance_val
+        ### tensor sized (B,1) ranging from [0,3]
+        bayer_pattern = self.bayer_pattern_val
+        input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
+                                       white_balance=camera_white_balance)
         batch_size, num_channels, height_width, _ = gt_rgb.shape
 
         logs = {}
@@ -1352,9 +1355,6 @@ class Modified_invISP(BaseModel):
             tamper_source = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float().unsqueeze(
                 0).cuda()
 
-            ## tampered image
-            test_input = gt_rgb * (1 - mask_GT) + tamper_source * mask_GT
-
         else:
             ####################################################################################################
             # todo: auto generated
@@ -1369,13 +1369,58 @@ class Modified_invISP(BaseModel):
             masks, masks_GT = self.mask_generation(modified_input=gt_rgb,
                                                    percent_range=percent_range, logs=logs)
 
+            self.previous_protected = gt_rgb
+
+        ### if the model requires image protection?
+        if load_real_world_tamper:
+            input_psdown = self.psdown(input_raw_one_dim)
+            modified_psdown = input_psdown + self.KD_JPEG(input_psdown)
+            modified_raw_one_dim = self.psup(modified_psdown)
+
+            ### model selection
+            if self.global_step % 3 == 0:
+                isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
+            elif self.global_step % 3 == 1:
+                isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
+            else:  # if self.global_step%3==2:
+                isp_model_0, isp_model_1 = self.netG, self.generator
+
+            modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern,
+                                              white_balance=camera_white_balance)
+            RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
+            logs['RAW_L1'] = RAW_L1.item()
+            # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
+            modified_raw = self.clamp_with_grad(modified_raw)
+            #### invISP AS SUBSEQUENT ISP####
+            modified_input_0 = isp_model_0(modified_raw)
+            if self.use_gamma_correction:
+                modified_input_0 = self.gamma_correction(modified_input_0)
+            modified_input_0 = self.clamp_with_grad(modified_input_0)
+
+            modified_input_1 = isp_model_1(modified_raw)
+            if self.use_gamma_correction:
+                modified_input_1 = self.gamma_correction(modified_input_1)
+            modified_input_1 = self.clamp_with_grad(modified_input_1)
+
+            skip_the_second = np.random.rand() > 0.8
+            alpha_0 = 1.0 if skip_the_second else np.random.rand()
+            alpha_1 = 1 - alpha_0
+            non_tampered_image = alpha_0 * modified_input_0
+            non_tampered_image += alpha_1 * modified_input_1
+
+        else:
+            non_tampered_image = gt_rgb
+
+        ### conduct tampering
+        if load_real_world_tamper:
+            ## tampered image
+            test_input = non_tampered_image * (1 - mask_GT) + tamper_source * mask_GT
+        else:
             test_input, masks, mask_GT = self.tampering(
                 forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
-                modified_input=gt_rgb, percent_range=percent_range, logs=logs,
+                modified_input=non_tampered_image, percent_range=percent_range, logs=logs,
                 idx_clip=None, num_per_clip=None, index=tamper_index,
             )
-
-            self.previous_protected = gt_rgb
 
         ### attacks generate them all
         attack_lists = [
@@ -1458,6 +1503,7 @@ class Modified_invISP(BaseModel):
         pred_resfcn = target_model(attacked_image.detach().contiguous())
         if isinstance(pred_resfcn, (tuple)):
             pred_resfcn, _ = pred_resfcn
+        pred_resfcn = torch.sigmoid(pred_resfcn)
         # refined_resfcn, std_pred, mean_pred = post_pack
 
         # CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
