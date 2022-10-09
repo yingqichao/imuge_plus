@@ -1456,6 +1456,8 @@ class Modified_invISP(BaseModel):
         # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
         ####################################################################################################
         pred_resfcn = target_model(attacked_image.detach().contiguous())
+        if isinstance(pred_resfcn, (tuple)):
+            pred_resfcn, _ = pred_resfcn
         # refined_resfcn, std_pred, mean_pred = post_pack
 
         # CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
