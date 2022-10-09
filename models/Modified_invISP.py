@@ -815,7 +815,7 @@ class Modified_invISP(BaseModel):
 
                         ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                         if "discriminator_mask" in self.training_network_list:
-                            pred_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
+                            pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
                             # refined_resfcn, std_pred, mean_pred = post_pack
                             # norm_pred, adaptive_pred, diff_pred = intermediate
                             # norm_pred = self.clamp_with_grad(norm_pred)
@@ -823,15 +823,16 @@ class Modified_invISP(BaseModel):
                             # diff_pred = self.clamp_with_grad(diff_pred)
 
                             CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                            # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
+                            l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
                             # l1_mean = self.l2_loss(mean_pred, mean_gt)
                             # l1_std = self.l2_loss(std_pred, std_gt)
 
                             # CE_control = self.CE_loss(pred_control, label_control)
-                            CE_loss = CE_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
+                            CE_loss = CE_resfcn + l1_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
                             logs['CE'] = CE_resfcn.item()
                             logs['CE_ema'] = CE_resfcn.item()
-                            # logs['l1_ema'] = l1_resfcn.item()
+                            logs['CEL1'] = l1_resfcn.item()
+                            logs['l1_ema'] = l1_resfcn.item()
                             # logs['Mean'] = l1_mean.item()
                             # logs['Std'] = l1_std.item()
                             # logs['CE_control'] = CE_control.item()
@@ -848,7 +849,7 @@ class Modified_invISP(BaseModel):
 
                         ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
                         if "KD_JPEG" in self.training_network_list:
-                            pred_resfcn = self.discriminator_mask(attacked_image)
+                            pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image)
                             # refined_resfcn, std_pred, mean_pred = post_pack
                             # norm_pred, adaptive_pred, diff_pred = intermediate
                             # norm_pred = self.clamp_with_grad(norm_pred)
@@ -856,14 +857,14 @@ class Modified_invISP(BaseModel):
                             # diff_pred = self.clamp_with_grad(diff_pred)
 
                             CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                            # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
+                            l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
                             # l1_mean = self.l2_loss(mean_pred, mean_gt)
                             # l1_std = self.l2_loss(std_pred, std_gt)
 
                             # CE_control = self.CE_loss(pred_control, label_control)
                             CE_loss = CE_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
                             logs['CE_ema'] = CE_resfcn.item()
-                            # logs['l1_ema'] = l1_resfcn.item()
+                            logs['l1_ema'] = l1_resfcn.item()
                             # logs['Mean'] = l1_mean.item()
                             # logs['Std'] = l1_std.item()
 
@@ -880,6 +881,7 @@ class Modified_invISP(BaseModel):
                             # loss += loss_style
                             hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
                             loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+
                             logs['ISP_SSIM_NOW'] = -loss_ssim.item()
                             # logs['Percept'] = loss_percept.item()
                             # logs['Style'] = loss_style.item()
@@ -958,6 +960,7 @@ class Modified_invISP(BaseModel):
                             # self.postprocess(torch.sigmoid(pred_mantra)),
                             # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mantra))),
                             self.postprocess(torch.sigmoid(pred_resfcn)),
+                            self.postprocess(torch.sigmoid(post_resfcn)),
                             # self.postprocess(refined_resfcn),
                             # norm_pred, adaptive_pred, diff_pred
                             # self.postprocess(norm_pred),
@@ -1294,7 +1297,6 @@ class Modified_invISP(BaseModel):
         tamper_index = self.opt['inference_tamper_index']
         do_subsequent_prediction = self.opt['inference_do_subsequent_prediction']
         load_real_world_tamper = self.opt['inference_load_real_world_tamper']
-
         gt_rgb = self.label_val
 
         # input_raw_one_dim = self.real_H_val
@@ -1312,7 +1314,9 @@ class Modified_invISP(BaseModel):
         logs = {}
         logs['lr'] = 0
 
-        self.localizer.eval()
+        using_which_model_for_test = self.opt['using_which_model_for_test']
+        test_model = self.discriminator_mask if "localizer" not in using_which_model_for_test else self.localizer
+        test_model.eval()
 
         ### get tampering source and mask
         if load_real_world_tamper:
@@ -1386,7 +1390,7 @@ class Modified_invISP(BaseModel):
         ]
 
         do_attack, quality_idx, do_augment = attack_lists[self.opt['inference_benign_attack_begin_idx']]
-        logs_pred, pred_resfcn, _ = self.get_predicted_mask(target_model=self.localizer,
+        logs_pred, pred_resfcn, _ = self.get_predicted_mask(target_model=test_model,
                                                             modified_input=test_input,
                                                             masks_GT=mask_GT, do_attack=do_attack,
                                                             quality_idx=quality_idx,

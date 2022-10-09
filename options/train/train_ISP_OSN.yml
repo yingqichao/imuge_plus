@@ -22,13 +22,8 @@ L1_hyper_param: 1
 style_hyper_param: 10
 raw_classes: 5
 
-### UNet models #########
-#load_localizer_models: 13999
-#load_RAW_models: 2999 # 13999
-#load_ISP_models: 20999
-### UNet models #########
-load_localizer_models: 13999
-load_RAW_models: 2999 # 13999
+load_localizer_models: 11999
+load_RAW_models: 11999 # 13999
 load_ISP_models: 20999
 
 
@@ -38,6 +33,7 @@ inference_load_real_world_tamper: true
 inference_do_subsequent_prediction: true
 inference_tamper_index: 2
 inference_save_image: false
+using_which_model_for_test: discriminator_mask
 #### datasets
 phase: train
 only_gen_immunized: 0.0

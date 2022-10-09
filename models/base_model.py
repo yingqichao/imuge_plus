@@ -63,7 +63,7 @@ from models.networks import UNetDiscriminator
 from loss import PerceptualLoss, StyleLoss
 from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet
-from lama_models.my_own_elastic import my_own_elastic
+from lama_models.my_own_elastic_dtcwt import my_own_elastic
 
 class BaseModel():
     def __init__(self, opt,  args, train_set=None):
@@ -218,7 +218,7 @@ class BaseModel():
         if 'UNet' not in self.task_name:
             print("using my_own_elastic as KD_JPEG.")
             n_channels = 3 if "ablation" in self.task_name else 4 # 36/48 12
-            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=16, num_blocks=8,
+            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=16,
                                           use_norm_conv=False).cuda()
         else:
             self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
@@ -232,7 +232,7 @@ class BaseModel():
     def define_tampering_localization_network(self):
         if 'UNet' not in self.task_name:
             print("using my_own_elastic as discriminator_mask.")
-            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=16, num_blocks=8,
+            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=16,
                                                      use_norm_conv=True).cuda()
         else:
             self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,

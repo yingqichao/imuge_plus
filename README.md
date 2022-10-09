@@ -10,6 +10,7 @@ How to test OSN in the code
 - Line 141 of Modified_invISP.py, modify the model as that of OSN network
 - specify Line 1319-2323 which provides the tamper source and mask
 - the setting file is train_ISP_OSN.yml. If you want to do automatic copy-move, set ```inference_tamper_index=2``` and ```inference_load_real_world_tamper=False```
+- ```using_which_model_for_test``` decides using which model for testing. ```discriminator_mask``` is our method, ```localizer``` is OSN.
 
 Output:
 - The average F1 score will be printed in the console

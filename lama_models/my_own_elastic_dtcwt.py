@@ -406,30 +406,30 @@ class my_own_elastic(nn.Module):
                               )
             )
 
-        if self.use_norm_conv:
-            if self.use_norm_conv:
-                self.global_pool = sequential(
-                    torch.nn.AdaptiveAvgPool2d((1, 1)),
-                    torch.nn.Flatten(),
-                    torch.nn.Linear(nch, nch),
-                    nn.ReLU(),
-                    # nn.Sigmoid()
-                )
-                self.to_gamma_1 = sequential(torch.nn.Linear(nch, 1), nn.Sigmoid())
-                self.to_beta_1 = sequential(torch.nn.Linear(nch, 1), nn.Tanh())
 
-                self.IN = nn.InstanceNorm2d(1, affine=False)
-                self.post_process = nn.Sequential(
-                    nn.Conv2d(1, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
-                    nn.ELU(),
-                    nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
-                )
+        if self.use_norm_conv:
+            # self.global_pool = sequential(
+            #     torch.nn.AdaptiveAvgPool2d((1, 1)),
+            #     torch.nn.Flatten(),
+            #     torch.nn.Linear(nch, nch),
+            #     nn.ReLU(),
+            #     # nn.Sigmoid()
+            # )
+            # self.to_gamma_1 = sequential(torch.nn.Linear(nch, 1), nn.Sigmoid())
+            # self.to_beta_1 = sequential(torch.nn.Linear(nch, 1), nn.Tanh())
+            #
+            # self.IN = nn.InstanceNorm2d(1, affine=False)
+            self.post_process_conv = nn.Sequential(
+                nn.Conv2d(4, 16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+                nn.ELU(),
+                nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
+            )
 
 
     def forward(self, X):
@@ -476,6 +476,10 @@ class my_own_elastic(nn.Module):
         Yhm = [Yh1m, Yh2m, Yh3m]
 
         Y = self.ifm((Y_scale0m, Yhm))
+
+        if self.use_norm_conv:
+            Y_post = self.post_process_conv(torch.cat([X,torch.sigmoid(Y.detach())],dim=1))
+            return Y, Y_post
 
         return Y
 
