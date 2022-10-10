@@ -7,7 +7,7 @@ model: ISP # CVPR
 distortion: sr
 scale: 4
 gpu_ids: [0,1,3] #[1,3,4]
-step_acumulate: 2
+step_acumulate: 4
 train_isp_networks: false
 train_full_pipeline: true
 use_gamma_correction: false
@@ -16,15 +16,17 @@ consider_robost: true
 include_isp_inference: true
 conduct_augmentation: true
 train_inpainting_surrogate_model: false
-psnr_thresh: 35
-CE_hyper_param: 0.1
-perceptual_hyper_param: 0.01
+psnr_thresh: 40
+CE_hyper_param: 0.2
+ssim_hyper_param: 0.01
+perceptual_hyper_param: 0.004
+RAW_L1_hyper_param: 4
 L1_hyper_param: 1
-style_hyper_param: 10
+style_hyper_param: 1
 raw_classes: 5
 
-load_localizer_models: 11999
-load_RAW_models: 11999 # 10999
+load_localizer_models: 10999
+load_RAW_models: 10999 # 10999
 load_ISP_models: 20999
 #### datasets
 phase: train
@@ -57,7 +59,7 @@ datasets:
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 9 # 4
+    batch_size: 12 # 4
     GT_size: 512 # 608
     #########################
     use_flip: true
@@ -79,7 +81,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 2e-5   # 2e-5
+  lr_scratch: !!float 1e-4   # 2e-5
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

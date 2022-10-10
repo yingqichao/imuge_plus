@@ -96,7 +96,9 @@ class BaseModel():
         self.consider_robost = self.opt['consider_robost']
         self.CE_hyper_param = self.opt['CE_hyper_param']
         self.perceptual_hyper_param = self.opt['perceptual_hyper_param']
+        self.ssim_hyper_param = self.opt['ssim_hyper_param']
         self.L1_hyper_param = self.opt["L1_hyper_param"]
+        self.RAW_L1_hyper_param = self.opt['RAW_L1_hyper_param']
         self.style_hyper_param = self.opt['style_hyper_param']
         self.psnr_thresh = self.opt['psnr_thresh']
         self.raw_classes = self.opt['raw_classes']
@@ -256,41 +258,31 @@ class BaseModel():
     # todo: using which image processing attacks?
     ####################################################################################################
     def using_weak_jpeg_plus_blurring_etc(self):
-        return self.global_step % 5 in {0, 1, 2}
+        return self.global_step % 8 in {1,2,4,6,7}
 
     def begin_using_momentum(self):
         return False #self.global_step>=0
-    # def using_gaussian_blur(self):
-    #     return self.global_step % 5 == 1
-    # def using_median_blur(self):
-    #     return self.global_step % 5 == 2
-    # def using_resizing(self):
-    #     return self.global_step % 5 == 0
-    # def using_jpeg_simulation_only(self):
-    #     return False #self.global_step % 5 == 4
-    # def using_gaussian_noise(self):
-    #     return self.global_step % 5 == 4
 
     ####################################################################################################
     # todo: settings for beginning training
     ####################################################################################################
     def data_augmentation_on_rendered_rgb(self, modified_input, index=None):
         if index is None:
-            index = self.global_step % 4
+            index = self.global_step % 7
 
-        if index % 4 == 0:
+        if index % 4 in [0]:
             ## careful!
             modified_adjusted = F.adjust_hue(modified_input, hue_factor=-0.1 + 0.2 * np.random.rand())  # 0.5 ave
-        elif index % 4 == 1:
-            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
+        elif index % 4 in [1,4]:
+            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=0.5 + 1 * np.random.rand())  # 1 ave
         # elif self.global_step%5==2:
         ## not applicable
         # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
-        elif index % 4 == 2:
-            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=0.5 + 1.5 * np.random.rand())
-        else:
+        elif index % 4 in [2,5]:
+            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=0.5 + 1 * np.random.rand())
+        elif index % 4 in [3,6]:
             modified_adjusted = F.adjust_brightness(modified_input,
-                                                    brightness_factor=0.5 + 1.5 * np.random.rand())  # 1 ave
+                                                    brightness_factor=0.5 + 1 * np.random.rand())  # 1 ave
         modified_adjusted = self.clamp_with_grad(modified_adjusted)
 
         return modified_adjusted #modified_input + (modified_adjusted - modified_input).detach()
@@ -304,6 +296,29 @@ class BaseModel():
         tensor = tensor / norm
 
         return tensor
+
+    def do_aug_train(self, *, attacked_forward):
+        skip_augment = np.random.rand() > 0.85
+        if not skip_augment and self.conduct_augmentation:
+            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
+        else:
+            attacked_adjusted = attacked_forward
+
+        return attacked_adjusted
+
+    def do_postprocess_train(self, *, attacked_adjusted, logs):
+        skip_robust = np.random.rand() > 0.85
+        if not skip_robust and self.consider_robost:
+            if self.using_weak_jpeg_plus_blurring_etc():
+                quality_idx = np.random.randint(20, 21)
+            else:
+                quality_idx = np.random.randint(12, 20)
+            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
+                                                 quality_idx=quality_idx)
+        else:
+            attacked_image = attacked_adjusted
+
+        return attacked_image
 
     @torch.no_grad()
     def _momentum_update_key_encoder(self, momentum=0.9):
@@ -519,17 +534,18 @@ class BaseModel():
         batch_size, height_width = attacked_forward.shape[0], attacked_forward.shape[2]
         attacked_real_jpeg = torch.rand_like(attacked_forward).cuda()
         if index is None:
-            index = self.global_step % 5
+            index = self.global_step % 8
 
-        if index==0:
+        ## id of weak JPEG: 1,2,4,6,7
+        if index in [0,5]:
             blurring_layer = self.resize
-        elif index==1:
+        elif index in [1,6]:
             blurring_layer = self.gaussian_blur
-        elif index==2:
+        elif index in [2,7]:
             blurring_layer = self.median_blur
-        elif index==4:
+        elif index in [4]:
             blurring_layer = self.gaussian
-        else:
+        elif index in [3]:
             blurring_layer = self.identity
 
         quality = int(quality_idx * 5)
@@ -569,25 +585,30 @@ class BaseModel():
     def real_world_attacking_on_ndarray(self, grid, qf_after_blur, index=None):
         # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         if index is None:
-            index = self.global_step % 5
+            index = self.global_step % 8
 
-        if index == 0:
-            grid = self.resize(grid.unsqueeze(0))[0]
         ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
-        if index == 1:
+        if index in [0,5]:
+            # grid = self.resize(grid.unsqueeze(0))[0]
+            newH, newW = int((0.7+0.6*np.random.rand())*self.width_height), int((0.7+0.6*np.random.rand())*self.width_height)
+            realworld_attack = cv2.resize(np.copy(ndarr), (newH,newW),
+                                          interpolation=cv2.INTER_LINEAR)
+            realworld_attack = cv2.resize(np.copy(realworld_attack), (self.width_height, self.width_height),
+                                interpolation=cv2.INTER_LINEAR)
+        elif index in [1,6]:
             kernel_list = [3, 5, 7]
             kernel = random.choice(kernel_list)
             realworld_attack = cv2.GaussianBlur(ndarr, (kernel, kernel), 0)
-        elif index == 2:
+        elif index in [2,7]:
             kernel_list = [3, 5, 7]
             kernel = random.choice(kernel_list)
             realworld_attack = cv2.medianBlur(ndarr, kernel)
-        elif index == 4:
+        elif index in [4]:
             mean, sigma = 0, 1
             gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
             # 给图片添加高斯噪声
             realworld_attack = ndarr + gauss
-        else:
+        elif index in [3]:
             realworld_attack = ndarr
 
         _, realworld_attack = cv2.imencode('.jpeg', realworld_attack,
