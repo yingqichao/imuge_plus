@@ -259,7 +259,7 @@ class BaseModel():
     # todo: using which image processing attacks?
     ####################################################################################################
     def using_weak_jpeg_plus_blurring_etc(self):
-        return self.global_step % 8 in {1,2,4,6,7}
+        return self.global_step % 8 in {0,1,2,4,6,7}
 
     def begin_using_momentum(self):
         return False #self.global_step>=0
@@ -274,19 +274,19 @@ class BaseModel():
         is_stronger = np.random.rand() > 0.5
         if index % 4 in [0]:
             ## careful!
-            strength = np.random.rand() * (0.15 if is_stronger>0 else -0.15)
+            strength = np.random.rand() * (0.2 if is_stronger>0 else -0.2)
             modified_adjusted = F.adjust_hue(modified_input, hue_factor=0+strength)  # 0.5 ave
         elif index % 4 in [1,4]:
-            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
             modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1+strength)  # 1 ave
         # elif self.global_step%5==2:
         ## not applicable
         # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
         elif index % 4 in [2,5]:
-            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
             modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1+strength)
         elif index % 4 in [3,6]:
-            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
             modified_adjusted = F.adjust_brightness(modified_input,
                                                     brightness_factor=1+strength)  # 1 ave
         modified_adjusted = self.clamp_with_grad(modified_adjusted)
@@ -304,7 +304,7 @@ class BaseModel():
         return tensor
 
     def do_aug_train(self, *, attacked_forward):
-        skip_augment = np.random.rand() > 0.85
+        skip_augment = np.random.rand() > 0.8
         if not skip_augment and self.conduct_augmentation:
             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
         else:
@@ -313,12 +313,12 @@ class BaseModel():
         return attacked_adjusted
 
     def do_postprocess_train(self, *, attacked_adjusted, logs):
-        skip_robust = np.random.rand() > 0.85
+        skip_robust = np.random.rand() > 0.8
         if not skip_robust and self.consider_robost:
             if self.using_weak_jpeg_plus_blurring_etc():
-                quality_idx = np.random.randint(19, 21)
+                quality_idx = np.random.randint(20, 21)
             else:
-                quality_idx = np.random.randint(10, 19)
+                quality_idx = np.random.randint(10, 21)
             attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
                                                  quality_idx=quality_idx)
         else:
@@ -542,7 +542,7 @@ class BaseModel():
         if index is None:
             index = self.global_step % 8
 
-        ## id of weak JPEG: 1,2,4,6,7
+        ## id of weak JPEG: 0,1,2,4,6,7
         if index in [0,5]:
             blurring_layer = self.resize
         elif index in [1,6]:

@@ -766,7 +766,7 @@ class Modified_invISP(BaseModel):
                         # modified_wb = white_balance_again * modified_input
                         # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
 
-                        first_aug_then_postprocess = np.random.rand()>0.33
+                        first_aug_then_postprocess = True #np.random.rand()>0.5
                         if first_aug_then_postprocess:
                             attacked_adjusted = self.do_aug_train(attacked_forward=attacked_forward)
                             attacked_image = self.do_postprocess_train(attacked_adjusted=attacked_adjusted, logs=logs)
@@ -848,14 +848,12 @@ class Modified_invISP(BaseModel):
                             # diff_pred = self.clamp_with_grad(diff_pred)
 
                             CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                            # l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
+                            l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
                             # l1_mean = self.l2_loss(mean_pred, mean_gt)
                             # l1_std = self.l2_loss(std_pred, std_gt)
 
                             # CE_control = self.CE_loss(pred_control, label_control)
                             CE_loss = CE_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
-                            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn[num_per_clip:]), masks_GT[num_per_clip:])
-                            l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn[num_per_clip:]), masks_GT[num_per_clip:])
                             logs['CE_ema'] = CE_resfcn.item()
                             logs['l1_ema'] = l1_resfcn.item()
                             # logs['Mean'] = l1_mean.item()
@@ -865,8 +863,7 @@ class Modified_invISP(BaseModel):
                             loss = 0
                             loss_l1 = self.L1_hyper_param * (ISP_L1_0+ISP_L1_1)/2
                             loss += loss_l1
-                            hyper_param_raw = self.RAW_L1_hyper_param if (ISP_PSNR < self.psnr_thresh) else self.RAW_L1_hyper_param/4
-
+                            hyper_param_raw = self.RAW_L1_hyper_param if (ISP_PSNR < self.psnr_thresh) else self.RAW_L1_hyper_param/5
                             loss += hyper_param_raw * RAW_L1
                             loss_ssim = self.ssim_hyper_param * (ISP_SSIM_0+ISP_SSIM_1)/2
                             loss += loss_ssim
@@ -875,7 +872,7 @@ class Modified_invISP(BaseModel):
                             loss += loss_percept
                             loss_style = self.style_hyper_param * (ISP_style_0 +ISP_style_1) / 2
                             # loss += loss_style
-                            hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/5
+                            hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
                             loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
 
                             logs['ISP_SSIM_NOW'] = -loss_ssim.item()
@@ -908,11 +905,11 @@ class Modified_invISP(BaseModel):
                                 # self.scaler_kd_jpeg.step(self.optimizer_discriminator_mask)
                                 # self.scaler_kd_jpeg.update()
                                 self.optimizer_KD_JPEG.zero_grad()
-                            self.optimizer_G.zero_grad()
-                            self.optimizer_localizer.zero_grad()
-                            self.optimizer_generator.zero_grad()
-                            self.optimizer_qf.zero_grad()
-                            self.optimizer_discriminator_mask.zero_grad()
+                                self.optimizer_G.zero_grad()
+                                self.optimizer_localizer.zero_grad()
+                                self.optimizer_discriminator_mask.zero_grad()
+                                self.optimizer_generator.zero_grad()
+                                self.optimizer_qf.zero_grad()
 
                     ####################################################################################################
                     # todo: printing the images
@@ -944,18 +941,18 @@ class Modified_invISP(BaseModel):
                             # self.postprocess(tamper_source),
                             # self.postprocess(10 * torch.abs(modified_input - tamper_source)),
                             ### tampering and benign attack
-                            self.postprocess(attacked_forward[:num_per_clip]),
-                            self.postprocess(attacked_adjusted[:num_per_clip]),
-                            self.postprocess(attacked_image[:num_per_clip]),
-                            self.postprocess(10 * torch.abs(attacked_forward[:num_per_clip] - attacked_image[:num_per_clip])),
+                            self.postprocess(attacked_forward),
+                            self.postprocess(attacked_adjusted),
+                            self.postprocess(attacked_image),
+                            self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
                             ### tampering detection
-                            self.postprocess(masks_GT[:num_per_clip]),
+                            self.postprocess(masks_GT),
                             # self.postprocess(torch.sigmoid(pred_mvss)),
                             # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mvss))),
                             # self.postprocess(torch.sigmoid(pred_mantra)),
                             # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mantra))),
-                            self.postprocess(torch.sigmoid(pred_resfcn[:num_per_clip])),
-                            self.postprocess(torch.sigmoid(post_resfcn[:num_per_clip])),
+                            self.postprocess(torch.sigmoid(pred_resfcn)),
+                            self.postprocess(torch.sigmoid(post_resfcn)),
                             # self.postprocess(refined_resfcn),
                             # norm_pred, adaptive_pred, diff_pred
                             # self.postprocess(norm_pred),
@@ -993,7 +990,7 @@ class Modified_invISP(BaseModel):
         # todo:
         ####################################################################################################
         ######## Finally ####################
-        if self.global_step % 1000 == 999 or self.global_step == 9:
+        if self.global_step % 500 == 499 or self.global_step == 9:
             if self.rank == 0:
                 print('Saving models and training states.')
                 self.save(self.global_step, folder='model', network_list=self.save_network_list)
@@ -1577,7 +1574,9 @@ class Modified_invISP(BaseModel):
         self.qf_predict_network.eval()
         self.generator.eval()
         ### RAW PROTECTION ###
-        modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
+        input_psdown = self.psdown(input_raw_one_dim)
+        modified_psdown = input_psdown + self.KD_JPEG(input_psdown)
+        modified_raw_one_dim = self.psup(modified_psdown)
         # raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
 
         modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern,
