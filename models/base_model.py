@@ -92,6 +92,7 @@ class BaseModel():
         self.new_task = self.train_opt['new_task']
         self.use_gamma_correction = self.opt['use_gamma_correction']
         self.conduct_augmentation = self.opt['conduct_augmentation']
+        self.lower_false_positive = self.opt['lower_false_positive']
         self.conduct_cropping = self.opt['conduct_cropping']
         self.consider_robost = self.opt['consider_robost']
         self.CE_hyper_param = self.opt['CE_hyper_param']
@@ -270,19 +271,24 @@ class BaseModel():
         if index is None:
             index = self.global_step % 7
 
+        is_stronger = np.random.rand() > 0.5
         if index % 4 in [0]:
             ## careful!
-            modified_adjusted = F.adjust_hue(modified_input, hue_factor=-0.1 + 0.2 * np.random.rand())  # 0.5 ave
+            strength = np.random.rand() * (0.15 if is_stronger>0 else -0.15)
+            modified_adjusted = F.adjust_hue(modified_input, hue_factor=0+strength)  # 0.5 ave
         elif index % 4 in [1,4]:
-            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=0.5 + 1 * np.random.rand())  # 1 ave
+            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1+strength)  # 1 ave
         # elif self.global_step%5==2:
         ## not applicable
         # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
         elif index % 4 in [2,5]:
-            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=0.5 + 1 * np.random.rand())
+            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1+strength)
         elif index % 4 in [3,6]:
+            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
             modified_adjusted = F.adjust_brightness(modified_input,
-                                                    brightness_factor=0.5 + 1 * np.random.rand())  # 1 ave
+                                                    brightness_factor=1+strength)  # 1 ave
         modified_adjusted = self.clamp_with_grad(modified_adjusted)
 
         return modified_adjusted #modified_input + (modified_adjusted - modified_input).detach()
@@ -310,9 +316,9 @@ class BaseModel():
         skip_robust = np.random.rand() > 0.85
         if not skip_robust and self.consider_robost:
             if self.using_weak_jpeg_plus_blurring_etc():
-                quality_idx = np.random.randint(20, 21)
+                quality_idx = np.random.randint(19, 21)
             else:
-                quality_idx = np.random.randint(12, 20)
+                quality_idx = np.random.randint(10, 19)
             attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
                                                  quality_idx=quality_idx)
         else:

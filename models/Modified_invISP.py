@@ -753,6 +753,10 @@ class Modified_invISP(BaseModel):
                             idx_clip=idx_clip, num_per_clip=num_per_clip,
                         )
 
+                        ## lower false positive
+                        if self.lower_false_positive:
+                            attacked_forward = torch.cat([attacked_forward, modified_input],dim=0)
+                            masks_GT = torch.cat([masks_GT, torch.zeros_like(masks_GT[:1])],dim=0)
 
                         # # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000],
                         # white_balance_again_red = 0.7+0.6*torch.rand((batch_size,1)).cuda()
@@ -844,12 +848,14 @@ class Modified_invISP(BaseModel):
                             # diff_pred = self.clamp_with_grad(diff_pred)
 
                             CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                            l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
+                            # l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
                             # l1_mean = self.l2_loss(mean_pred, mean_gt)
                             # l1_std = self.l2_loss(std_pred, std_gt)
 
                             # CE_control = self.CE_loss(pred_control, label_control)
                             CE_loss = CE_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
+                            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn[num_per_clip:]), masks_GT[num_per_clip:])
+                            l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn[num_per_clip:]), masks_GT[num_per_clip:])
                             logs['CE_ema'] = CE_resfcn.item()
                             logs['l1_ema'] = l1_resfcn.item()
                             # logs['Mean'] = l1_mean.item()
@@ -869,7 +875,7 @@ class Modified_invISP(BaseModel):
                             loss += loss_percept
                             loss_style = self.style_hyper_param * (ISP_style_0 +ISP_style_1) / 2
                             # loss += loss_style
-                            hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
+                            hyper_param = self.CE_hyper_param if (ISP_PSNR>=self.psnr_thresh) else self.CE_hyper_param/5
                             loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
 
                             logs['ISP_SSIM_NOW'] = -loss_ssim.item()
@@ -892,21 +898,21 @@ class Modified_invISP(BaseModel):
                                     nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
                                     # nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
                                     # nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-                                    nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                                    # nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
                                     # nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
                                 self.optimizer_KD_JPEG.step()
-                                self.optimizer_discriminator_mask.step()
+                                # self.optimizer_discriminator_mask.step()
                                 # self.scaler_kd_jpeg.step(self.optimizer_KD_JPEG)
                                 # self.scaler_kd_jpeg.step(self.optimizer_G)
                                 # self.scaler_kd_jpeg.step(self.optimizer_localizer)
                                 # self.scaler_kd_jpeg.step(self.optimizer_discriminator_mask)
                                 # self.scaler_kd_jpeg.update()
                                 self.optimizer_KD_JPEG.zero_grad()
-                                self.optimizer_G.zero_grad()
-                                self.optimizer_localizer.zero_grad()
-                                self.optimizer_discriminator_mask.zero_grad()
-                                self.optimizer_generator.zero_grad()
-                                self.optimizer_qf.zero_grad()
+                            self.optimizer_G.zero_grad()
+                            self.optimizer_localizer.zero_grad()
+                            self.optimizer_generator.zero_grad()
+                            self.optimizer_qf.zero_grad()
+                            self.optimizer_discriminator_mask.zero_grad()
 
                     ####################################################################################################
                     # todo: printing the images
@@ -938,18 +944,18 @@ class Modified_invISP(BaseModel):
                             # self.postprocess(tamper_source),
                             # self.postprocess(10 * torch.abs(modified_input - tamper_source)),
                             ### tampering and benign attack
-                            self.postprocess(attacked_forward),
-                            self.postprocess(attacked_adjusted),
-                            self.postprocess(attacked_image),
-                            self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
+                            self.postprocess(attacked_forward[:num_per_clip]),
+                            self.postprocess(attacked_adjusted[:num_per_clip]),
+                            self.postprocess(attacked_image[:num_per_clip]),
+                            self.postprocess(10 * torch.abs(attacked_forward[:num_per_clip] - attacked_image[:num_per_clip])),
                             ### tampering detection
-                            self.postprocess(masks_GT),
+                            self.postprocess(masks_GT[:num_per_clip]),
                             # self.postprocess(torch.sigmoid(pred_mvss)),
                             # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mvss))),
                             # self.postprocess(torch.sigmoid(pred_mantra)),
                             # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mantra))),
-                            self.postprocess(torch.sigmoid(pred_resfcn)),
-                            self.postprocess(torch.sigmoid(post_resfcn)),
+                            self.postprocess(torch.sigmoid(pred_resfcn[:num_per_clip])),
+                            self.postprocess(torch.sigmoid(post_resfcn[:num_per_clip])),
                             # self.postprocess(refined_resfcn),
                             # norm_pred, adaptive_pred, diff_pred
                             # self.postprocess(norm_pred),

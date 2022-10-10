@@ -16,6 +16,8 @@ consider_robost: true
 include_isp_inference: true
 conduct_augmentation: true
 train_inpainting_surrogate_model: false
+lower_false_positive: true
+
 psnr_thresh: 40
 CE_hyper_param: 0.2
 ssim_hyper_param: 0.01
@@ -35,6 +37,7 @@ eval_dataset: COCO
 eval_kind: inpainting
 eval_attack: NOATK
 dataset_name: Rerun
+
 #phase: test
 
 datasets:
@@ -81,7 +84,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 1e-4   # 2e-5
+  lr_scratch: !!float 4e-5   # 2e-5
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
