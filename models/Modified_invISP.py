@@ -1320,7 +1320,7 @@ class Modified_invISP(BaseModel):
             # todo: you should load the tamper source from your folder
             ####################################################################################################
             step = step % 758
-            file_name = "%05d.png" % step #f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
+            file_name = "%05d.png" % (step % 758) #f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
             folder_name = '/groupshare/ISP_results/test_results/forged/' #f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
             mask_file_name = file_name #f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
             mask_folder_name = '/groupshare/ISP_results/test_results/mask/' #f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
@@ -1495,7 +1495,8 @@ class Modified_invISP(BaseModel):
         ####################################################################################################
         pred_resfcn = target_model(attacked_image.detach().contiguous())
         if isinstance(pred_resfcn, (tuple)):
-            pred_resfcn, _ = pred_resfcn
+            # pred_resfcn,  _ = pred_resfcn
+            _, pred_resfcn = pred_resfcn
         pred_resfcn = torch.sigmoid(pred_resfcn)
         # refined_resfcn, std_pred, mean_pred = post_pack
 
@@ -1512,11 +1513,13 @@ class Modified_invISP(BaseModel):
 
         # refined_resfcn_bn = torch.where(refined_resfcn > 0.5, 1.0, 0.0)
 
-        F1, RECALL = self.F1score(pred_resfcn_bn, masks_GT, thresh=0.5)
+        F1, RECALL, AUC, IoU = self.F1score(pred_resfcn_bn, masks_GT, thresh=0.5, get_auc=True)
         # F1_1, RECALL_1 = self.F1score(refined_resfcn_bn, masks_GT, thresh=0.5)
         logs['F1'] = F1
         # logs['F1_1'] = F1_1
         logs['RECALL'] = RECALL
+        logs['AUC'] = AUC
+        logs['IoU'] = IoU
         # logs['RECALL_1'] = RECALL_1
 
         if save_image:
@@ -1714,15 +1717,19 @@ class Modified_invISP(BaseModel):
 
                     ### attacks generate them all
                     attack_lists = [
-                        (None,None,None),(None,None,0),(None,None,1),
-                        (0, 20, None), (0, 20, 2), (0, 20, 1),
-                        (1, 20, None), (1, 20, 3), (1, 20, 0),
-                        (2, 20, None), (2, 20, 1), (2, 20, 2),
-                        (3, 10, None), (3, 10, 3), (3, 10, 0),
-                        (3, 14, None), (3, 14, 2), (3, 14, 1),
-                        (3, 18, None), (3, 18, 0), (3, 18, 3),
-                        (4, 20, None), (4, 20, 1), (4, 20, 2),
+                        (0, None, None), (1, None, None), (2, None, None), (3, 18, None), (3, 14, None), (4, None, None),
+                        (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
                     ]
+                    # attack_lists = [
+                    #     (None,None,None),(None,None,0),(None,None,1),
+                    #     (0, 20, None), (0, 20, 2), (0, 20, 1),
+                    #     (1, 20, None), (1, 20, 3), (1, 20, 0),
+                    #     (2, 20, None), (2, 20, 1), (2, 20, 2),
+                    #     (3, 10, None), (3, 10, 3), (3, 10, 0),
+                    #     (3, 14, None), (3, 14, 2), (3, 14, 1),
+                    #     (3, 18, None), (3, 18, 0), (3, 18, 3),
+                    #     (4, 20, None), (4, 20, 1), (4, 20, 2),
+                    # ]
                     begin_idx = self.opt['inference_benign_attack_begin_idx']
                     for idx_attacks in range(begin_idx, begin_idx+1): # len(attack_lists)
                         do_attack, quality_idx, do_augment = attack_lists[idx_attacks]
