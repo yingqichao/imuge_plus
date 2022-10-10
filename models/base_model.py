@@ -970,16 +970,19 @@ class BaseModel():
     def random_float(self, min, max):
         return np.random.rand() * (max - min) + min
 
-    def F1score(self, predict_image, gt_image, thresh=0.2):
+    def F1score(self, predict_image, gt_image, thresh=0.2, get_auc=False):
         # gt_image = cv2.imread(src_image, 0)
         # predict_image = cv2.imread(dst_image, 0)
         # ret, gt_image = cv2.threshold(gt_image[0], int(255 * thresh), 255, cv2.THRESH_BINARY)
         # ret, predicted_binary = cv2.threshold(predict_image[0], int(255*thresh), 255, cv2.THRESH_BINARY)
         predicted_binary = self.tensor_to_image(predict_image[0])
-        ret, predicted_binary = cv2.threshold(predicted_binary, int(255 * thresh), 255, cv2.THRESH_BINARY)
         gt_image = self.tensor_to_image(gt_image[0, :1, :, :])
+        if get_auc:
+            AUC = getAUC(predicted_binary/255, gt_image/255)
+        ret, predicted_binary = cv2.threshold(predicted_binary, int(255 * thresh), 255, cv2.THRESH_BINARY)
         ret, gt_image = cv2.threshold(gt_image, int(255 * thresh), 255, cv2.THRESH_BINARY)
-
+        if get_auc:
+            IoU = getIOU(predicted_binary/255, gt_image/255)
         # print(predicted_binary.shape)
 
         [TN, TP, FN, FP] = getLabels(predicted_binary, gt_image)
@@ -987,7 +990,7 @@ class BaseModel():
         F1 = getF1(TP, FP, FN)
         RECALL = getTPR(TP, FN)
         # cv2.imwrite(save_path, predicted_binary)
-        return F1, RECALL
+        return (F1, RECALL, AUC, IoU) if get_auc else (F1, RECALL)
 
 def getLabels(img, gt_img):
     height = img.shape[0]
@@ -1026,3 +1029,34 @@ def getF1(TP, FP, FN):
 def getBER(TN, TP, FN, FP):
     return 1 / 2 * (getFPR(TN, FP) + FN / (FN + TP))
 
+def getAUC(pre, gt):
+    # 输入都是0-1区间内的 mask
+    from sklearn.metrics import roc_auc_score
+    auc = roc_auc_score(gt.flatten(), pre.flatten())
+    return auc
+
+def getIOU(pre, gt):
+    # 输入是二值化之后的 0 或 1
+    union = np.logical_or(pre, gt)
+    cross = np.logical_and(pre, gt)
+    iou = np.sum(cross) / (np.sum(union) + 1e-6)
+    if np.sum(cross) + np.sum(union) == 0:
+        iou = 1
+    return iou
+
+## here test iou and auc
+if __name__ == '__main__':
+    gt = np.random.choice(2, [256, 256])
+    pre = np.random.choice(2, [256, 256])
+    iou = getIOU(pre, gt)
+    print(iou)
+    from sklearn.metrics import f1_score
+    api_f1 = f1_score(gt.flatten(), pre.flatten())
+    print(api_f1)
+    auc = getAUC(pre.flatten(), gt.flatten())
+    # auc = getAUC(pre, gt)
+    print(auc)
+    [TN, TP, FN, FP] = getLabels(pre*255, gt*255)
+    # print("{} {} {} {}".format(TN,TP,FN,FP))
+    our_f1 = getF1(TP, FP, FN)
+    print(our_f1)
