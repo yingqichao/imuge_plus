@@ -108,6 +108,8 @@ class BaseModel():
         self.train_inpainting_surrogate_model = self.opt["train_inpainting_surrogate_model"]
         self.include_isp_inference = self.opt["include_isp_inference"]
         self.step_acumulate = self.opt["step_acumulate"]
+        self.dtcwt_layers = self.opt['dtcwt_layers']
+        self.model_save_period = self.opt['model_save_period']
 
         ####################################################################################################
         # todo: constants
@@ -221,7 +223,7 @@ class BaseModel():
         if 'UNet' not in self.task_name:
             print("using my_own_elastic as KD_JPEG.")
             n_channels = 3 if "ablation" in self.task_name else 4 # 36/48 12
-            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=16,
+            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.dtcwt_layers,
                                           use_norm_conv=False).cuda()
         else:
             self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
@@ -235,7 +237,7 @@ class BaseModel():
     def define_tampering_localization_network(self):
         if 'UNet' not in self.task_name:
             print("using my_own_elastic as discriminator_mask.")
-            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=16,
+            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.dtcwt_layers,
                                                      use_norm_conv=True).cuda()
         else:
             self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
@@ -304,7 +306,7 @@ class BaseModel():
         return tensor
 
     def do_aug_train(self, *, attacked_forward):
-        skip_augment = np.random.rand() > 0.8
+        skip_augment = np.random.rand() > 0.85
         if not skip_augment and self.conduct_augmentation:
             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
         else:
@@ -313,12 +315,12 @@ class BaseModel():
         return attacked_adjusted
 
     def do_postprocess_train(self, *, attacked_adjusted, logs):
-        skip_robust = np.random.rand() > 0.8
+        skip_robust = np.random.rand() > 0.85
         if not skip_robust and self.consider_robost:
             if self.using_weak_jpeg_plus_blurring_etc():
                 quality_idx = np.random.randint(20, 21)
             else:
-                quality_idx = np.random.randint(10, 21)
+                quality_idx = np.random.randint(10, 20)
             attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
                                                  quality_idx=quality_idx)
         else:

@@ -990,7 +990,7 @@ class Modified_invISP(BaseModel):
         # todo:
         ####################################################################################################
         ######## Finally ####################
-        if self.global_step % 500 == 499 or self.global_step == 9:
+        if self.global_step % (self.model_save_period) == (self.model_save_period-1) or self.global_step == 9:
             if self.rank == 0:
                 print('Saving models and training states.')
                 self.save(self.global_step, folder='model', network_list=self.save_network_list)
@@ -1053,15 +1053,18 @@ class Modified_invISP(BaseModel):
                         ####################################################################################################
 
                         ### RGB PROTECTION ###
-                        modified_input = self.KD_JPEG(gt_rgb)
+                        modified_input = gt_rgb + self.KD_JPEG(gt_rgb)
 
                         RAW_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
+                        ISP_percept, ISP_style = self.perceptual_loss(modified_input, gt_rgb,
+                                                                          with_gram=True)
 
                         modified_input = self.clamp_with_grad(modified_input)
 
                         RAW_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(gt_rgb)).item()
                         logs['RAW_PSNR'] = RAW_PSNR
                         logs['RAW_L1'] = RAW_L1.item()
+                        logs['Percept'] = ISP_percept.item()
 
 
                         collected_protected_image = modified_input.detach() if collected_protected_image is None else \
@@ -1139,19 +1142,14 @@ class Modified_invISP(BaseModel):
 
                         ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
 
-                        pred_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
-                        # refined_resfcn, std_pred, mean_pred = post_pack
-                        # norm_pred, adaptive_pred, diff_pred = intermediate
-
+                        pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
                         CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                        # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
-                        # l1_mean = self.l2_loss(mean_pred, mean_gt)
-                        # l1_std = self.l2_loss(std_pred, std_gt)
+                        l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
 
                         # CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
+                        CE_loss = CE_resfcn + l1_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
                         logs['CE'] = CE_resfcn.item()
-                        logs['CE_ema'] = CE_resfcn.item()
+                        logs['CEL1'] = l1_resfcn.item()
                         # logs['l1_ema'] = l1_resfcn.item()
                         # logs['Mean'] = l1_mean.item()
                         # logs['Std'] = l1_std.item()
@@ -1169,30 +1167,22 @@ class Modified_invISP(BaseModel):
 
                         ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
 
-                        pred_resfcn = self.discriminator_mask(attacked_image)
-                        # refined_resfcn, std_pred, mean_pred = post_pack
-                        # norm_pred, adaptive_pred, diff_pred = intermediate
-                        # norm_pred = self.clamp_with_grad(norm_pred)
-                        # adaptive_pred = self.clamp_with_grad(adaptive_pred)
-                        # diff_pred = self.clamp_with_grad(diff_pred)
-
+                        pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image)
                         CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                        # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
-                        # l1_mean = self.l2_loss(mean_pred, mean_gt)
-                        # l1_std = self.l2_loss(std_pred, std_gt)
+                        l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
 
                         # CE_control = self.CE_loss(pred_control, label_control)
-                        CE_loss = CE_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
+                        CE_loss = CE_resfcn + l1_resfcn  # + l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
                         logs['CE_ema'] = CE_resfcn.item()
-                        # logs['l1_ema'] = l1_resfcn.item()
-                        # logs['Mean'] = l1_mean.item()
-                        # logs['Std'] = l1_std.item()
+                        logs['l1_ema'] = l1_resfcn.item()
 
 
                         loss = 0
-
                         loss += self.L1_hyper_param * RAW_L1
-                        hyper_param = self.CE_hyper_param if (RAW_PSNR>=33) else self.CE_hyper_param/10
+                        hyper_param_percept = self.perceptual_hyper_param if (RAW_PSNR < self.psnr_thresh) else self.perceptual_hyper_param / 4
+                        loss_percept = hyper_param_percept * ISP_percept
+                        loss += loss_percept
+                        hyper_param = self.CE_hyper_param if (RAW_PSNR>=self.psnr_thresh) else self.CE_hyper_param/10
                         loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                         logs['loss'] = loss.item()
 
