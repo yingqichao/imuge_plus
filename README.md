@@ -13,21 +13,27 @@
 - restormer cannot be loaded simultaneously with OSN network, because they share the same variable ```localizer```
 - now you need to specify the path where each model locates
 
-### notes
+### How to test OSN in the code?
 
-How to test OSN in the code
 - run bash ./run_ISP_OSN.sh (mode==4)
-- Line 141 of Modified_invISP.py, modify the model as that of OSN network
-- specify Line 1319-2323 which provides the tamper source and mask
+- ~~Line 141 of Modified_invISP.py, modify the model as that of OSN network~~
+- ~~specify Line 1319-2323 which provides the tamper source and mask~~
 - the setting file is train_ISP_OSN.yml. If you want to do automatic copy-move, set ```inference_tamper_index=2``` and ```inference_load_real_world_tamper=False```
 - ```using_which_model_for_test``` decides using which model for testing. ```discriminator_mask``` is our method, ```localizer``` is OSN.
-- The average F1 score will be printed in the console
+- The average F1 score will be printed in the console.
 - The main loop loops over the training set. Therefore you should manually kill the process when all the validate images are runned.
 
-- the flow is optimize_parameters_router -> get_performance_of_OSN
-- use gpu 0 as default
+- Voila! the flow is optimize_parameters_router -> get_performance_of_OSN
 
-Testing the baseline (RGB protection)
+### How to Test the baseline (RGB protection)?
+
+- run bash ./run_ISP_OSN.sh (mode==4)
+- the setting file is train_ISP_OSN.yml. Set ```test_baseline: true``` and ```task_name_customized_model: ISP_alone, load_customized_models: 64999```(which loads the trained baseline model from that location)
+- Voila! the flow is optimize_parameters_router -> get_performance_of_OSN
+
+### How to use Restormer during inference?
+- whatever the option file yml is, set ```test_restormer: true```, and the model ```localizer``` will be Restormer. 
+- Note: you cannot use OSN and Restormer at once!
 
 ### Logs
 #### 1003

@@ -1,4 +1,20 @@
 
+### these variables are the most important, make sure dont mess them up
+test_baseline: false
+test_restormer: true
+#### load pretrained models: number
+load_discriminator_models: 10999 #10999
+load_RAW_models: 10999 # 13999
+load_ISP_models: 20999
+load_customized_models: 64999
+### directory
+task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
+task_name_KD_JPEG_model: my_own_elastic
+task_name_customized_model: ISP_alone
+#task_name_ISP_model: UNet
+####################################################################################
+
+
 #### general settings
 name: /groupshare/ISP_results
 use_tb_logger: true
@@ -16,8 +32,7 @@ include_isp_inference: true
 conduct_augmentation: true
 train_inpainting_surrogate_model: false
 lower_false_positive: true
-test_baseline: true
-test_restormer: false
+
 
 psnr_thresh: 36
 CE_hyper_param: 0.02
@@ -26,16 +41,7 @@ L1_hyper_param: 1
 style_hyper_param: 10
 raw_classes: 5
 
-load_discriminator_models: 11999 #10999
-load_RAW_models: 11999 # 13999
-load_ISP_models: 20999
-load_customized_models: 64999
-
-task_name_discriminator_model: ablation_on_RAW
-task_name_KD_JPEG_model: ablation_on_RAW
-task_name_customized_model: ISP_alone
-#task_name_ISP_model: UNet
-
+####################################################################################
 #### test settings
 inference_benign_attack_begin_idx: 14
 inference_load_real_world_tamper: true
@@ -43,15 +49,8 @@ inference_do_subsequent_prediction: true
 inference_tamper_index: 2
 inference_save_image: false
 using_which_model_for_test: discriminator_mask # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
-#### datasets
-phase: train
-only_gen_immunized: 0.0
-eval_dataset: COCO
-eval_kind: inpainting
-eval_attack: NOATK
-dataset_name: Rerun
-#phase: test
 
+####################################################################################
 datasets:
   train:
     name: Rerun
@@ -87,7 +86,7 @@ datasets:
     dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
 
-
+####################################################################################
 train:
   using_self_defined_dataset: 0.0
   new_task: 1.0  # 0:imuge 1:outward imuge
@@ -121,24 +120,13 @@ train:
 
   current_step: 0
 
+####################################################################################
 
 #### logger
 
 logger:
   print_freq: 100
   save_checkpoint_freq: !!float 5e3
-
-
-#### network structures
-
-network_G:
-  which_model_G:
-      subnet_type: DBNet
-  in_nc: 3
-  out_nc: 3
-  block_num: [6, 6]
-  scale: 4
-  init: xavier
 
 
 #### path
