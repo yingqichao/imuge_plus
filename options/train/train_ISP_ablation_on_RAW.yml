@@ -28,7 +28,7 @@ raw_classes: 5
 dtcwt_layers: 12
 model_save_period: 2000
 
-load_localizer_models: 10999
+load_discriminator_models: 10999
 load_RAW_models: 10999 # 13999
 load_ISP_models: 20999
 #### datasets

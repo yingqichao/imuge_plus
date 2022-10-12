@@ -23,7 +23,7 @@ L1_hyper_param: 1
 style_hyper_param: 10
 raw_classes: 5
 
-load_localizer_models: 13999
+load_discriminator_models: 13999
 load_RAW_models: 2999 # 13999
 load_ISP_models: 20999
 #### datasets

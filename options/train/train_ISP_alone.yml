@@ -29,9 +29,10 @@ raw_classes: 5
 dtcwt_layers: 16
 model_save_period: 5000
 
-load_localizer_models: 66999
+load_discriminator_models: 0
 load_RAW_models: 0 # 10999
 load_ISP_models: 0
+load_customized_models: 64999
 #### datasets
 phase: train
 only_gen_immunized: 0.0

@@ -11,6 +11,7 @@
 
 ### Issues
 - restormer cannot be loaded simultaneously with OSN network, because they share the same variable ```localizer```
+- now you need to specify the path where each model locates
 
 ### notes
 

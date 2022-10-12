@@ -27,7 +27,7 @@ raw_classes: 5
 #load_RAW_models: 2999 # 13999
 #load_ISP_models: 20999
 ### UNet models #########
-load_localizer_models: 10999
+load_discriminator_models: 10999
 load_RAW_models: 10999 # 13999
 load_ISP_models: 20999
 

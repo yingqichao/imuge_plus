@@ -26,12 +26,15 @@ L1_hyper_param: 1
 style_hyper_param: 10
 raw_classes: 5
 
-load_localizer_models: 11999 #10999
+load_discriminator_models: 11999 #10999
 load_RAW_models: 11999 # 13999
 load_ISP_models: 20999
+load_customized_models: 64999
 
 task_name_discriminator_model: ablation_on_RAW
 task_name_KD_JPEG_model: ablation_on_RAW
+task_name_customized_model: ISP_alone
+#task_name_ISP_model: UNet
 
 #### test settings
 inference_benign_attack_begin_idx: 14
@@ -39,7 +42,7 @@ inference_load_real_world_tamper: true
 inference_do_subsequent_prediction: true
 inference_tamper_index: 2
 inference_save_image: false
-using_which_model_for_test: discriminator_mask
+using_which_model_for_test: discriminator_mask # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
 #### datasets
 phase: train
 only_gen_immunized: 0.0

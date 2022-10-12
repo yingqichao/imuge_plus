@@ -6,15 +6,33 @@ from utils.util import OrderedYaml
 Loader, Dumper = OrderedYaml()
 
 
-def parse(opt_path, base_opt_path='options/train/ISP/train_ISP_base.yml', is_train=True):
-    # ## base option ##
-    # with open(opt_path, mode='r') as f:
-    #     base_opt = yaml.load(f, Loader=Loader)
-    # base_opt['is_train'] = is_train
+def parse(opt_path, base_opt_path='options/train/ISP/train_ISP_base.yml', args=None):
+    ## base option ##
+    with open(base_opt_path, mode='r') as f:
+        opt = yaml.load(f, Loader=Loader)
+
     ## local option ##
     with open(opt_path, mode='r') as f:
-        opt = yaml.load(f, Loader=Loader)
-    opt['is_train'] = is_train
+        opt_new = yaml.load(f, Loader=Loader)
+
+    opt.update(opt_new)
+
+    if 'task_name_discriminator_model' not in opt:
+        print(f"using default value as task_name_discriminator_model: {args.task_name}")
+        opt['task_name_discriminator_model'] = args.task_name
+    if 'task_name_KD_JPEG_model' not in opt:
+        print(f"using default value as task_name_KD_JPEG_model: {args.task_name}")
+        opt['task_name_KD_JPEG_model'] = args.task_name
+    if "task_name_ISP_model" not in opt:
+        print("using default value as task_name_KD_JPEG_model: UNet")
+        opt['task_name_ISP_model'] = "UNet"
+    if "load_customized_models" not in opt:
+        print("using default value as load_customized_models: ISP_alone")
+        opt['load_customized_models'] = "ISP_alone"
+
+    print(f"Opt List: {opt}")
+
+    # opt['is_train'] = is_train
     # export CUDA_VISIBLE_DEVICES
     # gpu_list = ','.join(str(x) for x in opt['gpu_ids'])
     # os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list

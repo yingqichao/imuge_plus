@@ -67,7 +67,14 @@ from lama_models.my_own_elastic_dtcwt import my_own_elastic
 
 class BaseModel():
     def __init__(self, opt,  args, train_set=None):
-
+        self.mode_dict = {
+            0: 'generating protected images(val)',
+            1: 'tampering localization on generating protected images(val)',
+            2: 'regular training, including ISP, RAW2RAW and localization(train)',
+            3: 'regular training for ablation(RGB protection), including RAW2RAW and localization (train)',
+            4: 'OSN performance(val)',
+            5: 'train a ISP using restormer for validation(train)'
+        }
         self.opt = opt
         self.device = torch.device('cuda' if opt['gpu_ids'] is not None else 'cpu')
         self.is_train = opt['is_train']
@@ -82,34 +89,9 @@ class BaseModel():
         self.test_opt = opt['test']
 
         self.task_name = args.task_name  # self.opt['datasets']['train']['name']  # self.train_opt['task_name']
-        self.loading_from = args.loading_from
-        self.is_load_raw_models = self.opt['load_RAW_models']
-        self.is_load_localizer_models = self.opt['load_RAW_models']
-        self.is_load_RAW_models = self.opt['load_RAW_models']
-        self.is_load_ISP_models = self.opt['load_ISP_models']
+        
         print("Task Name: {}".format(self.task_name))
         self.global_step = 0
-        self.new_task = self.train_opt['new_task']
-        self.use_gamma_correction = self.opt['use_gamma_correction']
-        self.conduct_augmentation = self.opt['conduct_augmentation']
-        self.lower_false_positive = self.opt['lower_false_positive']
-        self.conduct_cropping = self.opt['conduct_cropping']
-        self.consider_robost = self.opt['consider_robost']
-        self.CE_hyper_param = self.opt['CE_hyper_param']
-        self.perceptual_hyper_param = self.opt['perceptual_hyper_param']
-        self.ssim_hyper_param = self.opt['ssim_hyper_param']
-        self.L1_hyper_param = self.opt["L1_hyper_param"]
-        self.RAW_L1_hyper_param = self.opt['RAW_L1_hyper_param']
-        self.style_hyper_param = self.opt['style_hyper_param']
-        self.psnr_thresh = self.opt['psnr_thresh']
-        self.raw_classes = self.opt['raw_classes']
-        self.train_isp_networks = self.opt["train_isp_networks"]
-        self.train_full_pipeline = self.opt["train_full_pipeline"]
-        self.train_inpainting_surrogate_model = self.opt["train_inpainting_surrogate_model"]
-        self.include_isp_inference = self.opt["include_isp_inference"]
-        self.step_acumulate = self.opt["step_acumulate"]
-        self.dtcwt_layers = self.opt['dtcwt_layers']
-        self.model_save_period = self.opt['model_save_period']
 
         ####################################################################################################
         # todo: constants
@@ -140,7 +122,7 @@ class BaseModel():
         self.default_ISP_networks = ['generator', 'netG', 'qf_predict_network']
         self.default_RAW_to_RAW_networks = ['KD_JPEG']
         self.default_detection_networks = ['discriminator_mask']
-        self.default_network_OSN_ISP = ['localizer']
+        self.default_customized_networks = ['localizer']
 
         ####################################################################################################
         # todo: losses and attack layers
@@ -212,7 +194,7 @@ class BaseModel():
         self.out_space_storage = ""
 
     ####################################################################################################
-    # todo: using which ISP network?
+    # todo: define networks, optimizers
     ####################################################################################################
     # def using_invISP(self):
     #     return self.global_step % 4 == 0
@@ -261,8 +243,8 @@ class BaseModel():
     def define_RAW2RAW_network(self):
         if 'UNet' not in self.task_name:
             print("using my_own_elastic as KD_JPEG.")
-            n_channels = 3 if "ablation" in self.task_name else 4 # 36/48 12
-            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.dtcwt_layers,
+            n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4 # 36/48 12
+            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.opt['dtcwt_layers'],
                                           use_norm_conv=False).cuda()
         else:
             self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
@@ -317,7 +299,7 @@ class BaseModel():
     def define_tampering_localization_network(self):
         if 'UNet' not in self.task_name:
             print("using my_own_elastic as discriminator_mask.")
-            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.dtcwt_layers,
+            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
                                                      use_norm_conv=True).cuda()
         else:
             self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
@@ -328,7 +310,7 @@ class BaseModel():
                                                           find_unused_parameters=True)
 
     ####################################################################################################
-    # todo: using which tampering attacks?
+    # todo: using which tampering attacks during training? (also could be specified during inference)
     ####################################################################################################
     def using_simulated_inpainting(self):
         return self.global_step % 9 in [1,5,7]
@@ -408,12 +390,38 @@ class BaseModel():
 
         return attacked_image
 
+    ####################################################################################################
+    # todo:  Method specification
+    # todo: RAW2RAW, baseline, ISP generation, localization
+    ####################################################################################################
+    def baseline_generate_protected_rgb(self, *, gt_rgb):
+        return gt_rgb + self.KD_JPEG(gt_rgb)
+
+    def RAW_protection_by_my_own_elastic(self,*,input_raw_one_dim):
+        input_psdown = self.psdown(input_raw_one_dim)
+        modified_psdown = input_psdown + self.KD_JPEG(input_psdown)
+        modified_raw_one_dim = self.psup(modified_psdown)
+        return modified_raw_one_dim
+
+    def ISP_image_generation_general(self, *, network, input_raw, target):
+        modified_input_generator = network(input_raw)
+        ISP_L1_FOR = self.l1_loss(input=modified_input_generator, target=target)
+        # ISP_SSIM = - self.ssim_loss(modified_input_generator, gt_rgb)
+        modified_input_generator = self.clamp_with_grad(modified_input_generator)
+        if self.opt['use_gamma_correction']:
+            modified_input_generator = self.gamma_correction(modified_input_generator)
+
+        ISP_loss = ISP_L1_FOR
+
+        return modified_input_generator, ISP_loss
+
+    ####################################################################################################
+    # todo:  Momentum update of the key encoder
+    # todo: param_k: momentum
+    ####################################################################################################
     @torch.no_grad()
     def _momentum_update_key_encoder(self, momentum=0.9):
-        ####################################################################################################
-        # todo:  Momentum update of the key encoder
-        # todo: param_k: momentum
-        ####################################################################################################
+
 
         for param_q, param_k in zip(self.discriminator_mask.parameters(), self.discriminator.parameters()):
             param_k.data = param_k.data * momentum + param_q.data * (1. - momentum)

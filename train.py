@@ -441,7 +441,7 @@ if __name__ == '__main__':
     parser.add_argument('-loading_from', type=str, default="COCO_base", help='loading checkpoints from?')
     parser.add_argument('-load_models', type=int, default=1, help='load checkpoint or not.')
     args = parser.parse_args()
-    opt = option.parse(args.opt, is_train=True)
+    opt = option.parse(args.opt, args=args)
 
     main(args, opt)
 
