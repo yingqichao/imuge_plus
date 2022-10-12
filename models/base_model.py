@@ -14,10 +14,10 @@ from PIL import Image
 from skimage.color import rgb2gray
 from skimage.feature import canny
 from torch.nn.parallel import DistributedDataParallel
-from cycleisp_models.cycleisp import Raw2Rgb
+# from cycleisp_models.cycleisp import Raw2Rgb
 import pytorch_ssim
-from MVSS.models.mvssnet import get_mvss
-from MVSS.models.resfcn import ResFCN
+# from MVSS.models.mvssnet import get_mvss
+# from MVSS.models.resfcn import ResFCN
 from metrics import PSNR
 from models.modules.Quantization import diff_round
 from noise_layers import *
@@ -49,19 +49,19 @@ from data.pipeline import rawpy_tensor2image
 # # get all coco class labels
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
-from MantraNet.mantranet import pre_trained_model
-from .invertible_net import Inveritible_Decolorization_PAMI
-from models.networks import UNetDiscriminator
-from loss import PerceptualLoss, StyleLoss
-from .networks import SPADE_UNet
-from lama_models.HWMNet import HWMNet
+# from MantraNet.mantranet import pre_trained_model
+# from .invertible_net import Inveritible_Decolorization_PAMI
+# from models.networks import UNetDiscriminator
+# from loss import PerceptualLoss, StyleLoss
+# from .networks import SPADE_UNet
+# from lama_models.HWMNet import HWMNet
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 from loss import GrayscaleLoss
-from .invertible_net import Inveritible_Decolorization_PAMI
-from models.networks import UNetDiscriminator
+# from .invertible_net import Inveritible_Decolorization_PAMI
+# from models.networks import UNetDiscriminator
 from loss import PerceptualLoss, StyleLoss
-from .networks import SPADE_UNet
+# from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet
 from lama_models.my_own_elastic_dtcwt import my_own_elastic
 
@@ -1060,27 +1060,44 @@ class BaseModel():
     def random_float(self, min, max):
         return np.random.rand() * (max - min) + min
 
-    def F1score(self, predict_image, gt_image, thresh=0.2, get_auc=False):
-        # gt_image = cv2.imread(src_image, 0)
-        # predict_image = cv2.imread(dst_image, 0)
-        # ret, gt_image = cv2.threshold(gt_image[0], int(255 * thresh), 255, cv2.THRESH_BINARY)
-        # ret, predicted_binary = cv2.threshold(predict_image[0], int(255*thresh), 255, cv2.THRESH_BINARY)
-        predicted_binary = self.tensor_to_image(predict_image[0])
-        gt_image = self.tensor_to_image(gt_image[0, :1, :, :])
+    def metric_single_image(self, get_auc, thresh, test_images):
+        predicted_binary, gt_image = test_images
+        # predicted_binary = self.tensor_to_image(predict_image)
+        # gt_image = self.tensor_to_image(gt_image)
         if get_auc:
-            AUC = getAUC(predicted_binary/255, gt_image/255)
+            AUC = getAUC(predicted_binary / 255, gt_image / 255)
         ret, predicted_binary = cv2.threshold(predicted_binary, int(255 * thresh), 255, cv2.THRESH_BINARY)
         ret, gt_image = cv2.threshold(gt_image, int(255 * thresh), 255, cv2.THRESH_BINARY)
         if get_auc:
-            IoU = getIOU(predicted_binary/255, gt_image/255)
+            IoU = getIOU(predicted_binary / 255, gt_image / 255)
         # print(predicted_binary.shape)
 
         [TN, TP, FN, FP] = getLabels(predicted_binary, gt_image)
         # print("{} {} {} {}".format(TN,TP,FN,FP))
         F1 = getF1(TP, FP, FN)
         RECALL = getTPR(TP, FN)
-        # cv2.imwrite(save_path, predicted_binary)
         return (F1, RECALL, AUC, IoU) if get_auc else (F1, RECALL)
+
+    def F1score(self, predict_image, gt_image, thresh=0.2, get_auc=False):
+        # gt_image = cv2.imread(src_image, 0)
+        # predict_image = cv2.imread(dst_image, 0)
+        # ret, gt_image = cv2.threshold(gt_image[0], int(255 * thresh), 255, cv2.THRESH_BINARY)
+        # ret, predicted_binary = cv2.threshold(predict_image[0], int(255*thresh), 255, cv2.THRESH_BINARY)
+
+        predict_image = predict_image.permute(0, 2, 3, 1).detach().cpu().numpy()
+        predict_image = np.clip(predict_image, 0, 1).flatten()
+        # predict_image = self.tensor_to_image_batch(predict_image)
+        # gt_image = self.tensor_to_image_batch(gt_image)
+        gt_image = gt_image.permute(0, 2, 3, 1).detach().cpu().numpy()
+        gt_image = np.clip(gt_image, 0, 1).flatten()
+        if get_auc:
+            avg_AUC = getAUC(predict_image, gt_image)
+        predicted_binary = np.where(predict_image < 0.5, 0, 1)
+        avg_F1, avg_RECALL = getFScore(predicted_binary, gt_image)
+        if get_auc:
+            avg_IoU = getIOU(predicted_binary, gt_image)
+        return (avg_F1, avg_RECALL, avg_AUC, avg_IoU) if get_auc else (avg_F1, avg_RECALL)
+        # return (0, 0, 0, 0) if get_auc else (0, 0)
 
 def getLabels(img, gt_img):
     height = img.shape[0]
@@ -1119,6 +1136,12 @@ def getF1(TP, FP, FN):
 def getBER(TN, TP, FN, FP):
     return 1 / 2 * (getFPR(TN, FP) + FN / (FN + TP))
 
+def getFScore(pre, gt):
+    from sklearn.metrics import precision_recall_fscore_support
+    prec, rec, f1, _ = precision_recall_fscore_support(gt, pre, average='binary')
+    return f1, rec
+
+
 def getAUC(pre, gt):
     # 输入都是0-1区间内的 mask
     from sklearn.metrics import roc_auc_score
@@ -1136,8 +1159,10 @@ def getIOU(pre, gt):
 
 ## here test iou and auc
 if __name__ == '__main__':
-    gt = np.random.choice(2, [256, 256])
-    pre = np.random.choice(2, [256, 256])
+    gt = np.random.choice(2, [32, 256, 256, 1])
+    pre = np.random.choice(2, [32, 256, 256, 1])
+    f1, recall = getFScore(pre.flatten(), gt.flatten())
+    exit(0)
     iou = getIOU(pre, gt)
     print(iou)
     from sklearn.metrics import f1_score
