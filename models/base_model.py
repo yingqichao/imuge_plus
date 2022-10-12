@@ -132,6 +132,17 @@ class BaseModel():
         self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
 
         ####################################################################################################
+        # todo: TASKS Specification
+        # todo: Why the networks are named like these? because their predecessors are named like these...
+        # todo: in order to reduce modification, we let KD_JPEG=RAW2RAW network, generator=invISP, netG/discrimitator_mask/localizer=three detection networks
+        ####################################################################################################
+        self.network_list = []
+        self.default_ISP_networks = ['generator', 'netG', 'qf_predict_network']
+        self.default_RAW_to_RAW_networks = ['KD_JPEG']
+        self.default_detection_networks = ['discriminator_mask']
+        self.default_network_OSN_ISP = ['localizer']
+
+        ####################################################################################################
         # todo: losses and attack layers
         # todo: JPEG attack rescaling deblurring
         ####################################################################################################
@@ -210,6 +221,22 @@ class BaseModel():
     # def using_my_own_pipeline(self):
     #     return self.global_step % 4 == 2
 
+    def create_optimizer(self, net, lr=1e-4, weight_decay=0):
+        ## lr should be train_opt['lr_scratch'] in default
+        optim_params = []
+        for k, v in net.named_parameters():
+            if v.requires_grad:
+                optim_params.append(v)
+            # else:
+            #     if self.rank <= 0:
+            #         print('Params [{:s}] will not optimize.'.format(k))
+        optimizer = torch.optim.AdamW(optim_params, lr=lr,
+                                      weight_decay=weight_decay,
+                                      betas=(0.9, 0.99))  # train_opt['beta1'], train_opt['beta2']
+        self.optimizers.append(optimizer)
+
+        return optimizer
+
     def create_folders_for_the_experiment(self):
         create_folder(self.out_space_storage)
         create_folder(self.out_space_storage + "/model")
@@ -218,6 +245,18 @@ class BaseModel():
         create_folder(self.out_space_storage + "/model/" + self.task_name)
         create_folder(self.out_space_storage + "/images/" + self.task_name)
         create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
+
+    def define_localizer(self):
+        if self.args.mode in [5.0] or self.opt['test_restormer']:
+            print("using restormer as testing ISP...")
+            from restormer.model_restormer import Restormer
+            self.localizer = Restormer(dim=16, ).cuda()
+        else:
+            from ImageForensicsOSN.test import get_model
+            # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
+            # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
+            #                                     find_unused_parameters=True)
+            self.localizer = get_model('/groupshare/ISP_results/models/')
 
     def define_RAW2RAW_network(self):
         if 'UNet' not in self.task_name:
@@ -233,6 +272,47 @@ class BaseModel():
         # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
         self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
                                                find_unused_parameters=True)
+
+    def define_optimizers(self):
+        wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
+
+        if 'netG' in self.network_list:
+            self.optimizer_G = self.create_optimizer(self.netG,
+                                                     lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
+        if 'discriminator_mask' in self.network_list:
+            self.optimizer_discriminator_mask = self.create_optimizer(self.discriminator_mask,
+                                                                      lr=self.train_opt['lr_scratch'],
+                                                                      weight_decay=wd_G)
+        if 'localizer' in self.network_list:
+            self.optimizer_localizer = self.create_optimizer(self.localizer,
+                                                             lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+        if 'KD_JPEG' in self.network_list:
+            self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
+                                                           lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+        # if 'discriminator' in self.network_list:
+        #     self.optimizer_discriminator = self.create_optimizer(self.discriminator,
+        #                                                          lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+        if 'generator' in self.network_list:
+            self.optimizer_generator = self.create_optimizer(self.generator,
+                                                             lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
+        if 'qf_predict_network' in self.network_list:
+            self.optimizer_qf = self.create_optimizer(self.qf_predict_network,
+                                                      lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
+
+    def define_ISP_network_training(self):
+        self.generator = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
+                                                         ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
+        self.generator = DistributedDataParallel(self.generator, device_ids=[torch.cuda.current_device()],
+                                                 find_unused_parameters=True)
+
+        self.qf_predict_network = UNetDiscriminator(in_channels=3, out_channels=3, use_SRM=False).cuda()
+        self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
+                                                          device_ids=[torch.cuda.current_device()],
+                                                          find_unused_parameters=True)
+
+        self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
+        self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
+                                            find_unused_parameters=True)
 
     def define_tampering_localization_network(self):
         if 'UNet' not in self.task_name:
@@ -1062,3 +1142,42 @@ if __name__ == '__main__':
     # print("{} {} {} {}".format(TN,TP,FN,FP))
     our_f1 = getF1(TP, FP, FN)
     print(our_f1)
+
+
+####################################################################################################
+# todo: Load models according to the specific mode
+# todo:
+####################################################################################################
+# if 'localizer' in self.network_list:
+#     ####################################################################################################
+#     # todo: (Deprecated!!!!) Image Manipulation Detection Network (Downstream task) will be loaded
+#     # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
+#     ####################################################################################################
+#     print("Building MantraNet...........please wait...")
+#     self.localizer = pre_trained_model(weight_path='./MantraNetv4.pt').cuda()
+#     self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
+#                                              find_unused_parameters=True)
+#
+#     print("Building MVSS...........please wait...")
+#     model_path = './MVSS/ckpt/mvssnet_casia.pt'
+#     self.netG = get_mvss(backbone='resnet50',
+#                          pretrained_base=True,
+#                          nclass=1,
+#                          sobel=True,
+#                          constrain=True,
+#                          n_input=3,
+#                          ).cuda()
+#     checkpoint = torch.load(model_path, map_location='cpu')
+#     self.netG.load_state_dict(checkpoint, strict=True)
+#     self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
+#                                         find_unused_parameters=True)
+#     print("Building ResFCN...........please wait...")
+#     self.discriminator_mask = ResFCN().cuda()
+#     self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
+#                                                       device_ids=[torch.cuda.current_device()],
+#                                                       find_unused_parameters=True)
+#     ## AS for ResFCN, we found no checkpoint in the official repo currently
+#
+#     self.scaler_localizer = torch.cuda.amp.GradScaler()
+#     self.scaler_G = torch.cuda.amp.GradScaler()
+#     self.scaler_discriminator_mask = torch.cuda.amp.GradScaler()

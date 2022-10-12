@@ -16,6 +16,8 @@ include_isp_inference: true
 conduct_augmentation: true
 train_inpainting_surrogate_model: false
 lower_false_positive: true
+test_baseline: true
+test_restormer: false
 
 psnr_thresh: 36
 CE_hyper_param: 0.02
@@ -28,6 +30,8 @@ load_localizer_models: 11999 #10999
 load_RAW_models: 11999 # 13999
 load_ISP_models: 20999
 
+task_name_discriminator_model: ablation_on_RAW
+task_name_KD_JPEG_model: ablation_on_RAW
 
 #### test settings
 inference_benign_attack_begin_idx: 14

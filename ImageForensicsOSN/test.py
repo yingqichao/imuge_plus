@@ -10,8 +10,8 @@ from torchvision import transforms
 from sklearn.metrics import roc_auc_score
 from ImageForensicsOSN.models.scse import SCSEUnet
 
-gpu_ids = '2'
-os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids
+# gpu_ids = '2'
+# os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids
 
 
 class MyDataset(Dataset):

@@ -280,12 +280,14 @@ def main(args,opt):
         elif 'ISP' in which_model and args.mode==0:
             variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1','RECALL','RECALL_1',
                               'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
-        elif 'ISP' in which_model and args.mode>=2:
+        elif 'ISP' in which_model and args.mode in [2,3,4]:
             variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'CEL1', 'l1_ema', 'Mean', 'Std', 'CYCLE_PSNR',
                               'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
                               'RAW_L1', 'RAW_PSNR', 'PSNR_DIFF', 'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray', 'Style',
                               'ERROR', 'inpaint', 'inpaintPSNR'
                               ]
+        elif 'ISP' in which_model and args.mode == 5:
+            variables_list = ['CYCLE_PSNR', 'CYCLE_L1']
         elif 'CLRNet' in which_model:
             variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
 
