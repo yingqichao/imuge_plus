@@ -64,6 +64,8 @@ class Modified_invISP(BaseModel):
             ### OSN performance (val)
             self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
                                 # + self.default_customized_networks
+            if self.opt['activate_OSN'] or self.opt['test_restormer']==2:
+                self.network_list.append('localizer')
             self.save_network_list = []
             self.training_network_list = []
         elif self.args.mode in [5]:

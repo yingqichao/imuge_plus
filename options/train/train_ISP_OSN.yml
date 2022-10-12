@@ -1,5 +1,7 @@
 
 ### these variables are the most important, make sure dont mess them up
+activate_OSN: false
+
 test_baseline: false
 test_restormer: 1
 #### load pretrained models: number
