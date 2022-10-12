@@ -29,11 +29,11 @@ from noise_layers.middle_filter import MiddleBlur
 from noise_layers.resize import Resize
 from utils import stitch_images
 from utils.JPEG import DiffJPEG
-from data.pipeline import pipeline_tensor2image
+# from data.pipeline import pipeline_tensor2image
 # import matlab.engine
 import torch.nn.functional as Functional
 from utils.commons import create_folder
-from data.pipeline import rawpy_tensor2image
+# from data.pipeline import rawpy_tensor2image
 # print("Starting MATLAB engine...")
 # engine = matlab.engine.start_matlab()
 # print("MATLAB engine loaded successful.")
@@ -58,8 +58,8 @@ from data.pipeline import rawpy_tensor2image
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 from loss import GrayscaleLoss
-# from .invertible_net import Inveritible_Decolorization_PAMI
-# from models.networks import UNetDiscriminator
+from .invertible_net import Inveritible_Decolorization_PAMI
+from models.networks import UNetDiscriminator
 from loss import PerceptualLoss, StyleLoss
 # from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet

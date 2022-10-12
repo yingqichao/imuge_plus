@@ -1,6 +1,6 @@
 import os
 import rawpy
-import imaging
+import data.imaging as imaging
 import numpy as np
 
 

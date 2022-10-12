@@ -62,8 +62,8 @@ class Modified_invISP(BaseModel):
             self.training_network_list = self.network_list
         elif self.args.mode in [4]:
             ### OSN performance (val)
-            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks\
-                                + self.default_customized_networks
+            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
+                                # + self.default_customized_networks
             self.save_network_list = []
             self.training_network_list = []
         elif self.args.mode in [5]:
@@ -611,7 +611,12 @@ class Modified_invISP(BaseModel):
                         # # ISP_style_2 = self.style_loss(modified_input_2, tamper_source_2)
                         # modified_input_2 = self.clamp_with_grad(modified_input_2)
 
+
+
                         # #### my_own_pipeline ON PROTECTED RAW ######
+                        # numpy_rgb = isp_tensor2image(raw_image=input_raw, metadata=None, file_name=file_name[0],
+                        #                              camera_name=camera_name[0])
+                        #
                         # modified_input_1 = torch.zeros_like(modified_input_2)
                         # for idx_pipeline in range(num_per_clip):
                         #     metadata = self.train_set.metadata_list[file_name[idx_pipeline]]
@@ -1119,14 +1124,9 @@ class Modified_invISP(BaseModel):
                             nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
 
                         self.optimizer_KD_JPEG.step()
+                        self.optimizer_KD_JPEG.zero_grad()
+                        self.optimizer_discriminator_mask.zero_grad()
 
-
-                    self.optimizer_KD_JPEG.zero_grad()
-                    self.optimizer_G.zero_grad()
-                    self.optimizer_localizer.zero_grad()
-                    self.optimizer_discriminator_mask.zero_grad()
-                    self.optimizer_generator.zero_grad()
-                    self.optimizer_qf.zero_grad()
 
                 ####################################################################################################
                 # todo: printing the images
@@ -1231,11 +1231,14 @@ class Modified_invISP(BaseModel):
                 modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern,
                                                   white_balance=camera_white_balance)
                 RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
+                RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(
+                    input_raw)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+                logs['RAW_PSNR'] = RAW_PSNR
                 logs['RAW_L1'] = RAW_L1.item()
                 # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
                 modified_raw = self.clamp_with_grad(modified_raw)
                 ### three networks used during training
-                if not self.opt['test_restormer']:
+                if self.opt['test_restormer']==0:
                     self.generator.eval()
                     self.qf_predict_network.eval()
                     self.netG.eval()
@@ -1262,6 +1265,28 @@ class Modified_invISP(BaseModel):
                     alpha_1 = 1 - alpha_0
                     non_tampered_image = alpha_0 * modified_input_0
                     non_tampered_image += alpha_1 * modified_input_1
+                ### conventional ISP
+                elif self.opt['test_restormer']==1:
+                    from data.pipeline import isp_tensor2image, pipeline_tensor2image
+
+                    non_tampered_image = torch.zeros_like(gt_rgb)
+                    for idx_pipeline in range(gt_rgb.shape[0]):
+                        metadata = self.train_set.metadata_list[file_name[idx_pipeline]]
+                        flip_val = metadata['flip_val']
+                        metadata = metadata['metadata']
+                        # 在metadata中加入要用的flip_val和camera_name
+                        metadata['flip_val'] = flip_val
+                        metadata['camera_name'] = camera_name
+                        # [B C H W]->[H,W]
+                        raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+                        # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
+                        #                                   output_stage='gamma')
+                        numpy_rgb = isp_tensor2image(raw_image=input_raw, metadata=None, file_name=file_name[0],
+                                                     camera_name=camera_name[0])
+
+                        non_tampered_image[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
+                            np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+
                 ### restormer
                 else:
                     self.localizer.eval()
@@ -1269,11 +1294,15 @@ class Modified_invISP(BaseModel):
 
             ## RGB protection ##
             else:
+                self.KD_JPEG.eval()
+                print("rgb protection")
                 non_tampered_image = self.baseline_generate_protected_rgb(gt_rgb=gt_rgb)
-
         ## test on OSN, skip image protection
         else:
             non_tampered_image = gt_rgb
+
+        RGB_PSNR = self.psnr(self.postprocess(non_tampered_image), self.postprocess(gt_rgb)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+        logs['RGB_PSNR'] = RGB_PSNR
 
         ####################################################################################################
         # todo: get tampering source and mask
@@ -1368,10 +1397,10 @@ class Modified_invISP(BaseModel):
         if target_model is None:
             target_model = self.discriminator_mask
         target_model.eval()
-        if modified_input is None:
-            modified_input = self.real_H
-        if masks_GT is None:
-            masks_GT = self.canny_image
+        # if modified_input is None:
+        #     modified_input = self.real_H
+        # if masks_GT is None:
+        #     masks_GT = self.canny_image
         logs = {}
         logs['lr'] = 0
         batch_size, num_channels, height_width, _ = modified_input.shape
@@ -1434,7 +1463,7 @@ class Modified_invISP(BaseModel):
 
         if save_image:
             name = f"{self.out_space_storage}/test_predicted_masks/{self.task_name}"
-            # print('\nsaving sample ' + name)
+            print('saving sample ' + name)
             for image_no in range(batch_size):
                 # self.print_this_image(modified_input[image_no],
                 #                       f"{name}/{str(step).zfill(5)}_{filename_append}tampered_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
@@ -1886,13 +1915,13 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.discriminator, strict=False)
+                    self.load_network(load_path_G, self.discriminator, strict=True)
                 else:
                     print('Did not find momentum model for class [{:s}] ... we load the discriminator_mask instead'.format(load_path_G))
                     load_path_G = pretrain + "_discriminator_mask.pth"
                     print('Loading model for class [{:s}] ...'.format(load_path_G))
                     if os.path.exists(load_path_G):
-                        self.load_network(load_path_G, self.discriminator_mask, strict=False)
+                        self.load_network(load_path_G, self.discriminator_mask, strict=True)
                     else:
                         print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -1901,7 +1930,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.qf_predict_network, strict=False)
+                    self.load_network(load_path_G, self.qf_predict_network, strict=True)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -1910,7 +1939,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.localizer, strict=False)
+                    self.load_network(load_path_G, self.localizer, strict=True)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 

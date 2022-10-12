@@ -6,7 +6,6 @@ use_tb_logger: true
 model: ISP # CVPR
 distortion: sr
 scale: 4
-gpu_ids: [0,1] #[1,3,4]
 step_acumulate: 1
 train_isp_networks: false
 train_full_pipeline: true
