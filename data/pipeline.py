@@ -5,6 +5,7 @@ from .pipeline_utils import get_visible_raw_image, get_metadata, normalize, whit
     apply_color_space_transform, transform_xyz_to_srgb, apply_gamma, apply_tone_map, fix_orientation, \
     lens_shading_correction
 import rawpy
+from .test_isp import postprocess, get_metadata as meta_parse
 
 def unflip(raw_img, flip):
     if flip == 3:
@@ -67,25 +68,42 @@ def pipeline_tensor2image(*, raw_image, metadata, input_stage='normal', output_s
 
 
 """
+another traditional isp pipeline for test
+"""
+def isp_tensor2image(*, raw_image, metadata, file_name, camera_name, input_stage='normalize', output_stage='gamma'):
+    # first: transfer the torch into numpy variable
+    if type(file_name) == str:
+        # 传入的template参数s
+        default_root = '/ssd/FiveK_Dataset/'
+        dng_path = os.path.join(default_root, camera_name, 'DNG', file_name+'.dng')
+        template = rawpy.imread(dng_path)
+        metadata = meta_parse(template)
+    raw_image = raw_image.detach().cpu().numpy()
+    if input_stage == 'normalize':
+        tmp_raw = raw_image
+    else:
+        camera_name = metadata['camera_name']
+        if camera_name == 'Canon_EOS_5D':
+            max_value = 4095
+        else:
+            max_value = 16383
+        tmp_raw = raw_image * float(max_value)
+        # tmp_raw = np.squeeze(origin_raw, axis=2)
+        if camera_name == 'Canon_EOS_5D':
+            tmp_raw = tmp_raw + 127.0
+    # tmp_raw = unflip(tmp_raw, metadata['flip_val'])
+    # print(raw_image.shape)
+    # print(tmp_raw)
+    final_rgb = postprocess(tmp_raw, metadata, input_stage, output_stage)
+    # print(final_rgb)
+    return final_rgb
+
+
+"""
 raw_image: raw2raw network output, torch.tensor [C H W] C = 1
 template: the result of rawpy load template.dng
 return: rgb image, numpy variable
 """
-
-
-# def norm_raw(self, img, white_level, black_level):
-#     assert len(black_level) == 4
-#     # print(black_level)
-#     if len(set(black_level)) > 1:
-#         # todo: 需要加上全局判断
-#         norm_black_level = sum(black_level) / len(black_level)
-#     else:
-#         # 黑电平的值一致
-#         norm_black_level = black_level[0]
-#     img = img - norm_black_level
-#     img[img < 0] = 0
-#     img = img / (white_level - norm_black_level)
-#     return img
 def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
     if type(template) == str:
         # 传入的template参数s

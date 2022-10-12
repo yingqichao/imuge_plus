@@ -996,11 +996,16 @@ def set_metadata_pickle(dataset_root, camera_name):
 if __name__ == '__main__':
     from data.pipeline import rawpy_tensor2image
     from data.pipeline import pipeline_tensor2image
+    from data.pipeline import isp_tensor2image
     import os
     import pickle
 
-    dataset_root = '/ssd/invISP_skip/'
-    camera_name = 'Canon_EOS_5D'
+    with open("./camera.txt", 'r') as t:
+        camera_name = [i.strip() for i in t.readlines()]
+    # camera_name = ['D-LUX_3']
+    dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
+    # camera_name = ['Canon_EOS_5D','NIKON_D700']
+    val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=512)
     os.makedirs('./test/', exist_ok=True)
     # dng_files = os.listdir(os.path.join(dataset_root, camera_name, 'DNG'))
     # with open(os.path.join('/ssd/invISP_skip/', camera_name, 'metadata.pickle'), 'rb') as f:
@@ -1029,9 +1034,9 @@ if __name__ == '__main__':
     # exit(0)
     # data_process_npz(dataset_root, camera_name)
     # exit(0)
-    train_set = FiveKDataset_skip([dataset_root], [camera_name], stage='train', rgb_scale=False, uncond_p=0.,
-                                  patch_size=512, use_metadata=True)
-    dataloader = DataLoader(train_set, batch_size=4, shuffle=False, num_workers=4,
+    # train_set = FiveKDataset_skip([dataset_root], [camera_name], stage='train', rgb_scale=False, uncond_p=0.,
+    #                               patch_size=512, use_metadata=True)
+    dataloader = DataLoader(val_set, batch_size=4, shuffle=False, num_workers=4,
                             drop_last=True,
                             pin_memory=False)
     start = time.time()
@@ -1039,7 +1044,8 @@ if __name__ == '__main__':
     for i, value in enumerate(dataloader):
         # print(value)
         file_name = value['file_name']
-        print(file_name[0], value['bayer_pattern'][0])
+        camera_name = value['camera_name']
+        print(camera_name[0], file_name[0], value['bayer_pattern'][0])
         # metadata = train_set.metadata_list[file_name[0]]
 
         input_raw = value['input_raw'][0]
@@ -1052,16 +1058,16 @@ if __name__ == '__main__':
         # metadata['camera_name'] = camera_name
         #
         # # print(metadata)
-        # input_raw = input_raw.permute(1, 2, 0).squeeze(2)
-        # numpy_rgb = pipeline_tensor2image(raw_image=input_raw, metadata=metadata, input_stage='raw')
-        # numpy_rgb = (numpy_rgb * 255).astype(np.uint8)
+        input_raw = input_raw.permute(1, 2, 0).squeeze(2)
+        numpy_rgb = isp_tensor2image(raw_image=input_raw, metadata=None, file_name=file_name[0], camera_name=camera_name[0])
+        numpy_rgb = (numpy_rgb * 255).astype(np.uint8)
 
         # 测试rawpy
         # ###########################################################################
         # # todo：用法 直接传入raw图，template可以传入rawpy对象，也可以是file_name
         # ###########################################################################
-        numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=file_name[0], camera_name=camera_name[0],
-                                       patch_size=512)
+        # numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=file_name[0], camera_name=camera_name[0],
+        #                                patch_size=512)
         target_rgb = value['target_rgb'][0].permute(1, 2, 0).cpu().numpy() * 255
         target_rgb = target_rgb.astype(np.uint8)
         # print(target_rgb[0])
