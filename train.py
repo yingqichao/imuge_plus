@@ -127,6 +127,14 @@ def main(args,opt):
     #     from data.tianchi_dataset import LQGTDataset as D
     #     train_set = D()
     #     # train_set = D(opt, dataset_opt)
+    elif "ISP" in opt['model'] and args.mode==1:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        train_set = D(opt, dataset_opt)
+    elif "ISP" in opt['model'] and args.mode==6:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        train_set = D(opt, dataset_opt, load_mask=False)
     elif "ISP" in opt['model'] and args.mode!=1:
         print("dataset with ISP")
         from data.fivek_dataset import FiveKDataset_total
@@ -143,11 +151,6 @@ def main(args,opt):
 
         # from data.LQGT_dataset import LQGTDataset as D
         # train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode==1:
-        print("dataset LQ")
-        from data.LQ_dataset import LQDataset as D
-        train_set = D(opt, dataset_opt)
-
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
@@ -203,6 +206,14 @@ def main(args,opt):
     #     from data.tianchi_dataset import LQGTDataset as D
     #     val_set = D()
     #     # train_set = D(opt, dataset_opt)
+    elif "ISP" in opt['model'] and args.mode==1:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        val_set = D(opt, dataset_opt)
+    elif "ISP" in opt['model'] and args.mode==6:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        val_set = D(opt, dataset_opt, load_mask=False)
     elif "ISP" in opt['model'] and args.mode!=1:
         print("dataset with ISP")
         from data.fivek_dataset import FiveKDataset_total
@@ -215,10 +226,6 @@ def main(args,opt):
 
         # from data.LQGT_dataset import LQGTDataset as D
         # val_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode==1:
-        print("dataset LQ")
-        from data.LQ_dataset import LQDataset as D
-        val_set = D(opt, dataset_opt)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
@@ -287,7 +294,9 @@ def main(args,opt):
                               'ERROR', 'inpaint', 'inpaintPSNR'
                               ]
         elif 'ISP' in which_model and args.mode == 5:
-            variables_list = ['CYCLE_PSNR', 'CYCLE_L1']
+            variables_list = ['CYCLE_PSNR', 'CYCLE_L1', 'loss']
+        elif 'ISP' in which_model and args.mode == 6:
+            variables_list = ['CE','CE_MVSS','CE_Mantra']
         elif 'CLRNet' in which_model:
             variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
 

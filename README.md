@@ -8,6 +8,7 @@
 - mode=3: regular training for ablation (RGB protection), including RAW2RAW and localization (train)
 - mode=4: OSN performance (val)
 - mode=5: train a ISP using restormer for validation (train)
+- mode=6: train passive image manipulation detection networks (train)
 
 ### Issues
 - restormer cannot be loaded simultaneously with OSN network, because they share the same variable ```localizer```

@@ -23,17 +23,23 @@ class LQDataset(data.Dataset):
     The pair is ensured by 'sorted' function, so please check the name convention.
     '''
 
-    def __init__(self, opt, dataset_opt, is_train=True):
+    def __init__(self, opt, dataset_opt, load_mask=True):
         super(LQDataset, self).__init__()
-        self.is_train = is_train
+        self.load_mask = load_mask
         self.opt = opt
         self.dataset_opt = dataset_opt
         self.paths_LQ, self.paths_GT = None, None
         self.sizes_LQ, self.sizes_GT = None, None
         self.GT_size = self.dataset_opt['GT_size']
+        self.transform_just_resize = A.Compose(
+            [
+                A.Resize(always_apply=True, height=self.GT_size, width=self.GT_size)
+            ]
+        )
 
         self.paths_GT, _ = util.get_image_paths(dataset_opt['dataroot_GT'])
-        self.paths_MASKS, _ = util.get_image_paths(dataset_opt['dataroot_LQ'])
+        if self.load_mask:
+            self.paths_MASKS, _ = util.get_image_paths(dataset_opt['dataroot_LQ'])
 
         assert self.paths_GT, 'Error: GT path is empty.'
 
@@ -48,14 +54,13 @@ class LQDataset(data.Dataset):
 
         # get GT image
         GT_path = self.paths_GT[index]
-        GT_MASK_path = self.paths_MASKS[index]
+        mask_GT = None
 
         # img_GT = util.read_img(GT_path)
         img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
-        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
-        mask_GT = cv2.imread(GT_MASK_path, cv2.IMREAD_GRAYSCALE)
+        img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
 
-        # img_GT = self.transform(image=copy.deepcopy(img_GT))["image"]
+        img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
 
         img_GT = img_GT.astype(np.float32) / 255.
         if img_GT.ndim == 2:
@@ -63,17 +68,18 @@ class LQDataset(data.Dataset):
         # some images have 4 channels
         if img_GT.shape[2] > 3:
             img_GT = img_GT[:, :, :3]
-        mask_GT = mask_GT.astype(np.float32) / 255.
 
+        if self.load_mask:
+            GT_MASK_path = self.paths_MASKS[index]
+            mask_GT = cv2.imread(GT_MASK_path, cv2.IMREAD_GRAYSCALE)
+            mask_GT = mask_GT.astype(np.float32) / 255.
+            mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float()
 
-        ###### directly resize instead of crop
-        # img_GT = cv2.resize(np.copy(img_GT), (GT_size, GT_size),
-        #                     interpolation=cv2.INTER_LINEAR)
 
         orig_height, orig_width, _ = img_GT.shape
         H, W, _ = img_GT.shape
 
-        mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float()
+
 
 
         # BGR to RGB, HWC to CHW, numpy to tensor
@@ -83,7 +89,7 @@ class LQDataset(data.Dataset):
 
         img_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
 
-        return (img_GT, mask_GT)
+        return (img_GT, mask_GT if mask_GT is not None else img_GT)
 
     def __len__(self):
         return len(self.paths_GT)

@@ -73,7 +73,8 @@ class BaseModel():
             2: 'regular training, including ISP, RAW2RAW and localization(train)',
             3: 'regular training for ablation(RGB protection), including RAW2RAW and localization (train)',
             4: 'OSN performance(val)',
-            5: 'train a ISP using restormer for validation(train)'
+            5: 'train a ISP using restormer for validation(train)',
+            6: 'train resfcn (train)',
         }
         self.opt = opt
         self.device = torch.device('cuda' if opt['gpu_ids'] is not None else 'cpu')
@@ -297,7 +298,13 @@ class BaseModel():
                                             find_unused_parameters=True)
 
     def define_tampering_localization_network(self):
-        if 'UNet' not in self.task_name:
+        if self.args.mode==6:
+            from MVSS.models.mvssnet import get_mvss
+            from MVSS.models.resfcn import ResFCN
+            from MantraNet.mantranet import MantraNet
+            print("Building ResFCN...........please wait...")
+            self.discriminator_mask = ResFCN().cuda()
+        elif 'UNet' not in self.task_name:
             print("using my_own_elastic as discriminator_mask.")
             self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
                                                      use_norm_conv=True).cuda()
@@ -414,6 +421,69 @@ class BaseModel():
         ISP_loss = ISP_L1_FOR
 
         return modified_input_generator, ISP_loss
+
+    def standard_attack_layer(self, *, modified_input, gt_rgb, logs, idx_clip, num_per_clip):
+        ####################################################################################################
+        # todo: cropping
+        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
+        ####################################################################################################
+
+        # if self.opt['conduct_cropping']:
+        #     locs, cropped, scaled_cropped = self.cropping_mask_generation(
+        #         forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
+        #     h_start, h_end, w_start, w_end = locs
+        #     _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
+        # else:
+        #     scaled_cropped = modified_input
+        #     tamper_source_cropped = tamper_source
+
+        ####################################################################################################
+        # todo: TAMPERING
+        # todo: including using_simulated_inpainting copy-move and splicing
+        ####################################################################################################
+        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
+        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
+
+        # attacked_forward = tamper_source_cropped
+        attacked_forward, masks, masks_GT = self.tampering(
+            forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
+            modified_input=modified_input, percent_range=percent_range, logs=logs,
+            idx_clip=idx_clip, num_per_clip=num_per_clip,
+        )
+
+        ####################################################################################################
+        # todo: white-balance, gamma, tone mapping, etc.
+        # todo:
+        ####################################################################################################
+        # # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000],
+        # white_balance_again_red = 0.7+0.6*torch.rand((batch_size,1)).cuda()
+        # white_balance_again_green = torch.ones((batch_size, 1)).cuda()
+        # white_balance_again_blue = 0.7+0.6* torch.rand((batch_size, 1)).cuda()
+        # white_balance_again = torch.cat((white_balance_again_red,white_balance_again_green,white_balance_again_blue),dim=1).unsqueeze(2).unsqueeze(3)
+        # modified_wb = white_balance_again * modified_input
+        # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
+        skip_augment = np.random.rand() > 0.85
+        if not skip_augment and self.opt['conduct_augmentation']:
+            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
+        else:
+            attacked_adjusted = attacked_forward
+
+        ####################################################################################################
+        # todo: Benign attacks
+        # todo: including JPEG compression Gaussian Blurring, Median blurring and resizing
+        ####################################################################################################
+        skip_robust = np.random.rand() > 0.85
+        if not skip_robust and self.opt['consider_robost']:
+            if self.using_weak_jpeg_plus_blurring_etc():
+                quality_idx = np.random.randint(18, 21)
+            else:
+                quality_idx = np.random.randint(10, 19)
+            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
+                                                 quality_idx=quality_idx)
+        else:
+            attacked_image = attacked_adjusted
+
+        return attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT
 
     ####################################################################################################
     # todo:  Momentum update of the key encoder
@@ -556,7 +626,7 @@ class BaseModel():
             # todo: splicing
             # todo: invISP
             ####################################################################################################
-            attacked_forward = modified_input * (1 - masks) + (self.previous_protected if idx_clip is None else self.previous_protected[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks)
+            attacked_forward = modified_input * (1 - masks) + (self.previous_protected if idx_clip is None else self.previous_protected[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()) * masks
             # attack_name = "splicing"
 
         elif index in [2,3,8]: #self.using_copy_move():
@@ -619,7 +689,7 @@ class BaseModel():
             # todo: it is important, without protection, though the tampering can be close, it should also be detected.
             ####################################################################################################
             # attacked_forward = modified_input * (1 - masks) + forward_image * masks
-            attacked_forward = modified_input * (1 - masks) + (self.previous_images if idx_clip is None else self.previous_images[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous() * masks)
+            attacked_forward = modified_input * (1 - masks) + (self.previous_images if idx_clip is None else self.previous_images[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous())* masks
 
         attacked_forward = self.clamp_with_grad(attacked_forward)
         # attacked_forward = self.Quantization(attacked_forward)

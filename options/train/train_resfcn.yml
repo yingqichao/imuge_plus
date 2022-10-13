@@ -1,6 +1,25 @@
 
-#### general settings
+### these variables are the most important, make sure dont mess them up
+#activate_OSN: false
+#
+#test_baseline: false
+#test_restormer: 1
+#### load pretrained models: number
+load_discriminator_models: 10999 # 9
+load_RAW_models: 10999 # 9
+load_ISP_models: 20999
+model_save_period: 2000
+#load_customized_models: 64999
+#dtcwt_layers: 16 # 12 for baseline and 16 for all the rest
+### directory
+#task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
+#task_name_KD_JPEG_model: my_own_elastic
+#task_name_customized_model: ISP_alone
+#task_name_ISP_model: UNet
+####################################################################################
 
+
+#### general settings
 name: /groupshare/ISP_results
 use_tb_logger: true
 model: ISP # CVPR
@@ -15,30 +34,26 @@ consider_robost: true
 include_isp_inference: true
 conduct_augmentation: true
 train_inpainting_surrogate_model: false
+lower_false_positive: true
 
-psnr_thresh: 40
-CE_hyper_param: 0.015
-ssim_hyper_param: 0.01
+
+psnr_thresh: 36
+CE_hyper_param: 0.02
 perceptual_hyper_param: 0.01
-RAW_L1_hyper_param: 4
 L1_hyper_param: 1
-style_hyper_param: 1
+style_hyper_param: 10
 raw_classes: 5
-dtcwt_layers: 16
-model_save_period: 2000
 
-load_discriminator_models: 1999
-load_RAW_models: 1999 # 13999
-load_ISP_models: 20999
-#### datasets
-phase: train
-only_gen_immunized: 0.0
-eval_dataset: COCO
-eval_kind: inpainting
-eval_attack: NOATK
-dataset_name: Rerun
-#phase: test
+####################################################################################
+#### test settings
+inference_benign_attack_begin_idx: 0
+inference_load_real_world_tamper: true
+inference_do_subsequent_prediction: true
+inference_tamper_index: 2
+inference_save_image: true
+using_which_model_for_test: discriminator_mask # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
 
+####################################################################################
 datasets:
   train:
     name: Rerun
@@ -47,21 +62,21 @@ datasets:
 #    dataroot_GT: /groupshare//Places/data_256                                        # Places
 #    dataroot_GT: /groupshare/CelebA/img/img_celeba_200                                          # CelebA
 #    dataroot_GT: /groupshare/paris_street_view/paris_train                            # ParisStreetView
-    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0                                   # COCO
+    dataroot_GT: /groupshare/COCOdataset/train2017                               # COCO
 #    dataroot_GT: /groupshare//Flickr1024/train                                 # Flicker
 #    dataroot_GT: /groupshare//DIV2K_valid                                # DIV2K
 #    dataroot_GT: /groupshare//VOC2012/JPEGImages
 #    dataroot_GT: /groupshare//UCID_color/images                                                 # UCID
 #    dataroot_GT: /groupshare//ILSVRC2012_img_val                                      # ImageNet
-    dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
+    dataroot_LQ: ~
 
     use_shuffle: true
-    n_workers: 2 # per GPU
+    n_workers: 1 # per GPU
     ######## CVPR #########
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 6 # 4
+    batch_size: 4 # 4
     GT_size: 512 # 608
     #########################
     use_flip: true
@@ -71,11 +86,11 @@ datasets:
   val:
     name: val_DIV2K
     mode: LQGT
-    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0
-    dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
-
-#### training settings: learning rate scheme, loss
-
+    dataroot_GT: /groupshare/COCOdataset/train2017
+    dataroot_LQ: /groupshare/COCOdataset/train2017 # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
+    batch_size: 1 # 4
+    GT_size: 512 # 608
+####################################################################################
 train:
   using_self_defined_dataset: 0.0
   new_task: 1.0  # 0:imuge 1:outward imuge
@@ -83,7 +98,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 2e-5   # 2e-5
+  lr_scratch: !!float 1e-4   # 2e-5
   lr_finetune: !!float 1e-4
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
@@ -109,17 +124,14 @@ train:
 
   current_step: 0
 
+####################################################################################
 
-#### network structures
+#### logger
 
-network_G:
-  which_model_G:
-      subnet_type: DBNet
-  in_nc: 3
-  out_nc: 3
-  block_num: [6, 6]
-  scale: 4
-  init: xavier
+logger:
+  print_freq: 100
+  save_checkpoint_freq: !!float 5e3
+
 
 #### path
 
@@ -137,9 +149,5 @@ path:
   resume_state: ~
 
 
+#### training settings: learning rate scheme, loss
 
-#### logger
-
-logger:
-  print_freq: 100
-  save_checkpoint_freq: !!float 5e3
