@@ -29,3 +29,8 @@ canny_img = to_tensor(canny_img).unsqueeze(0).cuda()
 
 output, _, _ = generator(img_GT, torch.cat((canny_img, img_gray), dim=1), canny_img)
 print(output.shape)
+
+from MVSS.models.resfcn import ResFCN
+discriminator_mask = ResFCN().cuda()
+checkpoint = torch.load('./resfcn_coco_1013.pth', map_location='cpu')
+discriminator_mask.load_state_dict(checkpoint, strict=True)

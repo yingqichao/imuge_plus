@@ -1,56 +1,24 @@
 import logging
-from collections import OrderedDict
-import torchvision.transforms.functional_tensor as F_t
-from PIL import Image
-import torchvision.transforms.functional as F
-import torch.nn.functional as Functional
-from noise_layers.salt_pepper_noise import SaltPepper
-import torchvision.transforms.functional_pil as F_pil
-from skimage.feature import canny
 import torchvision
 import torch.nn as nn
-from torch.nn.parallel import DataParallel, DistributedDataParallel
+from torch.nn.parallel import DistributedDataParallel
 from skimage.color import rgb2gray
-from skimage.metrics._structural_similarity import structural_similarity
 import models.lr_scheduler as lr_scheduler
 from .base_model import BaseModel
 from models.modules.loss import ReconstructionLoss, CWLoss
 from models.modules.Quantization import Quantization
 import torch.distributed as dist
-from utils.JPEG import DiffJPEG
-from torchvision import models
-from loss import AdversarialLoss, PerceptualLoss, StyleLoss
+from losses.loss import AdversarialLoss, PerceptualLoss, StyleLoss
 import cv2
-from mbrs_models.Encoder_MP import Encoder_MP
-from metrics import PSNR, EdgeAccuracy
-from .invertible_net import Inveritible_Decolorization_PAMI, ResBlock, DenseBlock
-from .crop_localize_net import CropLocalizeNet
-from .conditional_jpeg_generator import FBCNN, QF_predictor, MantraNet
-from utils import Progbar, create_dir, stitch_images, imsave
+from utils.metrics import PSNR
 import os
 import pytorch_ssim
 from noise_layers import *
-from noise_layers.dropout import Dropout
-from noise_layers.gaussian import Gaussian
-from noise_layers.gaussian_blur import GaussianBlur
-from noise_layers.middle_filter import MiddleBlur
-from noise_layers.resize import Resize
-from noise_layers.jpeg_compression import JpegCompression
-from noise_layers.crop import Crop
-from models.networks import EdgeGenerator, DG_discriminator, InpaintGenerator, Discriminator, NormalGenerator, \
-    UNetDiscriminator, \
-    JPEGGenerator
-from mbrs_models.Decoder import Decoder, Decoder_MLP
 # import matlab.engine
-from mbrs_models.baluja_networks import HidingNetwork, RevealNetwork
-from pycocotools.coco import COCO
-from models.conditional_jpeg_generator import domain_generalization_predictor
-from loss import ExclusionLoss
+from losses.loss import ExclusionLoss
 
 
 logger = logging.getLogger('base')
-
-import lpips
 
 
 class RumorModel(BaseModel):
@@ -253,18 +221,9 @@ class RumorModel(BaseModel):
         return images
 
     def evaluate(self):
-        import time
-        from PIL import Image, ImageTk
         import os
         import openpyxl
-        import pandas as pd
-        import numpy as np
-        import paramiko
-        from scp import SCPClient
         from tqdm import tqdm
-        import datetime
-        import random
-        import shutil
         self.paths_GT, self.label_dict = [], {}
         wb = openpyxl.load_workbook('/home/groupshare/Distinguish_rumors_using_attached_images/labels_image.xlsx')
         folder = '/home/groupshare/rumor_dataset/rumor_datasets/images/All images/'

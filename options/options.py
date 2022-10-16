@@ -6,7 +6,14 @@ from utils.util import OrderedYaml
 Loader, Dumper = OrderedYaml()
 
 
-def parse(opt_path, base_opt_path='options/train/ISP/train_ISP_base.yml', args=None):
+def parse(opt_path,
+          base_opt_path='options/train/ISP/train_ISP_base.yml',
+          attack_opt_path='options/train/attack_layer_setting/PAMI_attack_layer.yml',
+          args=None):
+    ## attack layer option ##
+    with open(attack_opt_path, mode='r') as f:
+        opt_attack = yaml.load(f, Loader=Loader)
+
     ## base option ##
     with open(base_opt_path, mode='r') as f:
         opt = yaml.load(f, Loader=Loader)
@@ -16,7 +23,9 @@ def parse(opt_path, base_opt_path='options/train/ISP/train_ISP_base.yml', args=N
         opt_new = yaml.load(f, Loader=Loader)
 
     opt.update(opt_new)
+    opt.update(opt_attack)
 
+    ## add default values if not specified in cunstom yml
     if 'task_name_discriminator_model' not in opt:
         print(f"using default value as task_name_discriminator_model: {args.task_name}")
         opt['task_name_discriminator_model'] = args.task_name
@@ -34,9 +43,9 @@ def parse(opt_path, base_opt_path='options/train/ISP/train_ISP_base.yml', args=N
 
     # opt['is_train'] = is_train
     # export CUDA_VISIBLE_DEVICES
-    # gpu_list = ','.join(str(x) for x in opt['gpu_ids'])
-    # os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
-    # print('export CUDA_VISIBLE_DEVICES=' + gpu_list)
+    gpu_list = ','.join(str(x) for x in opt['gpu_ids'])
+    os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
+    print('export CUDA_VISIBLE_DEVICES=' + gpu_list)
 
 
 

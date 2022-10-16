@@ -1,22 +1,15 @@
 import os
 # os.environ['CUDA_VISIBLE_DEVICES'] = "3,4"
-import math
 import argparse
-import random
-import logging
-from loss import AdversarialLoss, PerceptualLoss, StyleLoss
-from utils import Progbar, create_dir, stitch_images, imsave
+from utils import Progbar
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from data.data_sampler import DistIterSampler
 import options.options as option
 from utils import util
-from data import create_dataloader, create_dataset
-from models import create_model
-from torchvision import datasets, transforms
-from skimage.feature import canny
-from utils.util import var_name
+from data import create_dataset
+from models import create_training_scripts_and_print_variables
+
 
 ####################################################################################################################
 # todo: Please notice, in order to apply this framework. Remember to customize the following:
@@ -113,170 +106,25 @@ def main(args,opt):
     # todo: TRAINING DATASET DEFINITION
     # todo: Define the training set
     ####################################################################################################
-    # for phase, dataset_opt in opt['datasets'].items():
-    dataset_opt = opt['datasets']['train']
-    print("#################################### train set ####################################")
-    print(dataset_opt)
-    train_set_1 = None
-    if "PAMI" in opt['model'] or "CLR" in opt['model']:
-        print("dataset with canny")
-        from data.LQGT_dataset import LQGTDataset as D
-        train_set = D(opt, dataset_opt)
-    # elif "ICASSP_RHI" in opt['model']:
-    #     print("dataset with jpeg")
-    #     from data.tianchi_dataset import LQGTDataset as D
-    #     train_set = D()
-    #     # train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode==1:
-        print("dataset LQ")
-        from data.LQ_dataset import LQDataset as D
-        train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode==6:
-        print("dataset LQ")
-        from data.LQ_dataset import LQDataset as D
-        train_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode!=1:
-        print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset_total
-        with open("./data/camera.txt",'r') as t:
-            camera_name = [i.strip() for i in t.readlines()]
-        dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
-        # camera_name = ['Canon_EOS_5D','NIKON_D700']
-        print(f'FiveK dataset size:{GT_size}')
-        train_set = FiveKDataset_total(dataset_root, camera_name, stage='train', patch_size=GT_size)
+    train_set, val_set, train_sampler, train_loader, val_loader = create_dataset(opt=opt, args=args, rank=rank, seed=seed)
 
-        # dataset_root_1 = [ '/ssd/invISP_skip/']
-        # camera_name_1 = [ 'NIKON_D700']
-        # train_set_1 = FiveKDataset_skip(dataset_root_1, camera_name_1, stage='train', rgb_scale=False, uncond_p=0.,patch_size=GT_size)
+    # from data.sidd import SIDD
+    # val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)
 
-        # from data.LQGT_dataset import LQGTDataset as D
-        # train_set = D(opt, dataset_opt)
-    else:
-        raise NotImplementedError('大神是不是搞错了？')
+    # from data.dnd import DND
+    # val_set = DND('/groupshare/dnd_raw/', 'data/dnd.pickle')
 
-    train_size = int(math.ceil(len(train_set) / dataset_opt['batch_size']))
-    total_epochs = 100
-    # train_loader = create_dataloader(train_set, dataset_opt, opt, train_sampler)
-    world_size = torch.distributed.get_world_size()
-    print("World size: {}".format(world_size))
-    print("Batch size: {}".format(dataset_opt['batch_size']))
-    num_workers = dataset_opt['n_workers']
-    assert dataset_opt['batch_size'] % world_size == 0
-    batch_size = dataset_opt['batch_size'] // world_size
-    ####################################################################################################
-    # todo: Data loader
-    # todo:
-    ####################################################################################################
-    if opt['dist']:
-        train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio,seed=seed)
-    else:
-        train_sampler = None
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=False,
-                                num_workers=num_workers, sampler=train_sampler, drop_last=True,
-                                pin_memory=True)
-    if rank <= 0:
-        print('Number of train images: {:,d}, iters: {:,d}'.format(
-            len(train_set), train_size))
+    # from data.sr_raw import SrRaw
+    # data_root = '/groupshare/sr_raw/train0/'
+    # val_set = SrRaw(data_root)
 
-    # if train_set_1 is not None:
-    #     if opt['dist']:
-    #         train_sampler_1 = DistIterSampler(train_set_1, world_size, rank, dataset_ratio, seed=seed)
-    #     else:
-    #         train_sampler_1 = None
-    #     train_loader_1 = torch.utils.data.DataLoader(train_set_1, batch_size=batch_size, shuffle=False,
-    #                                                num_workers=num_workers, sampler=train_sampler_1, drop_last=True,
-    #                                                pin_memory=True)
-    #     if rank <= 0:
-    #         print('Number of train images: {:,d}, iters: {:,d}'.format(
-    #             len(train_set_1), train_size))
-    ####################################################################################################
-    # todo: TEST DATASET DEFINITION
-    # todo: Define the testing set
-    ####################################################################################################
-    # for phase, dataset_opt in opt['datasets'].items():
-    dataset_opt = opt['datasets']['val']
-    print('#################################### val set ####################################')
-    print(dataset_opt)
-    if "PAMI" in opt['model'] or "CLR" in opt['model']:
-        print("dataset with canny")
-        from data.LQGT_dataset import LQGTDataset as D
-        val_set = D(opt, dataset_opt)
-    # elif "ICASSP_RHI" in opt['model']:
-    #     print("dataset with jpeg")
-    #     from data.tianchi_dataset import LQGTDataset as D
-    #     val_set = D()
-    #     # train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode==1:
-        print("dataset LQ")
-        from data.LQ_dataset import LQDataset as D
-        val_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode==6:
-        print("dataset LQ")
-        from data.LQ_dataset import LQDataset as D
-        val_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode!=1:
-        print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset_total
-        with open("./data/camera.txt", 'r') as t:
-            camera_name = [i.strip() for i in t.readlines()]
-        dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
-        # camera_name = ['Canon_EOS_5D','NIKON_D700']
-        print(f'FiveK dataset size:{GT_size}')
-        val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=GT_size)
 
-        # from data.sidd import SIDD
-        # val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)
-
-        # from data.dnd import DND
-        # val_set = DND('/groupshare/dnd_raw/', 'data/dnd.pickle')
-
-        # from data.sr_raw import SrRaw
-        # data_root = '/groupshare/sr_raw/train0/'
-        # val_set = SrRaw(data_root)
-
-        # from data.LQGT_dataset import LQGTDataset as D
-        # val_set = D(opt, dataset_opt)
-    else:
-        raise NotImplementedError('大神是不是搞错了？')
-
-    val_size = int(math.ceil(len(val_set) / 1))
-    # val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
-    val_loader = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=False, num_workers=0,
-                                pin_memory=True, drop_last=True)
-
-    if rank <= 0:
-        print('Number of val images: {:,d}, iters: {:,d}'.format(
-            len(val_set), val_size))
-    
 
     ####################################################################################################
-    # todo: MODEL DEFINITION
-    # todo: Create the new model file
+    # todo: Training script
     ####################################################################################################
-    # model = create_model(opt,args)
     which_model = opt['model']
-
-    if which_model == 'CVPR':
-        from models.Modified_invISP import IRNModel as M
-        model = M(opt, args)
-    elif which_model == 'PAMI':
-        from models.IRNp_model import IRNpModel as M
-        model = M(opt, args)
-    elif which_model == 'ICASSP_NOWAY':
-        from models.IRNcrop_model import IRNcropModel as M
-    elif which_model == 'ICASSP_RHI':
-        from models.tianchi_model import IRNrhiModel as M
-        # from .IRNrhi_model import IRNrhiModel as M
-    elif which_model == 'CLRNet':
-        from models.IRNclrNew_model import IRNclrModel as M
-        model = M(opt, args)
-    elif which_model == 'ISP':
-        from models.Modified_invISP import Modified_invISP as M
-        model = M(opt, args, train_set, val_set)
-    else:
-        raise NotImplementedError('大神是不是搞错了？')
-
-    print('Model [{:s}] is created.'.format(model.__class__.__name__))
+    model, variables_list = create_training_scripts_and_print_variables(opt=opt,args=args, train_set=train_set, val_set=val_set)
 
     import time
     ####################################################################################################
@@ -285,33 +133,8 @@ def main(args,opt):
     # todo: each instance must implement a feed_data and optimize_parameters
     ####################################################################################################
     start_epoch, current_step = 0,  opt['train']['current_step']
-    variables_list = []
-    if ('CLRNet' in which_model or 'PAMI' in which_model or 'ISP' in which_model):
-        if 'PAMI' in which_model:
-            variables_list = []
-        elif 'ISP' in which_model and args.mode==0:
-            variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1','RECALL','RECALL_1',
-                              'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
-        elif 'ISP' in which_model and args.mode==4:
-            # variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'AUC', 'IoU']
-            variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'AUC', 'IoU', 'RAW_PSNR', 'RGB_PSNR']
-        elif 'ISP' in which_model and args.mode==0:
-            variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1','RECALL','RECALL_1',
-                              'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
-        elif 'ISP' in which_model and args.mode in [2,3,4]:
-            variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'CEL1', 'l1_ema', 'Mean', 'Std', 'CYCLE_PSNR',
-                              'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
-                              'RAW_L1', 'RAW_PSNR', 'PSNR_DIFF', 'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray', 'Style',
-                              'ERROR', 'inpaint', 'inpaintPSNR'
-                              ]
-        elif 'ISP' in which_model and args.mode == 5:
-            variables_list = ['CYCLE_PSNR', 'CYCLE_L1', 'loss']
-        elif 'ISP' in which_model and args.mode == 6:
-            variables_list = ['CE','CE_MVSS','CE_Mantra']
-        elif 'CLRNet' in which_model:
-            variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
 
-        print(f"variables_list: {variables_list}")
+    if 'ISP' in which_model or 'PAMI' in which_model:
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
@@ -321,14 +144,14 @@ def main(args,opt):
             print('Start training from epoch: {:d}, iter: {:d}, total: {:d}'.format(start_epoch, current_step, total))
         latest_values = None
 
-        print_step, restart_step = 1, 1500
+        print_step, restart_step = 10, 1000
         start = time.time()
 
         # train_generator_1 = iter(train_loader_1)
         val_generator = iter(val_loader)
         val_item = next(val_generator)
         model.feed_data_val_router(batch=val_item, mode=args.mode)
-        for epoch in range(start_epoch, total_epochs + 1):
+        for epoch in range(50):
             current_step = 0
 
             # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
@@ -408,7 +231,7 @@ def main(args,opt):
                 # if rank <= 0:
                 #     progbar.add(len(model.real_H), values=logs)
 
-    elif which_model == 'CLRNet' and args.mode==1.0:
+    elif which_model == 'PAMI' and args.mode==1.0:
         ####################################################################################################
         # todo: Eval
         # todo: the evaluation procedure should ONLY include evaluate so far
@@ -442,7 +265,7 @@ def main(args,opt):
             print('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
         latest_values = None
         total = len(train_set)
-        for epoch in range(start_epoch, total_epochs + 1):
+        for epoch in range(start_epoch, 50):
             stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','LOCAL','lr','APEXGT','empty',
                                 'SIMUL','RECON',
                                 'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
@@ -475,7 +298,7 @@ if __name__ == '__main__':
     parser.add_argument('-load_models', type=int, default=1, help='load checkpoint or not.')
     args = parser.parse_args()
     opt = option.parse(args.opt, args=args)
-    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+
     main(args, opt)
 
 

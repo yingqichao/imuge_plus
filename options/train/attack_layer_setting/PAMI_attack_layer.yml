@@ -1,0 +1,25 @@
+#### indices
+simulated_inpainting_indices: [1,4,7]
+simulated_splicing_indices: [0,3,6]
+simulated_copymove_indices: [2,5,8]
+simulated_copysplicing_indices: []
+
+weak_JPEG_lower_bound: 20
+strong_JPEG_upper_bound: 21
+strong_JPEG_lower_bound: 10
+
+simulated_resize_indices: [0,5]
+simulated_gblur_indices: [1,6]
+simulated_mblur_indices: [2,7]
+simulated_AWGN_indices: []
+simulated_pure_JPEG_indices: [3,4]
+
+CE_psnr_less: 2e-5
+CE_psnr_higher: 1e-4
+
+Loss_back_psnr_less: 0.15
+Loss_back_psnr_higher: 0.25
+Null_loss: 10
+Loss_forward: 1
+
+skip_attack_probability: 0.85

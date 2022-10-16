@@ -1,5 +1,4 @@
 import copy
-import logging
 import os
 import math
 import cv2
@@ -13,13 +12,12 @@ from collections import OrderedDict
 import torchvision.transforms.functional as F
 from PIL import Image
 from skimage.color import rgb2gray
-from skimage.feature import canny
 from torch.nn.parallel import DistributedDataParallel
 # from cycleisp_models.cycleisp import Raw2Rgb
 import pytorch_ssim
 # from MVSS.models.mvssnet import get_mvss
 # from MVSS.models.resfcn import ResFCN
-from metrics import PSNR
+from utils.metrics import PSNR
 from models.modules.Quantization import diff_round
 from noise_layers import *
 from noise_layers.crop import Crop
@@ -28,7 +26,6 @@ from noise_layers.gaussian import Gaussian
 from noise_layers.gaussian_blur import GaussianBlur
 from noise_layers.middle_filter import MiddleBlur
 from noise_layers.resize import Resize
-from utils import stitch_images
 from utils.JPEG import DiffJPEG
 # from data.pipeline import pipeline_tensor2image
 # import matlab.engine
@@ -58,10 +55,10 @@ from MantraNet.mantranet import pre_trained_model
 # from lama_models.HWMNet import HWMNet
 # import contextual_loss as cl
 # import contextual_loss.functional as F
-from loss import GrayscaleLoss
-# from .invertible_net import Inveritible_Decolorization_PAMI
-# from models.networks import UNetDiscriminator
-from loss import PerceptualLoss, StyleLoss
+from losses.loss import GrayscaleLoss
+from .invertible_net import Inveritible_Decolorization_PAMI
+from models.networks import UNetDiscriminator
+from losses.loss import PerceptualLoss, StyleLoss
 # from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet
 from lama_models.my_own_elastic_dtcwt import my_own_elastic
@@ -82,7 +79,19 @@ class BaseModel():
         self.is_train = opt['is_train']
         self.schedulers = []
         self.optimizers = []
-
+        self.amount_of_tampering = len(
+            self.opt['simulated_splicing_indices'] +
+            self.opt['simulated_copymove_indices'] +
+            self.opt['simulated_inpainting_indices'] +
+            self.opt['simulated_copysplicing_indices']
+        )
+        self.amount_of_benign_attack = len(
+            self.opt['simulated_resize_indices'] +
+            self.opt['simulated_gblur_indices'] +
+            self.opt['simulated_mblur_indices'] +
+            self.opt['simulated_AWGN_indices'] +
+            self.opt['simulated_pure_JPEG_indices']
+        )
         self.train_set = train_set
         self.val_set = val_set
         self.rank = torch.distributed.get_rank()
@@ -197,8 +206,19 @@ class BaseModel():
         self.out_space_storage = ""
 
     ####################################################################################################
-    # todo: define networks, optimizers
+    # todo: Abstract Methods
+    # todo: router, etc.
     ####################################################################################################
+
+    def optimize_parameters_router(self, mode, step=None):
+        pass
+
+    def feed_data_router(self, batch, mode):
+        pass
+
+    def feed_data_val_router(self, batch, mode):
+        pass
+
     # def using_invISP(self):
     #     return self.global_step % 4 == 0
     # def using_cycleISP(self):
@@ -354,17 +374,17 @@ class BaseModel():
     # todo: using which tampering attacks during training? (also could be specified during inference)
     ####################################################################################################
     def using_simulated_inpainting(self):
-        return self.global_step % 9 in [1,5,7]
+        return self.global_step % 9 in self.opt['simulated_inpainting_indices']
     def using_splicing(self):
-        return self.global_step % 9 in [0,4,6,9]
+        return self.global_step % 9 in self.opt['simulated_splicing_indices']
     def using_copy_move(self):
-        return self.global_step % 9 in [2,3,8]
+        return self.global_step % 9 in self.opt['simulated_copymove_indices']
 
     ####################################################################################################
     # todo: using which image processing attacks?
     ####################################################################################################
-    def using_weak_jpeg_plus_blurring_etc(self):
-        return self.global_step % 8 in {0,1,2,4,6,7}
+    def using_weak_jpeg_plus_blurring_etc(self, *,  index):
+        return index % 8 in {0,1,2,4,6,7}
 
     def begin_using_momentum(self):
         return False #self.global_step>=0
@@ -410,21 +430,21 @@ class BaseModel():
 
     def do_aug_train(self, *, attacked_forward):
         skip_augment = np.random.rand() > 0.85
-        if not skip_augment and self.conduct_augmentation:
+        if not skip_augment and self.opt["conduct_augmentation"]:
             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
         else:
             attacked_adjusted = attacked_forward
 
         return attacked_adjusted
 
-    def do_postprocess_train(self, *, attacked_adjusted, logs):
+    def do_postprocess_train(self, *, attacked_adjusted):
         skip_robust = np.random.rand() > 0.85
-        if not skip_robust and self.consider_robost:
-            if self.using_weak_jpeg_plus_blurring_etc():
+        if not skip_robust and self.opt["consider_robost"]:
+            if self.using_weak_jpeg_plus_blurring_etc(index=self.global_step):
                 quality_idx = np.random.randint(20, 21)
             else:
                 quality_idx = np.random.randint(10, 20)
-            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
+            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted,
                                                  quality_idx=quality_idx)
         else:
             attacked_image = attacked_adjusted
@@ -534,7 +554,7 @@ class BaseModel():
 
         return modified_input_generator, ISP_loss
 
-    def standard_attack_layer(self, *, modified_input, gt_rgb, logs, idx_clip, num_per_clip):
+    def standard_attack_layer(self, *, modified_input, gt_rgb, idx_clip, num_per_clip, tamper_index=None):
         ####################################################################################################
         # todo: cropping
         # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
@@ -554,13 +574,13 @@ class BaseModel():
         # todo: including using_simulated_inpainting copy-move and splicing
         ####################################################################################################
         percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
-        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range, logs=logs)
+        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range)
 
         # attacked_forward = tamper_source_cropped
         attacked_forward, masks, masks_GT = self.tampering(
             forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
-            modified_input=modified_input, percent_range=percent_range, logs=logs,
-            idx_clip=idx_clip, num_per_clip=num_per_clip,
+            modified_input=modified_input, percent_range=percent_range,
+            idx_clip=idx_clip, num_per_clip=num_per_clip, index=tamper_index
         )
 
         ####################################################################################################
@@ -586,11 +606,11 @@ class BaseModel():
         ####################################################################################################
         skip_robust = np.random.rand() > 0.85
         if not skip_robust and self.opt['consider_robost']:
-            if self.using_weak_jpeg_plus_blurring_etc():
+            if self.using_weak_jpeg_plus_blurring_etc(index=self.global_step):
                 quality_idx = np.random.randint(18, 21)
             else:
                 quality_idx = np.random.randint(10, 19)
-            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted, logs=logs,
+            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted,
                                                  quality_idx=quality_idx)
         else:
             attacked_image = attacked_adjusted
@@ -652,7 +672,7 @@ class BaseModel():
             mode='bilinear')
         return out
 
-    def cropping_mask_generation(self, forward_image, locs=None, min_rate=0.6, max_rate=1.0, logs=None):
+    def cropping_mask_generation(self, forward_image, locs=None, min_rate=0.6, max_rate=1.0):
         ####################################################################################################
         # todo: cropping
         # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
@@ -685,21 +705,6 @@ class BaseModel():
 
         return (h_start, h_end, w_start, w_end), cropped, scaled_cropped #, masks, masks_GT
 
-    def tamper_based_augmentation(self, modified_input, modified_canny, masks, masks_GT, logs):
-        # tamper-based data augmentation
-        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
-        for imgs in range(batch_size):
-            if imgs % 3 != 2:
-                modified_input[imgs, :, :, :] = (
-                            modified_input[imgs, :, :, :] * (1 - masks[imgs, :, :, :]) + self.previous_images[imgs, :,
-                                                                                         :, :] * masks[imgs, :, :,
-                                                                                                 :]).clone().detach()
-                modified_canny[imgs, :, :, :] = (
-                            modified_canny[imgs, :, :, :] * (1 - masks_GT[imgs, :, :, :]) + self.previous_canny[imgs, :,
-                                                                                            :, :] * masks_GT[imgs, :, :,
-                                                                                                    :]).clone().detach()
-
-        return modified_input, modified_canny
 
     def print_this_image(self, image, filename):
         camera_ready = image.unsqueeze(0)
@@ -707,135 +712,66 @@ class BaseModel():
                                      filename, nrow=1,
                                      padding=0, normalize=False)
 
-    def mask_generation(self, modified_input, percent_range, logs):
+    def mask_generation(self, *, modified_input, percent_range=None, index=None):
+        if index is None:
+            index = self.global_step
+        index = index % self.amount_of_tampering
+        if percent_range is None:
+            percent_range = (0.05, 0.25) if index not in self.opt["simulated_copymove_indices"] else (0.05, 0.2)
+
         batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         masks_GT = torch.zeros(batch_size, 1, self.real_H.shape[2], self.real_H.shape[3]).cuda()
         ## THE RECOVERY STAGE WILL ONLY WORK UNDER LARGE TAMPERING
         ## TO LOCALIZE SMALL TAMPERING, WE ONLY UPDATE LOCALIZER NETWORK
 
         for imgs in range(batch_size):
-            if imgs % 3 == 2:
-                ## copy-move will not be too large
-                percent_range = (0.00, 0.15)
             masks_origin, _ = self.generate_stroke_mask(
                 [self.real_H.shape[2], self.real_H.shape[3]], percent_range=percent_range)
             masks_GT[imgs, :, :, :] = masks_origin.cuda()
         masks = masks_GT.repeat(1, 3, 1, 1)
 
         # masks is just 3-channel-version masks_GT
-        return masks, masks_GT
-
-    def tampering(self, forward_image, masks, masks_GT, modified_input, percent_range, idx_clip, num_per_clip, logs, index=None):
-        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
-        ####### Tamper ###############
-        # attacked_forward = torch.zeros_like(modified_input)
-        # for img_idx in range(batch_size):
-        if index is None:
-            index = self.global_step % 9
-
-        if index in [0,4,6,9]: #self.using_splicing():
-            ####################################################################################################
-            # todo: splicing
-            # todo: invISP
-            ####################################################################################################
-            attacked_forward = modified_input * (1 - masks) + (self.previous_protected if idx_clip is None else self.previous_protected[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()) * masks
-            # attack_name = "splicing"
-
-        elif index in [2,3,8]: #self.using_copy_move():
-            ####################################################################################################
-            # todo: copy-move
-            # todo: invISP
-            ####################################################################################################
-            lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
-            ###### IMPORTANT NOTE: for ideal copy-mopv, here should be modified_input. If you want to ease the condition, can be changed to forward_iamge
-            tamper = modified_input.clone().detach()
-            x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
-            while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
-                x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
-                y_shift = int((modified_input.shape[3]) * (np.random.rand() - 0.5))
-
-                ### two times padding ###
-                mask_buff = torch.zeros((masks.shape[0], masks.shape[1],
-                                            masks.shape[2] + abs(2 * x_shift),
-                                            masks.shape[3] + abs(2 * y_shift))).cuda()
-
-                mask_buff[:, :,
-                abs(x_shift) + x_shift:abs(x_shift) + x_shift + modified_input.shape[2],
-                abs(y_shift) + y_shift:abs(y_shift) + y_shift + modified_input.shape[3]] = masks
-
-                mask_buff = mask_buff[:, :,
-                                    abs(x_shift):abs(x_shift) + modified_input.shape[2],
-                                    abs(y_shift):abs(y_shift) + modified_input.shape[3]]
-
-                valid = torch.mean(mask_buff)
-                retried += 1
-                if valid>=max_valid:
-                    max_valid = valid
-                    self.mask_shifted = mask_buff
-                    self.x_shift, self.y_shift = x_shift, y_shift
-
-            self.tamper_shifted = torch.zeros((modified_input.shape[0], modified_input.shape[1],
-                                               modified_input.shape[2] + abs(2 * self.x_shift),
-                                               modified_input.shape[3] + abs(2 * self.y_shift))).cuda()
-            self.tamper_shifted[:, :, abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + modified_input.shape[2],
-            abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + modified_input.shape[3]] = tamper
+        return masks, masks_GT, percent_range
 
 
-            self.tamper_shifted = self.tamper_shifted[:, :,
-                             abs(self.x_shift): abs(self.x_shift) + modified_input.shape[2],
-                             abs(self.y_shift): abs(self.y_shift) + modified_input.shape[3]]
-
-            masks = self.mask_shifted.clone().detach()
-            masks = self.clamp_with_grad(masks)
-            valid = torch.mean(masks)
-
-            masks_GT = masks[:, :1, :, :]
-            attacked_forward = modified_input * (1 - masks) + self.tamper_shifted.clone().detach() * masks
-            # del self.tamper_shifted
-            # del self.mask_shifted
-            # torch.cuda.empty_cache()
-
-        elif index in [1,5,7]: #self.using_simulated_inpainting:
-            ####################################################################################################
-            # todo: simulated inpainting
-            # todo: it is important, without protection, though the tampering can be close, it should also be detected.
-            ####################################################################################################
-            # attacked_forward = modified_input * (1 - masks) + forward_image * masks
-            attacked_forward = modified_input * (1 - masks) + (self.previous_images if idx_clip is None else self.previous_images[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous())* masks
-
-        attacked_forward = self.clamp_with_grad(attacked_forward)
-        # attacked_forward = self.Quantization(attacked_forward)
-
-        return attacked_forward, masks, masks_GT
-
-    def benign_attacks(self, attacked_forward, quality_idx, logs, index=None):
+    def benign_attacks(self, attacked_forward, quality_idx, kernel_size, resize_ratio, index=None):
         batch_size, height_width = attacked_forward.shape[0], attacked_forward.shape[2]
-        attacked_real_jpeg = torch.rand_like(attacked_forward).cuda()
+        attacked_real_jpeg = torch.empty_like(attacked_forward).cuda()
         if index is None:
-            index = self.global_step % 8
+            index = self.global_step
+        index = index % self.amount_of_benign_attack
 
         ## id of weak JPEG: 0,1,2,4,6,7
-        if index in [0,5]:
+        if index in self.opt['simulated_resize_indices']:
             blurring_layer = self.resize
-        elif index in [1,6]:
+            processed_image = blurring_layer(attacked_forward, resize_ratio=resize_ratio)
+        elif index in self.opt['simulated_gblur_indices']:
             blurring_layer = self.gaussian_blur
-        elif index in [2,7]:
+            processed_image = blurring_layer(attacked_forward, kernel_size=kernel_size)
+        elif index in self.opt['simulated_mblur_indices']:
             blurring_layer = self.median_blur
-        elif index in [4]:
+            processed_image = blurring_layer(attacked_forward, kernel=kernel_size)
+        elif index in self.opt['simulated_AWGN_indices']:
             blurring_layer = self.gaussian
-        elif index in [3]:
+            processed_image = blurring_layer(attacked_forward)
+        elif index in self.opt['simulated_pure_JPEG_indices']:
             blurring_layer = self.identity
+            processed_image = blurring_layer(attacked_forward)
+        else:
+            raise NotImplementedError("postprocess的Index没有找到，请检查！")
 
         quality = int(quality_idx * 5)
 
         jpeg_layer_after_blurring = self.jpeg_simulate[quality_idx - 10][0] if quality < 100 else self.identity
-        attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_layer_after_blurring(blurring_layer(attacked_forward)))
+        attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_layer_after_blurring(processed_image))
         # if self.using_jpeg_simulation_only():
         #     attacked_image = attacked_real_jpeg_simulate
         # else:  # if self.global_step%5==3:
         for idx_atkimg in range(batch_size):
             grid = attacked_forward[idx_atkimg]
-            realworld_attack = self.real_world_attacking_on_ndarray(grid, quality, index)
+            realworld_attack = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality,
+                                                                    kernel=kernel_size, resize_ratio=resize_ratio,
+                                                                    index=index)
             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
         attacked_real_jpeg = attacked_real_jpeg.clone().detach()
@@ -845,49 +781,56 @@ class BaseModel():
         # error_scratch = attacked_real_jpeg - attacked_forward
         # l_scratch = self.l1_loss(error_scratch, torch.zeros_like(error_scratch).cuda())
         # logs.append(('SCRATCH', l_scratch.item()))
-        return attacked_image
+        return attacked_image, attacked_real_jpeg_simulate
 
-    def benign_attacks_without_simulation(self, forward_image, quality_idx, logs, index=None):
+    def benign_attacks_without_simulation(self, *, forward_image, quality_idx, kernel_size,
+                                                         resize_ratio, index=None):
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
-        attacked_real_jpeg = torch.rand_like(forward_image).cuda()
+        attacked_real_jpeg = torch.empty_like(forward_image).cuda()
 
         quality = int(quality_idx * 5)
 
         for idx_atkimg in range(batch_size):
             grid = forward_image[idx_atkimg]
-            realworld_attack = self.real_world_attacking_on_ndarray(grid, quality, index)
+            realworld_attack = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality,
+                                                                    index=index, kernel=kernel_size,
+                                                                    resize_ratio=resize_ratio)
             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
         return attacked_real_jpeg
 
-    def real_world_attacking_on_ndarray(self, grid, qf_after_blur, index=None):
+    def real_world_attacking_on_ndarray(self, *,  grid, qf_after_blur, kernel, resize_ratio, index=None):
         # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         if index is None:
-            index = self.global_step % 8
+            index = self.global_step
+        index = index % self.amount_of_benign_attack
 
         ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
-        if index in [0,5]:
+        if index in self.opt['simulated_resize_indices']:
             # grid = self.resize(grid.unsqueeze(0))[0]
-            newH, newW = int((0.7+0.6*np.random.rand())*self.width_height), int((0.7+0.6*np.random.rand())*self.width_height)
+            # newH, newW = int((0.7+0.6*np.random.rand())*self.width_height), int((0.7+0.6*np.random.rand())*self.width_height)
+            newH, newW = resize_ratio
             realworld_attack = cv2.resize(np.copy(ndarr), (newH,newW),
                                           interpolation=cv2.INTER_LINEAR)
             realworld_attack = cv2.resize(np.copy(realworld_attack), (self.width_height, self.width_height),
                                 interpolation=cv2.INTER_LINEAR)
-        elif index in [1,6]:
-            kernel_list = [3, 5, 7]
-            kernel = random.choice(kernel_list)
+        elif index in self.opt['simulated_gblur_indices']:
+            # kernel_list = [5]
+            # kernel = random.choice(kernel_list)
             realworld_attack = cv2.GaussianBlur(ndarr, (kernel, kernel), 0)
-        elif index in [2,7]:
-            kernel_list = [3, 5, 7]
-            kernel = random.choice(kernel_list)
+        elif index in self.opt['simulated_mblur_indices']:
+            # kernel_list = [5]
+            # kernel = random.choice(kernel_list)
             realworld_attack = cv2.medianBlur(ndarr, kernel)
-        elif index in [4]:
-            mean, sigma = 0, 1
+        elif index in self.opt['simulated_AWGN_indices']:
+            mean, sigma = 0, 0.1
             gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
             # 给图片添加高斯噪声
             realworld_attack = ndarr + gauss
-        elif index in [3]:
+        elif index in self.opt['simulated_pure_JPEG_indices']:
             realworld_attack = ndarr
+        else:
+            raise NotImplementedError("postprocess的Index没有找到，请检查！")
 
         _, realworld_attack = cv2.imencode('.jpeg', realworld_attack,
                                            (int(cv2.IMWRITE_JPEG_QUALITY), qf_after_blur))
@@ -921,6 +864,15 @@ class BaseModel():
 
     def is_image_file(self, filename):
         return any(filename.endswith(extension) for extension in self.IMG_EXTENSIONS)
+
+    def random_float(self, min, max):
+        """
+        Return a random number
+        :param min:
+        :param max:
+        :return:
+        """
+        return np.random.rand() * (max - min) + min
 
     def get_paths_from_images(self, path):
         '''get image path list from image folder'''
@@ -1163,8 +1115,8 @@ class BaseModel():
     def generate_stroke_mask(self, im_size, parts=5, parts_square=2, maxVertex=6, maxLength=64, maxBrushWidth=32,
                              maxAngle=360, percent_range=(0.0, 0.25)):
         minVertex, maxVertex = 1, 8
-        minLength, maxLength = int(im_size[0] * 0.02), int(im_size[0] * 0.2)
-        minBrushWidth, maxBrushWidth = int(im_size[0] * 0.02), int(im_size[0] * 0.2)
+        minLength, maxLength = int(im_size[0] * 0.02), int(im_size[0] * 0.125)
+        minBrushWidth, maxBrushWidth = int(im_size[0] * 0.02), int(im_size[0] * 0.125)
         mask = np.zeros((im_size[0], im_size[1]), dtype=np.float32)
         lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
 
@@ -1187,7 +1139,7 @@ class BaseModel():
 
     def np_free_form_mask(self, mask_re, minVertex, maxVertex, minLength, maxLength, minBrushWidth, maxBrushWidth,
                           maxAngle, h, w):
-        mask = np.zeros_like(mask_re)
+        mask = np.empty_like(mask_re)
         numVertex = np.random.randint(minVertex, maxVertex + 1)
         startY = np.random.randint(h)
         startX = np.random.randint(w)
@@ -1407,6 +1359,8 @@ if __name__ == '__main__':
 #                                         find_unused_parameters=True)
 #     print("Building ResFCN...........please wait...")
 #     self.discriminator_mask = ResFCN().cuda()
+#     checkpoint = torch.load('./resfcn_coco_1013.pth', map_location='cpu')
+#     self.discriminator_mask.load_state_dict(checkpoint, strict=True)
 #     self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
 #                                                       device_ids=[torch.cuda.current_device()],
 #                                                       find_unused_parameters=True)

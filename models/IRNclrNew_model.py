@@ -14,11 +14,9 @@ from skimage.color import rgb2gray
 from skimage.feature import canny
 from torch.nn.parallel import DistributedDataParallel
 
-import models.lr_scheduler as lr_scheduler
 import pytorch_ssim
 # import matlab.engine
-from losses.fourier_loss import fft_L1_loss_color
-from metrics import PSNR
+from utils.metrics import PSNR
 from models.modules.Quantization import diff_round
 from noise_layers import *
 from noise_layers.crop import Crop

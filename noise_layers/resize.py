@@ -32,19 +32,20 @@ class Resize(nn.Module):
         if resize_ratio is None:
             resize_ratio = random_float(self.resize_ratio_min, self.resize_ratio_max)
 
-        newWidth, newHeight = int(resize_ratio*original_width), int(resize_ratio*original_height)
-        # resize_ratio = 0.5
-        # noised_image = noised_and_cover[0]
+            newWidth, newHeight = int(resize_ratio*original_width), int(resize_ratio*original_height)
+        else:
+            newWidth, newHeight = resize_ratio
+
         out = F.interpolate(
                                     noised_image,
                                     size=[newWidth, newHeight],
-                                    mode=self.interpolation_method)
+                                    mode=self.interpolation_method).contiguous()
 
         recover = F.interpolate(
                                     out,
                                     size=[original_width, original_height],
                                     # scale_factor=(1/resize_ratio, 1/resize_ratio),
-                                    mode=self.interpolation_method)
+                                    mode=self.interpolation_method).contiguous()
         # resize_back = F.interpolate(
         #     noised_image,
         #     size=[original_width, original_height],

@@ -1394,15 +1394,44 @@ class ResnetBlock(nn.Module):
         return out
 
 if __name__ == '__main__':
-    input = torch.ones((1,3,256,256)).cuda()
-    # model = JPEGGenerator()
-    model = QF_predictor().cuda()
-    # output = model(input,qf=torch.tensor([[0.2]]))
-    output = model(input)
-    CE_loss = nn.CrossEntropyLoss().cuda()
-    loss = CE_loss(output,torch.tensor([0]).long().cuda())
-    print(output.shape)
-    print(loss)
+    # input = torch.ones((1,3,256,256)).cuda()
+    # # model = JPEGGenerator()
+    # model = QF_predictor().cuda()
+    # # output = model(input,qf=torch.tensor([[0.2]]))
+    # output = model(input)
+    # CE_loss = nn.CrossEntropyLoss().cuda()
+    # loss = CE_loss(output,torch.tensor([0]).long().cuda())
+    # print(output.shape)
+    # print(loss)
+
+    with torch.no_grad():
+        from thop import profile
+        # from lama_models.HWMNet import HWMNet
+        begin = torch.cuda.memory_reserved()
+        nin, nout = 3, 3
+        X = torch.randn(1,nin, 512,512).cuda()
+        # print(torch.cuda.memory_allocated())
+        # print(torch.cuda.memory_reserved())
+        # model = SKFF(in_channels=16)
+        # X = [torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64)]
+        # print(X.shape)
+
+        model = UNetDiscriminator().cuda()
+        # model = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
+
+        # print(torch.cuda.memory_reserved())
+        Y = model(X)
+        end = torch.cuda.memory_reserved()
+        print(Y.shape)
+        print(f"memory: {(end-begin)/1024/1024}")
+        # from torchstat import stat
+        #
+        # stat(model, (3, 512, 512))
+
+        flops, params = profile(model, (X,))
+        print(flops/1e9)
+        print(params/1e6)
+
 
 
 

@@ -10,7 +10,7 @@ class GaussianBlur(nn.Module):
     def __init__(self, kernel_size=5):
         super(GaussianBlur, self).__init__()
         # self.device = config.device
-        self.kernel_size = kernel_size
+        # self.kernel_size = kernel_size
         self.name = "G_Blur"
 
     def get_gaussian_kernel(self, kernel_size=5, sigma=2, channels=3):
@@ -40,7 +40,7 @@ class GaussianBlur(nn.Module):
         gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
         gaussian_kernel = gaussian_kernel.repeat(channels, 1, 1, 1)
 
-        padding = int((self.kernel_size-1)/2)
+        padding = int((kernel_size-1)/2)
         self.gaussian_filter = nn.Conv2d(in_channels=channels, out_channels=channels,
                                     kernel_size=kernel_size, padding=padding, groups=channels, bias=False)
 
@@ -49,8 +49,8 @@ class GaussianBlur(nn.Module):
 
         return self.gaussian_filter
 
-    def forward(self, tensor, cover_image=None):
+    def forward(self, tensor, kernel_size=5, cover_image=None):
         self.name = "GaussianBlur"
-        gaussian_layer = self.get_gaussian_kernel().cuda()
+        gaussian_layer = self.get_gaussian_kernel(kernel_size).cuda()
         return gaussian_layer(tensor)
 

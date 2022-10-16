@@ -163,7 +163,7 @@ class LQGTDataset(data.Dataset):
         # if LQ_path is None:
         #     LQ_path = GT_path
 
-        return (img_GT, 0, canny_img if canny_img is not None else img_GT.clone())
+        return (img_GT, 0, (canny_img if canny_img is not None else img_GT.clone()))
 
     def __len__(self):
         return len(self.paths_GT)

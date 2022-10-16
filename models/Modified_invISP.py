@@ -198,17 +198,17 @@ class Modified_invISP(BaseModel):
         if mode in [0.0]:
             # self.feed_data_COCO_like(batch, mode='train') # feed_data_COCO_like(batch)
             self.feed_data_ISP(batch, mode='train')
-        elif mode in [1.0,6.0]:
+        elif mode in [1.0,3.0,6.0]:
             self.feed_data_COCO_like(batch, mode='train')
-        elif mode in [2.0,3.0,4.0,5.0]:
+        elif mode in [2.0,4.0,5.0]:
             self.feed_data_ISP(batch, mode='train')
 
     def feed_data_val_router(self, batch, mode):
         if mode in [0.0]:
             self.feed_data_ISP(batch, mode='val')
-        elif mode in [1.0,6.0]:
+        elif mode in [1.0,3.0,6.0]:
             self.feed_data_COCO_like(batch, mode='val')
-        elif mode in [2.0,3.0,4.0,5.0]:
+        elif mode in [2.0,4.0,5.0]:
             self.feed_data_ISP(batch, mode='val')
 
 
@@ -527,7 +527,7 @@ class Modified_invISP(BaseModel):
                 self.generator.eval()
                 self.netG.eval()
                 self.discriminator_mask.train() if "discriminator_mask" in self.training_network_list else self.discriminator_mask.eval()
-                self.discriminator.eval()
+                # self.discriminator.eval()
                 self.qf_predict_network.eval()
                 # self.localizer.train()
 
@@ -819,7 +819,6 @@ class Modified_invISP(BaseModel):
                                 # self.scaler_kd_jpeg.update()
                                 self.optimizer_KD_JPEG.zero_grad()
                                 self.optimizer_G.zero_grad()
-                                self.optimizer_localizer.zero_grad()
                                 self.optimizer_discriminator_mask.zero_grad()
                                 self.optimizer_generator.zero_grad()
                                 self.optimizer_qf.zero_grad()
@@ -951,7 +950,7 @@ class Modified_invISP(BaseModel):
 
             for idx_clip in range(self.opt['step_acumulate']):
 
-                gt_rgb = self.label[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
+                gt_rgb = self.real_H[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()
 
                 batch_size, num_channels, height_width, _ = gt_rgb.shape
 
@@ -984,7 +983,8 @@ class Modified_invISP(BaseModel):
                     # todo: mantranet: localizer mvssnet: netG resfcn: discriminator
                     ####################################################################################################
                     attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                        modified_input=modified_input, gt_rgb=gt_rgb, logs=logs, idx_clip=idx_clip, num_per_clip=num_per_clip
+                        modified_input=modified_input, gt_rgb=gt_rgb, logs=logs, idx_clip=idx_clip, num_per_clip=num_per_clip,
+                        tamper_index=3
                     )
 
                     # ERROR = attacked_image-attacked_forward
@@ -1109,7 +1109,7 @@ class Modified_invISP(BaseModel):
             if self.previous_images is not None:
                 ### previous_previous_images is for tampering-based data augmentation
                 self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.label
+            self.previous_images = self.real_H
             ### update the tampering source with pattern
             # if self.previous_protected is not None:
             #     self.previous_previous_protected = self.previous_protected.clone().detach()
@@ -1250,8 +1250,6 @@ class Modified_invISP(BaseModel):
             mask_GT = all_mask_GT
             ## tampered image
             test_input = non_tampered_image * (1 - mask_GT) + tamper_source * mask_GT
-
-
 
         else:
             #### auto generated
@@ -1630,6 +1628,88 @@ class Modified_invISP(BaseModel):
 
         return logs, (modified_raw, modified_input_0, modified_input_1, modified_input_2), True
 
+    def tampering(self, *, forward_image, masks, masks_GT, modified_input, percent_range,  logs, idx_clip=None, num_per_clip=None, index=None):
+        batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
+        ####### Tamper ###############
+        # attacked_forward = torch.zeros_like(modified_input)
+        # for img_idx in range(batch_size):
+        if index is None:
+            index = self.global_step % 9
+
+        if index in [0,4,9]: #self.using_splicing():
+            ####################################################################################################
+            # todo: splicing
+            # todo: invISP
+            ####################################################################################################
+            attacked_forward = modified_input * (1 - masks) + (self.previous_protected if idx_clip is None else self.previous_protected[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous()) * masks
+            # attack_name = "splicing"
+
+        elif index in [2,3,5,6,8]: #self.using_copy_move():
+            ####################################################################################################
+            # todo: copy-move
+            # todo: invISP
+            ####################################################################################################
+            lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
+            ###### IMPORTANT NOTE: for ideal copy-mopv, here should be modified_input. If you want to ease the condition, can be changed to forward_iamge
+            tamper = modified_input.clone().detach()
+            x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
+            while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
+                x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
+                y_shift = int((modified_input.shape[3]) * (np.random.rand() - 0.5))
+
+                ### two times padding ###
+                mask_buff = torch.zeros((masks.shape[0], masks.shape[1],
+                                            masks.shape[2] + abs(2 * x_shift),
+                                            masks.shape[3] + abs(2 * y_shift))).cuda()
+
+                mask_buff[:, :,
+                abs(x_shift) + x_shift:abs(x_shift) + x_shift + modified_input.shape[2],
+                abs(y_shift) + y_shift:abs(y_shift) + y_shift + modified_input.shape[3]] = masks
+
+                mask_buff = mask_buff[:, :,
+                                    abs(x_shift):abs(x_shift) + modified_input.shape[2],
+                                    abs(y_shift):abs(y_shift) + modified_input.shape[3]]
+
+                valid = torch.mean(mask_buff)
+                retried += 1
+                if valid>=max_valid:
+                    max_valid = valid
+                    self.mask_shifted = mask_buff
+                    self.x_shift, self.y_shift = x_shift, y_shift
+
+            self.tamper_shifted = torch.zeros((modified_input.shape[0], modified_input.shape[1],
+                                               modified_input.shape[2] + abs(2 * self.x_shift),
+                                               modified_input.shape[3] + abs(2 * self.y_shift))).cuda()
+            self.tamper_shifted[:, :, abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + modified_input.shape[2],
+            abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + modified_input.shape[3]] = tamper
+
+
+            self.tamper_shifted = self.tamper_shifted[:, :,
+                             abs(self.x_shift): abs(self.x_shift) + modified_input.shape[2],
+                             abs(self.y_shift): abs(self.y_shift) + modified_input.shape[3]]
+
+            masks = self.mask_shifted.clone().detach()
+            masks = self.clamp_with_grad(masks)
+            valid = torch.mean(masks)
+
+            masks_GT = masks[:, :1, :, :]
+            attacked_forward = modified_input * (1 - masks) + self.tamper_shifted.clone().detach() * masks
+            # del self.tamper_shifted
+            # del self.mask_shifted
+            # torch.cuda.empty_cache()
+
+        elif index in [1,7]: #self.using_simulated_inpainting:
+            ####################################################################################################
+            # todo: simulated inpainting
+            # todo: it is important, without protection, though the tampering can be close, it should also be detected.
+            ####################################################################################################
+            # attacked_forward = modified_input * (1 - masks) + forward_image * masks
+            attacked_forward = modified_input * (1 - masks) + (self.previous_images if idx_clip is None else self.previous_images[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous())* masks
+
+        attacked_forward = self.clamp_with_grad(attacked_forward)
+        # attacked_forward = self.Quantization(attacked_forward)
+
+        return attacked_forward, masks, masks_GT
 
     def train_resfcn(self, step=None):
         self.discriminator_mask.train()

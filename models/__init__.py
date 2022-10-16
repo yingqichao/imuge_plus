@@ -2,27 +2,60 @@ import logging
 logger = logging.getLogger('base')
 
 
-def create_model(opt,args):
-    model = opt['model']
+def create_training_scripts_and_print_variables(*, opt, args, train_set=None, val_set=None):
+    which_model = opt['model']
 
-    if model == 'CVPR':
-        from .Modified_invISP import IRNModel as M
-        m = M(opt, args)
-    elif model == 'PAMI':
-        from .IRNp_model import IRNpModel as M
-        m = M(opt, args)
-    elif model == 'ICASSP_NOWAY':
-        from .IRNcrop_model import IRNcropModel as M
-    elif model == 'ICASSP_RHI':
-        from .tianchi_model import IRNrhiModel as M
+    if which_model == 'CVPR':
+        from models.Modified_invISP import IRNModel as M
+        model = M(opt, args)
+    elif which_model == 'PAMI':
+        from models.IRNp_model import IRNpModel as M
+        model = M(opt, args)
+    elif which_model == 'ICASSP_NOWAY':
+        from models.IRNcrop_model import IRNcropModel as M
+    elif which_model == 'ICASSP_RHI':
+        from models.tianchi_model import IRNrhiModel as M
         # from .IRNrhi_model import IRNrhiModel as M
-    elif model == 'CLRNet':
-        from .IRNclrNew_model import IRNclrModel as M
-        m = M(opt, args)
-    elif model == 'Qian_rumor':
-        from .RumorModel import RumorModel as M
+    elif which_model == 'CLRNet':
+        from models.IRNclrNew_model import IRNclrModel as M
+        model = M(opt, args)
+    elif which_model == 'ISP':
+        from models.Modified_invISP import Modified_invISP as M
+        model = M(opt, args, train_set)
     else:
-        raise NotImplementedError('Model [{:s}] not recognized.'.format(model))
+        raise NotImplementedError('大神是不是搞错了？')
 
-    logger.info('Model [{:s}] is created.'.format(m.__class__.__name__))
-    return m
+    print('Model [{:s}] is created.'.format(model.__class__.__name__))
+
+    ######### get variable lists ##############
+    variables_list = []
+
+    if 'PAMI' in which_model:
+        variables_list = ['local','loss','null','lF','lB','canny','mask_rate','CE', 'CE_ema', 'ERROR', 'SIMU', 'PF', 'PB', 'SF', 'SB']
+    elif 'ISP' in which_model and args.mode == 0:
+        variables_list = ['RAW_L1', 'RAW_PSNR', 'loss', 'ERROR', 'CE', 'CEL1', 'F1', 'F1_1', 'RECALL', 'RECALL_1',
+                          'RGB_PSNR_0', 'RGB_PSNR_1', 'RGB_PSNR_2']
+    elif 'ISP' in which_model and args.mode == 4:
+        variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'RAW_PSNR', 'RGB_PSNR']
+    elif 'ISP' in which_model and args.mode == 0:
+        variables_list = ['RAW_L1', 'RAW_PSNR', 'loss', 'ERROR', 'CE', 'CEL1', 'F1', 'F1_1', 'RECALL', 'RECALL_1',
+                          'RGB_PSNR_0', 'RGB_PSNR_1', 'RGB_PSNR_2']
+    elif 'ISP' in which_model and args.mode in [2, 3, 4]:
+        variables_list = ['ISP_PSNR', 'ISP_L1', 'CE', 'CE_ema', 'CEL1', 'l1_ema', 'Mean', 'Std', 'CYCLE_PSNR',
+                          'CYCLE_L1', 'PIPE_PSNR', 'PIPE_L1', 'loss',
+                          'RAW_L1', 'RAW_PSNR', 'PSNR_DIFF', 'ISP_PSNR_NOW', 'ISP_SSIM_NOW', 'Percept', 'Gray', 'Style',
+                          'ERROR', 'inpaint', 'inpaintPSNR'
+                          ]
+    elif 'ISP' in which_model and args.mode == 5:
+        variables_list = ['CYCLE_PSNR', 'CYCLE_L1', 'loss']
+    elif 'ISP' in which_model and args.mode == 6:
+        variables_list = ['CE', 'CE_MVSS', 'CE_Mantra']
+    elif 'CLRNet' in which_model:
+        variables_list = ['loss', 'PF', 'PB', 'CE', 'SSFW', 'SSBK', 'lF', 'local']
+
+    print(f"variables_list: {variables_list}")
+
+
+
+
+    return model, variables_list

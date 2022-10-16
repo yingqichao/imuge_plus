@@ -518,25 +518,36 @@ if __name__ == '__main__':
     with torch.no_grad():
         from thop import profile
         # from lama_models.HWMNet import HWMNet
-
-        nin, nout = 3, 1
-        X = torch.randn(1,nin, 256,256).cuda()
+        nin, nout = 3, 3
+        X = torch.randn(1,nin, 512,512).cuda()
         # print(torch.cuda.memory_allocated())
         # print(torch.cuda.memory_reserved())
         # model = SKFF(in_channels=16)
         # X = [torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64), torch.randn(1, 16, 64, 64)]
         # print(X.shape)
 
-        model = my_own_elastic(nin=nin,nout=nout, nch=36, depth=4, num_blocks=8).cuda()
+        from models.networks import UNetDiscriminator
+        from torchvision.models.mobilenet import mobilenet_v3_large
+
+        begin = torch.cuda.memory_reserved()
+        # model = mobilenet_v3_large().cuda()
+        model = UNetDiscriminator(dim=32, residual_blocks=2).cuda()
+        # model = my_own_elastic(nin=nin,nout=nout, nch=36, depth=4, num_blocks=16).cuda()
         # model = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False, use_dwt=False).cuda()
+
+        # print(torch.cuda.memory_reserved())
         Y = model(X)
+        end = torch.cuda.memory_reserved()
         print(Y.shape)
+        print(f"memory: {(end-begin)/1024/1024}")
+        # from torchstat import stat
+        #
+        # stat(model, (3, 512, 512))
 
         flops, params = profile(model, (X,))
-        print(flops)
-        print(params)
-        print(torch.cuda.memory_allocated())
-        print(torch.cuda.memory_reserved())
+        print(flops/1e9)
+        print(params/1e6)
+
 
         # # from torchscan import summary
         # from torchstat import stat

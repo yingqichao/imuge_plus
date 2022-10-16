@@ -3,7 +3,6 @@ import logging
 import os
 
 import cv2
-import torch.distributed as dist
 import torch.nn as nn
 import torchvision
 import torchvision.transforms.functional as F
@@ -12,20 +11,10 @@ from skimage.color import rgb2gray
 from skimage.feature import canny
 from torch.nn.parallel import DistributedDataParallel
 
-import pytorch_ssim
-from metrics import PSNR
-from models.modules.Quantization import diff_round
 from models.networks import UNetDiscriminator, \
     JPEGGenerator
 from noise_layers import *
-from noise_layers.crop import Crop
-from noise_layers.dropout import Dropout
-from noise_layers.gaussian import Gaussian
-from noise_layers.gaussian_blur import GaussianBlur
-from noise_layers.middle_filter import MiddleBlur
-from noise_layers.resize import Resize
 from utils import stitch_images
-from utils.JPEG import DiffJPEG
 from .base_model import BaseModel
 from .conditional_jpeg_generator import QF_predictor
 from .invertible_net import Inveritible_Decolorization_PAMI, ResBlock
@@ -51,75 +40,13 @@ logger = logging.getLogger('base')
 class IRNpModel(BaseModel):
     def __init__(self, opt,args):
 
-        super(IRNpModel, self).__init__(opt)
-        self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
+        super(IRNpModel, self).__init__(opt,args)
         ########### CONSTANTS ###############
-        self.TASK_IMUGEV2 = "ImugeV2"
-        self.TASK_TEST = "Test"
-        self.TASK_CropLocalize = "CropLocalize"
-        self.TASK_RHI3 = "RHI3"
-        if opt['dist']:
-            self.rank = torch.distributed.get_rank()
-        else:
-            self.rank = -1  # non dist training
-        self.gpu_id = self.opt['gpu_ids'][0]
-        train_opt = opt['train']
-        test_opt = opt['test']
-        self.opt = opt
-        self.args = args
-        self.train_opt = train_opt
-        self.test_opt = test_opt
+
         self.real_H, self.real_H_path, self.previous_images, self.previous_previous_images = None, None, None, None
         self.previous_canny = None
         self.task_name = self.opt['datasets']['train']['name'] #self.train_opt['task_name']
-        print("Task Name: {}".format(self.task_name))
-        self.global_step = 0
-        self.new_task = self.train_opt['new_task']
-
-        ############## Metrics and attacks #############
-        self.tanh = nn.Tanh().cuda()
-        self.psnr = PSNR(255.0).cuda()
-        # self.lpips_vgg = lpips.LPIPS(net="vgg").cuda()
-        # self.exclusion_loss = ExclusionLoss().type(torch.cuda.FloatTensor).cuda()
-        self.ssim_loss = pytorch_ssim.SSIM().cuda()
-        self.crop = Crop().cuda()
-        self.dropout = Dropout().cuda()
-        self.gaussian = Gaussian().cuda()
-        self.salt_pepper = SaltPepper(prob=0.01).cuda()
-        self.gaussian_blur = GaussianBlur().cuda()
-        self.median_blur = MiddleBlur().cuda()
-        self.resize = Resize().cuda()
-        self.identity = Identity().cuda()
-        self.width_height = opt['datasets']['train']['GT_size']
-        self.jpeg_simulate = [
-            [DiffJPEG(50, height=self.width_height, width=self.width_height).cuda(), ]
-            , [DiffJPEG(55, height=self.width_height, width=self.width_height).cuda(), ]
-            ,[DiffJPEG(60, height=self.width_height, width=self.width_height).cuda(), ]
-            ,[DiffJPEG(65, height=self.width_height, width=self.width_height).cuda(), ]
-            ,[DiffJPEG(70, height=self.width_height, width=self.width_height).cuda(), ]
-            , [DiffJPEG(75, height=self.width_height, width=self.width_height).cuda(), ]
-            , [DiffJPEG(80, height=self.width_height, width=self.width_height).cuda(), ]
-            , [DiffJPEG(85, height=self.width_height, width=self.width_height).cuda(), ]
-            , [DiffJPEG(90, height=self.width_height, width=self.width_height).cuda(), ]
-            , [DiffJPEG(95, height=self.width_height, width=self.width_height).cuda(), ]
-        ]
-
-        self.bce_loss = nn.BCELoss().cuda()
-        self.bce_with_logit_loss = nn.BCEWithLogitsLoss().cuda()
-        self.l1_loss = nn.SmoothL1Loss(beta=0.5).cuda()  # reduction="sum"
-        self.l2_loss = nn.MSELoss().cuda()  # reduction="sum"
-        # self.perceptual_loss = PerceptualLoss().cuda()
-        # self.style_loss = StyleLoss().cuda()
-        self.Quantization = diff_round
-        # self.Quantization = Quantization().cuda()
-        # self.Reconstruction_forw = ReconstructionLoss(losstype=self.train_opt['pixel_criterion_forw']).cuda()
-        # self.Reconstruction_back = ReconstructionLoss(losstype=self.train_opt['pixel_criterion_back']).cuda()
-        # self.criterion_adv = CWLoss().cuda()  # loss for fooling target model
-        self.CE_loss = nn.CrossEntropyLoss().cuda()
-        self.width_height = opt['datasets']['train']['GT_size']
-        self.init_gaussian = None
-        # self.adversarial_loss = AdversarialLoss(type="nsgan").cuda()
-
+        self.gpu_id = self.opt["gpu_ids"][0]
         ############## Nets ################################
         self.network_list = []
         if self.args.mode in {0,1}: # training of Imuge+
@@ -174,124 +101,27 @@ class IRNpModel(BaseModel):
         else:
             raise NotImplementedError("args.mode value error! please check...")
 
-        ########## optimizers ##################
-        wd_G = train_opt['weight_decay_G'] if train_opt['weight_decay_G'] else 0
+        ####################################################################################################
+        # todo: Optimizers and Schedulers
+        ####################################################################################################
+        self.define_optimizers()
 
-        if self.args.mode in {0,1}: # training of Imuge+
-
-            optim_params = []
-            for k, v in self.netG.named_parameters():
-                if v.requires_grad:
-                    optim_params.append(v)
-                else:
-                    if self.rank <= 0:
-                        logger.warning('Params [{:s}] will not optimize.'.format(k))
-            self.optimizer_G = torch.optim.AdamW(optim_params, lr=train_opt['lr_G'],
-                                                weight_decay=wd_G,
-                                                betas=(0.9,0.99)) # train_opt['beta1'], train_opt['beta2']
-            self.optimizers.append(self.optimizer_G)
-
-            # for mask discriminator
-            optim_params = []
-            for k, v in self.discriminator_mask.named_parameters():
-                if v.requires_grad:
-                    optim_params.append(v)
-                else:
-                    if self.rank <= 0:
-                        logger.warning('Params [{:s}] will not optimize.'.format(k))
-            self.optimizer_discriminator_mask = torch.optim.AdamW(optim_params, lr=train_opt['lr_D'],
-                                                                 weight_decay=wd_G,
-                                                                 betas=(0.9,0.99))
-            self.optimizers.append(self.optimizer_discriminator_mask)
-
-            # localizer
-            optim_params = []
-            for k, v in self.localizer.named_parameters():
-                if v.requires_grad:
-                    optim_params.append(v)
-                else:
-                    if self.rank <= 0:
-                        logger.warning('Params [{:s}] will not optimize.'.format(k))
-            self.optimizer_localizer = torch.optim.AdamW(optim_params, lr=train_opt['lr_D'],
-                                                        weight_decay=wd_G,
-                                                        betas=(0.9,0.99))
-            self.optimizers.append(self.optimizer_localizer)
-
-        elif self.args.mode==2:
-            # # for student network of kd-jpeg
-            optim_params = []
-            for k, v in self.KD_JPEG_net.named_parameters():
-                if v.requires_grad:
-                    optim_params.append(v)
-                else:
-                    if self.rank <= 0:
-                        logger.warning('Params [{:s}] will not optimize.'.format(k))
-            self.optimizer_KD_JPEG = torch.optim.AdamW(optim_params, lr=train_opt['lr_G'],
-                                                       weight_decay=wd_G,
-                                                       betas=(0.9, 0.99))
-            self.optimizers.append(self.optimizer_KD_JPEG)
-
-            # # for teacher network of kd-jpeg
-            optim_params = []
-            for k, v in self.generator.named_parameters():
-                if v.requires_grad:
-                    optim_params.append(v)
-                else:
-                    if self.rank <= 0:
-                        logger.warning('Params [{:s}] will not optimize.'.format(k))
-            self.optimizer_generator = torch.optim.AdamW(optim_params, lr=train_opt['lr_G'],
-                                                                 weight_decay=wd_G,
-                                                                 betas=(0.9,0.99))
-            self.optimizers.append(self.optimizer_generator)
-
-            # for mask discriminator
-            optim_params = []
-            for k, v in self.qf_predict_network.named_parameters():
-                if v.requires_grad:
-                    optim_params.append(v)
-                else:
-                    if self.rank <= 0:
-                        logger.warning('Params [{:s}] will not optimize.'.format(k))
-            self.optimizer_qf_predict = torch.optim.AdamW(optim_params, lr=train_opt['lr_G'],
-                                                           weight_decay=wd_G,
-                                                           betas=(0.9, 0.99))
-            self.optimizers.append(self.optimizer_qf_predict)
-
-        # ############## schedulers #########################
         self.schedulers = []
         for optimizer in self.optimizers:
             self.schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=118287))
 
-        # if train_opt['lr_scheme'] == 'MultiStepLR':
-        #     for optimizer in self.optimizers:
-        #         self.schedulers.append(
-        #             lr_scheduler.MultiStepLR_Restart(optimizer, train_opt['lr_steps'],
-        #                                              restarts=train_opt['restarts'],
-        #                                              weights=train_opt['restart_weights'],
-        #                                              gamma=train_opt['lr_gamma'],
-        #                                              clear_state=train_opt['clear_state']))
-        # elif train_opt['lr_scheme'] == 'CosineAnnealingLR_Restart':
-        #     for optimizer in self.optimizers:
-        #         self.schedulers.append(
-        #             lr_scheduler.CosineAnnealingLR_Restart(
-        #                 optimizer, train_opt['T_period'], eta_min=train_opt['eta_min'],
-        #                 restarts=train_opt['restarts'], weights=train_opt['restart_weights']))
-        # else:
-        #     raise NotImplementedError('MultiStepLR learning rate scheme is enough.')
 
         ######## init constants
         self.forward_image_buff = None
-        self.reloaded_time = 0
-        self.basic_weight_fw = 5
 
         ########## Load pre-trained ##################
         if self.args.mode<2:
             # good_models: '/model/Rerun_4/29999'
-            self.out_space_storage = '/home/qcying/20220106_IMUGE'
+            self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/model/Rerun_3/'
-            self.model_path = str(42999) # 29999
+            self.model_path = str(999) # 42999
         else:
-            self.out_space_storage = '/home/qcying/20220106_IMUGE'
+            self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/jpeg_model/Rerun_3/'
             self.model_path = str(16999)  # 29999
 
@@ -309,23 +139,32 @@ class IRNpModel(BaseModel):
             ## load states
             state_path = self.out_space_storage + self.model_storage + '{}.state'.format(self.model_path)
             if load_state:
-                logger.info('Loading training state')
+                print('Loading training state')
                 if os.path.exists(state_path):
                     self.resume_training(state_path, self.network_list)
                 else:
-                    logger.info('Did not find state [{:s}] ...'.format(state_path))
+                    print('Did not find state [{:s}] ...'.format(state_path))
 
-    def clamp_with_grad(self,tensor):
-        tensor_clamp = torch.clamp(tensor,0,1)
-        return tensor+ (tensor_clamp-tensor).clone().detach()
 
-    def feed_data(self, batch):
+    def optimize_parameters_router(self, mode, step=None):
+        if mode == 0.0:
+            return self.optimize_parameters(step=step)
+        elif mode==1.0:
+            return self.evaluate()
+        elif mode==2.0:
+            return self.KD_JPEG_Generator_training(step=step)
+
+    def feed_data_router(self, batch, mode):
+        self.feed_data(batch, mode='train')
+
+    def feed_data_val_router(self, batch, mode):
+        self.feed_data(batch, mode='val')
+
+
+    def feed_data(self, batch, mode="train"):
         img, label, canny_image = batch
         self.real_H = img.cuda()
         self.canny_image = canny_image.cuda()
-
-    def gaussian_batch(self, dims):
-        return self.clamp_with_grad(torch.randn(tuple(dims)).cuda())
 
     def optimize_parameters(self, step=0, latest_values=None, train=True, eval_dir=None):
         self.netG.train()
@@ -339,139 +178,146 @@ class IRNpModel(BaseModel):
         # self.optimizer_generator.zero_grad()
         # self.optimizer_discriminator.zero_grad()
 
-        logs, debug_logs = [], []
+        logs, debug_logs = {}, []
 
         self.real_H = self.clamp_with_grad(self.real_H)
         batch_size, num_channels, height_width, _ = self.real_H.shape
-        psnr_thresh = 32.5
+        psnr_thresh = 33
         save_interval = 1000
         lr = self.get_current_learning_rate()
-        logs.append(('lr', lr))
+        logs['lr'] = lr
 
         modified_input = self.real_H.clone().detach()
         modified_input = self.clamp_with_grad(modified_input)
         modified_canny = self.canny_image.clone().detach()
         modified_canny = self.clamp_with_grad(modified_canny)
-        check_status = self.l1_loss(modified_input, self.real_H) + self.l1_loss(modified_canny,self.canny_image)
-        if check_status > 0:
-            print(f"Strange input detected! {check_status} skip")
-            return logs, debug_logs
+        # check_status = self.l1_loss(modified_input, self.real_H) + self.l1_loss(modified_canny,self.canny_image)
+        # if check_status > 0:
+        #     print(f"Strange input detected! {check_status} skip")
+        #     return logs, debug_logs, False
         if not (self.previous_images is None or self.previous_previous_images is None):
 
-            with torch.cuda.amp.autocast():
+            with torch.enable_grad():
 
-                percent_range = (0.05, 0.25)
-                masks, masks_GT = self.mask_generation(percent_range=percent_range,logs=logs)
+                masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
+                                                       percent_range=None, index=self.global_step)
+
+                ### tamper-based data augmentation
                 modified_input, modified_canny = self.tamper_based_augmentation(
-                    modified_input=modified_input, modified_canny=modified_canny, masks=masks, masks_GT=masks_GT, logs=logs)
-                forward_image, forward_null, psnr_forward = self.forward_image_generation(
-                    modified_input=modified_input, modified_canny=modified_canny, logs=logs)
-                # residual = forward_image-modified_input
-                attacked_forward = self.tampering(
+                    modified_input=modified_input, modified_canny=modified_canny, masks=masks, masks_GT=masks_GT, index=self.global_step)
+
+                ### forward image generation
+                forward_stuff = self.netG(x=torch.cat((modified_input, modified_canny), dim=1))
+                forward_image, forward_null = forward_stuff[:, :3, :, :], forward_stuff[:, 3:, :, :]
+                forward_image = self.clamp_with_grad(forward_image)
+                forward_null = self.clamp_with_grad(forward_null)
+                l_null = self.l1_loss(forward_null, torch.zeros_like(modified_canny).cuda())
+                l_percept_fw_ssim = - self.ssim_loss(forward_image, modified_input)
+                l_forward = self.l1_loss(forward_image, modified_input)
+                psnr_forward = self.psnr(self.postprocess(modified_input), self.postprocess(forward_image)).item()
+
+                ### tampering the image
+                attacked_forward, masks, masks_GT = self.tampering_PAMI(
                     forward_image=forward_image, masks=masks, masks_GT=masks_GT, modified_canny=modified_canny,
-                    modified_input=modified_input, percent_range=percent_range, logs=logs)
+                    percent_range=percent_range, index=self.global_step)
 
-                ## 20220802 updated code
-                # attacked_image, GT_modified_input, forward_compressed = self.benign_attacks(
-                #     forward_image=forward_image, attacked_forward=attacked_forward, logs=logs, modified_input=modified_input)
-                if self.global_step % 5 in {0, 1, 2}:
-                    quality_idx = np.random.randint(19, 21)
+                ### image post-processings
+                skip_robust = np.random.rand() > self.opt['skip_attack_probability']
+                if not skip_robust:
+                    ## settings for attack
+                    if self.global_step % self.amount_of_benign_attack not in set(
+                            self.opt['simulated_pure_JPEG_indices']
+                    ):
+                        ## perform weak JPEG compression after other attacks
+                        quality_idx = np.random.randint(self.opt["weak_JPEG_lower_bound"], 21)
+                    else:
+                        quality_idx = np.random.randint(self.opt["strong_JPEG_lower_bound"], self.opt["strong_JPEG_upper_bound"])
+
+                    kernel = random.choice([3,5,7])
+                    resize_ratio = (int(self.random_float(0.7, 1.5)*self.width_height),
+                                    int(self.random_float(0.7, 1.5)*self.width_height))
+                    ### real-world attack: simulated + (real-simulated).detach
+                    attacked_image, attacked_real_jpeg_simulate = self.benign_attacks(attacked_forward=attacked_forward,
+                                                         quality_idx=quality_idx,
+                                                         index=self.global_step,
+                                                         kernel_size=kernel,
+                                                         resize_ratio=resize_ratio
+                                                                                      )
+
+                    # UPDATE THE GROUND-TRUTH TO EASE TRAINING
+                    # GT_modified_input = modified_input
+                    GT_modified_input = self.benign_attacks_without_simulation(forward_image=modified_input,
+                                                                               quality_idx=quality_idx,
+                                                                               index=self.global_step,
+                                                                               kernel_size=kernel,
+                                                                               resize_ratio=resize_ratio).detach()
+
+                    error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_forward)).item()
+                    logs['ERROR'] = error_l1
+
+                    real_and_simulate = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_real_jpeg_simulate)).item()
+                    logs['SIMU'] = real_and_simulate
+
                 else:
-                    quality_idx = np.random.randint(10, 17)
-                attacked_image = self.benign_attacks(attacked_forward=attacked_forward, logs=logs, quality_idx=quality_idx)
-                # UPDATE THE GROUND-TRUTH TO EASE TRAINING
-                GT_modified_input = self.benign_attacks_without_simulation(forward_image=modified_input, logs=logs, quality_idx=quality_idx)
-                forward_compressed = self.benign_attacks_without_simulation(forward_image=forward_image, logs=logs, quality_idx=quality_idx)
+                    attacked_image = attacked_forward
+                    # UPDATE THE GROUND-TRUTH TO EASE TRAINING
+                    GT_modified_input = modified_input
+                    logs['ERROR'], logs['SIMU'] = 40, 40
 
+                ## train localizer
+                gen_attacked_train = self.localizer(attacked_image.detach())
+                CE_train = self.bce_with_logit_loss(gen_attacked_train, masks_GT)
+                logs['CE'] = CE_train.item()
 
-                ## training localizer
-                self.attacked_image_clone = attacked_image.clone().detach()
-                self.attacked_forward_clone = attacked_forward.clone().detach()
-                self.forward_image_clone = forward_image.clone().detach()
-                self.modified_input_clone = GT_modified_input.clone().detach()
-                self.forward_compressed_clone = forward_compressed.clone().detach()
-                self.modified_canny_clone = modified_canny.clone().detach()
+                CE_train.backward()
+                # self.scaler_localizer.scale(CE_train).backward()
+                if self.train_opt['gradient_clipping']:
+                    nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
+                self.optimizer_localizer.step()
+                self.optimizer_localizer.zero_grad()
 
-                # FIXED
-                CE_train, CE_recall, CE_non_compress, CE_precision, CE_valid, gen_attacked_train, gen_non_attacked, gen_not_protected = self.localization_loss(
-                    model=self.localizer, attacked_image=self.attacked_image_clone,
-                    forward_image=self.forward_compressed_clone, masks_GT=masks_GT,
-                    modified_input=self.modified_input_clone,
-                    attacked_forward=self.attacked_forward_clone, logs=logs)
-
-                # CE_train_1, CE_recall_1, CE_non_compress_1, CE_precision_1, CE_valid_1, gen_attacked_train_1, = self.localization_loss(
-                #     model=self.generator, attacked_image=self.attacked_image_clone,
-                #     forward_image=self.forward_image_clone,masks_GT=masks_GT,
-                #     modified_input=self.modified_input_clone,
-                #     attacked_forward=self.attacked_forward_clone,logs=logs)
 
                 ## IMAGE RECOVERY
-                # reversed_image, reversed_canny = self.recovery_image_generation(
-                #     attacked_image=attacked_image, masks=masks, modified_canny=modified_canny, logs=logs)
+                ## RECOVERY
+                tampered_attacked_image = attacked_image * (1 - masks)
+                tampered_attacked_image = self.clamp_with_grad(tampered_attacked_image)
+                canny_input = torch.zeros_like(modified_canny).cuda()
+                reversed_stuff, _ = self.netG(torch.cat((tampered_attacked_image, canny_input), dim=1), rev=True)
+                reversed_image, reversed_canny = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
+                reversed_image = self.clamp_with_grad(reversed_image)
+                l_backward = self.l1_loss(reversed_image, GT_modified_input)
+                l_backward_local = self.l1_loss(reversed_image * masks, GT_modified_input * masks)
+                reversed_canny = self.clamp_with_grad(reversed_canny)
+                l_back_canny = self.l1_loss(reversed_canny, modified_canny)
+                l_back_canny_local = self.l1_loss(reversed_canny * masks, modified_canny * masks)
+                l_percept_bk_ssim = - self.ssim_loss(reversed_image, GT_modified_input)
+                psnr_backward = self.psnr(self.postprocess(GT_modified_input), self.postprocess(reversed_image)).item()
 
-                reversed_image, reversed_canny = self.recovery_image_generation(
-                    attacked_image=attacked_image, masks=masks, modified_canny=modified_canny, logs=logs)
 
-                # ## training gan
-                # self.reversed_image_clone = reversed_image.clone().detach()
-                # self.reversed_canny_clone = reversed_canny.clone().detach()
-                # dis_loss = self.GAN_training(model=self.discriminator_mask, modified_input=self.modified_input_clone, modified_canny=self.modified_canny_clone,
-                #                              reversed_image=self.reversed_image_clone, reversed_canny=self.reversed_canny_clone,
-                #                              masks_GT=masks_GT, logs=logs)
-                # logs.append(('DIS', dis_loss.item()))
-                # logs.append(('DIS_now', dis_loss.item()))
-
-                # dis_loss_1 = self.GAN_training(model=self.discriminator, modified_input=self.modified_input_clone,
-                #                              reversed_image=self.reversed_image,
-                #                              masks_GT=masks_GT, logs=logs)
-                # logs.append(('DIS1', dis_loss_1.item()))
-
-                # logs.append(('CEp', CE_precision.item()))
-                # logs.append(('CEp_now', CE_precision.item()))
-                # logs.append(('CEv', CE_valid.item()))
-                # logs.append(('CEv_now', CE_valid.item()))
-
-                # STATE = ''
-                ## LOCALIZATION LOSS
-                CE, CE_recall, _, _, _, gen_attacked_train, _, _= self.localization_loss(
-                    model=self.localizer,
-                    attacked_image=attacked_image, forward_image=forward_compressed, masks_GT=masks_GT,
-                    modified_input=GT_modified_input, attacked_forward=attacked_forward, logs=logs)
-
+                ### LOCALIZATION LOSS
+                gen_attacked_train = self.localizer(attacked_image)
+                CE = self.bce_with_logit_loss(gen_attacked_train, masks_GT)
                 masks_real = torch.where(torch.sigmoid(gen_attacked_train) > 0.5, 1.0, 0.0)
                 masks_real = self.Erode_Dilate(masks_real).repeat(1, 3, 1, 1)
-
-                logs.append(('CE', CE_recall.item()))
-                logs.append(('CE_now', CE_recall.item()))
-
-                # CE_1, _, _, _, _, _ = self.localization_loss(
-                #     model=self.generator,
-                #     attacked_image=attacked_image, forward_image=forward_image, masks_GT=masks_GT,
-                #     modified_input=modified_input, attacked_forward=attacked_forward, logs=logs)
-
-                # ## GAN LOSS
-                # REV_GAN = self.GAN_loss(
-                #     model=self.discriminator_mask,reversed_image=reversed_image, reversed_canny=reversed_canny,
-                #     modified_input=GT_modified_input, logs=logs)
-                # # REV_GAN_1 = self.GAN_loss(
-                # #     model=self.discriminator,reversed_image=reversed_image,
-                # #     modified_input=GT_modified_input, logs=logs)
+                logs['CE_ema'] = CE.item()
 
                 ###################
                 ### LOSSES
                 loss = 0
+                l_forward_sum = 0
                 mask_rate = torch.mean(masks)
-                logs.append(('mask_rate', mask_rate.item()))
+                logs['mask_rate'] =  mask_rate.item()
                 #################
                 # FORWARD LOSS
-                l_null = (self.l1_loss(forward_null, torch.zeros_like(modified_canny).cuda()))
-                # l_percept_fw_ssim = - self.ssim_loss(forward_image, modified_input)
-                l_forward = self.l1_loss(forward_image, modified_input)
-                loss += 20*l_null
-                weight_fw = 8 if psnr_forward<psnr_thresh else 6
-                logs.append(('CK', self.global_step%5))
-                loss += weight_fw * l_forward
-                # loss += 0.1 * l_percept_fw_ssim
+
+                l_forward_sum += 1.0 * l_forward
+                # l_forward_sum += 0.01 * l_percept_fw_ssim
+                logs['lF'] = l_forward.item()
+                # weight_fw = 8 if psnr_forward<psnr_thresh else 6
+                # logs.append(('CK', self.global_step%5))
+                loss += self.opt['Loss_forward'] * l_forward_sum
+                loss += self.opt['Null_loss'] * l_null
+                logs['null'] = l_null.item()
                 #################
                 ### BACKWARD LOSS
                 # residual
@@ -485,18 +331,18 @@ class IRNpModel(BaseModel):
                 # l_backward_ideal = self.l1_loss(reversed_image_ideal, modified_input)
                 # l_back_canny_ideal = self.l1_loss(reversed_canny_ideal, modified_canny)
                 # l_backward_local_ideal = (self.l1_loss(reversed_image_ideal * masks, modified_input * masks))
-                l_backward =  self.l1_loss(reversed_image, GT_modified_input)
-                l_backward_local = (self.l1_loss(reversed_image * masks, GT_modified_input * masks))
-                l_back_canny = self.l1_loss(reversed_canny, modified_canny)
-                # l_backward_canny_local = (self.l1_loss(reversed_canny * masks_expand,canny_expanded * masks_expand))
-                psnr_backward = self.psnr(self.postprocess(GT_modified_input), self.postprocess(reversed_image)).item()
-                # reversed_ideal = modified_expand*(1-masks)+reversed_image*masks
-                # psnr_comp = self.psnr(self.postprocess(forward_image), self.postprocess(reversed_ideal)).item()
-                # l_percept_bk_ssim = - self.ssim_loss(reversed_image, GT_modified_input)
+                l_backward_sum = 0
+                l_backward_sum += 1.0*l_backward
+                l_backward_sum += 1.0*l_backward_local
+                l_backward_sum += 1.0*l_back_canny
+                l_backward_sum += 1.0 * l_back_canny_local
+                # l_backward_sum += 0.01*l_percept_bk_ssim
+                logs['lB'] = l_backward.item()
+                logs['local'] = l_backward_local.item()
+                logs['canny'] = l_back_canny.item()
 
-                loss += 1.0*l_backward
-                loss += 1.5*l_back_canny
-
+                weight_bk = self.opt['Loss_back_psnr_less'] if psnr_forward < psnr_thresh else self.opt['Loss_back_psnr_higher']
+                loss += weight_bk * l_backward_sum
                 # loss += 0.1 * (l_percept_bk_ssim)
                 #################
                 ## PERCEPTUAL LOSS: loss is like [0.34], but lpips is lile [0.34,0.34,0.34]
@@ -507,12 +353,14 @@ class IRNpModel(BaseModel):
                 # logs.append(('F_p', l_forward_percept.item()))
                 # logs.append(('B_p', l_backward_percept.item()))
                 ### CROSS-ENTROPY
-                weight_CE = 0.0005
-                weight_GAN = 0.002
+                weight_CE = self.opt['CE_psnr_less'] if psnr_forward < psnr_thresh else self.opt['CE_psnr_less']
+                # weight_GAN = 0.002
                 loss += weight_CE * CE
-                logs.append(('ID', self.gpu_id))
-                logs.append(('W', weight_CE))
-                logs.append(('WF', weight_fw))
+
+                logs['loss'] = loss.item()
+                # logs.append(('ID', self.gpu_id))
+                # logs.append(('W', weight_CE))
+                # logs.append(('WF', weight_fw))
                 #################
                 ### FREQUENY LOSS
                 ## fft does not support halftensor
@@ -531,73 +379,28 @@ class IRNpModel(BaseModel):
                 # loss += weight_GAN * REV_GAN
 
                 ## LOG FILE
-                # SSFW = (-l_percept_fw_ssim).item()
-                # SSBK = (-l_percept_bk_ssim).item()
-                logs.append(('local', l_backward_local.item()))
-                logs.append(('sum', loss.item()))
-                logs.append(('lF', l_forward.item()))
-                logs.append(('lB', l_backward.item()))
+                SSFW = (-l_percept_fw_ssim).item()
+                SSBK = (-l_percept_bk_ssim).item()
                 # logs.append(('lBi', l_backward_local_ideal.item()))
-                logs.append(('lBedge', l_back_canny.item()))
-                logs.append(('PF', psnr_forward))
-                logs.append(('PB', psnr_backward))
-                logs.append(('NL', l_null.item()))
-                # logs.append(('SF', SSFW))
-                # logs.append(('SB', SSBK))
-                logs.append(('FW', psnr_forward))
-                logs.append(('BK', psnr_backward))
-                logs.append(('LOCAL', l_backward_local.item()))
+                # logs.append(('lBedge', l_back_canny.item()))
+                logs['PF'] = psnr_forward
+                logs['PB'] = psnr_backward
+                # logs.append(('NL', l_null.item()))
+                logs['SF'] = SSFW
+                logs['SB'] = SSBK
+                # logs.append(('FW', psnr_forward))
+                # logs.append(('BK', psnr_backward))
+                # logs.append(('LOCAL', l_backward_local.item()))
 
-            self.optimizer_G.zero_grad()
-            self.optimizer_localizer.zero_grad()
-            # loss.backward()
-            self.scaler_G.scale(loss).backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-            # self.optimizer_G.step()
-            self.scaler_G.step(self.optimizer_G)
-            self.scaler_G.update()
+                loss.backward()
+                # self.scaler_G.scale(loss).backward()
+                if self.train_opt['gradient_clipping']:
+                    nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
+                self.optimizer_G.step()
+                # self.scaler_G.step(self.optimizer_G)
+                # self.scaler_G.update()
 
-            self.optimizer_localizer.zero_grad()
-            # CE_train.backward()
-            self.scaler_localizer.scale(CE_train).backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-            # self.optimizer_localizer.step()
-            self.scaler_localizer.step(self.optimizer_localizer)
-            self.scaler_localizer.update()
 
-            # self.optimizer_generator.zero_grad()
-            # # CE_train.backward()
-            # self.scaler_generator.scale(CE_train_1).backward()
-            # if self.train_opt['gradient_clipping']:
-            #     nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-            # # self.optimizer_localizer.step()
-            # self.scaler_generator.step(self.optimizer_generator)
-            # self.scaler_generator.update()
-
-            # self.optimizer_discriminator_mask.zero_grad()
-            # # dis_loss.backward()
-            # self.scaler_discriminator_mask.scale(dis_loss).backward()
-            # if self.train_opt['gradient_clipping']:
-            #     nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-            # # self.optimizer_discriminator_mask.step()
-            # self.scaler_discriminator_mask.step(self.optimizer_discriminator_mask)
-            # self.scaler_discriminator_mask.update()
-
-            # self.optimizer_discriminator.zero_grad()
-            # # dis_loss.backward()
-            # self.scaler_discriminator.scale(dis_loss_1).backward()
-            # if self.train_opt['gradient_clipping']:
-            #     nn.utils.clip_grad_norm_(self.discriminator.parameters(), 1)
-            # # self.optimizer_discriminator_mask.step()
-            # self.scaler_discriminator.step(self.optimizer_discriminator)
-            # self.scaler_discriminator.update()
-
-            # logs.append(('STATE', STATE))
-            # for scheduler in self.schedulers:
-            #     scheduler.step()
-            # logs.append(('CK', self.localizer.module.clock))
             self.localizer.module.update_clock()
 
 
@@ -627,6 +430,7 @@ class IRNpModel(BaseModel):
                     # self.postprocess(torch.sigmoid(gen_not_protected)),
                     # self.postprocess(torch.sigmoid(gen_attacked_train_1)),
                     # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(gen_attacked_train_1))),
+                    self.postprocess(tampered_attacked_image),
                     self.postprocess(reversed_image),
                     self.postprocess(modified_input),
                     self.postprocess(10 * torch.abs(modified_input - reversed_image)),
@@ -644,7 +448,7 @@ class IRNpModel(BaseModel):
         ######## Finally ####################
         if self.global_step % 1000== 999 or self.global_step==9:
             if self.rank==0:
-                logger.info('Saving models and training states.')
+                print('Saving models and training states.')
                 self.save(self.global_step, folder='model', network_list=self.network_list)
         if self.real_H is not None:
             self.previous_canny = self.canny_image
@@ -652,7 +456,7 @@ class IRNpModel(BaseModel):
                 self.previous_previous_images = self.previous_images.clone().detach()
             self.previous_images = self.real_H
         self.global_step = self.global_step + 1
-        return logs, debug_logs
+        return logs, debug_logs, False
 
     # 进行开运算方式:腐蚀+膨胀
     def Erode_Dilate(self, raw_mask):
@@ -682,231 +486,204 @@ class IRNpModel(BaseModel):
             dilate_mask[idx_atkimg:idx_atkimg + 1] = dilate_ndarr
         return dilate_mask
 
-    def tamper_based_augmentation(self,modified_input,modified_canny,masks,masks_GT,logs):
+    def tamper_based_augmentation(self,*, modified_input,modified_canny,masks,masks_GT, index=None):
         # tamper-based data augmentation
         batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
-        for imgs in range(batch_size):
-            if imgs%3!=2:
-                modified_input[imgs, :, :, :] = (modified_input[imgs, :, :, :] * (1 - masks[imgs, :, :, :]) + self.previous_images[imgs, :, :, :] * masks[imgs, :, :, :]).clone().detach()
-                modified_canny[imgs, :, :, :] = (modified_canny[imgs, :, :, :] * (1 - masks_GT[imgs, :, :, :]) + self.previous_canny[imgs, :, :, :] * masks_GT[imgs, :, :, :]).clone().detach()
+        if index is None:
+            index = self.global_step
+        index = index % self.amount_of_tampering
+        if index not in self.opt['simulated_copymove_indices']:
+            modified_input = (modified_input * (1 - masks) + self.previous_images * masks).clone().detach()
+            modified_canny = (modified_canny * (1 - masks_GT) + self.previous_canny * masks_GT).clone().detach()
 
         return modified_input, modified_canny
 
 
-    def mask_generation(self,percent_range,logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
-        masks_GT = torch.zeros(batch_size, 1, self.real_H.shape[2], self.real_H.shape[3]).cuda()
-        ## THE RECOVERY STAGE WILL ONLY WORK UNDER LARGE TAMPERING
-        ## TO LOCALIZE SMALL TAMPERING, WE ONLY UPDATE LOCALIZER NETWORK
 
-        for imgs in range(batch_size):
-            if imgs%3==2:
-                ## copy-move will not be too large
-                percent_range = (0.00,0.15)
-            masks_origin, _ = self.generate_stroke_mask(
-                [self.real_H.shape[2], self.real_H.shape[3]], percent_range=percent_range)
-            masks_GT[imgs, :, :, :] = masks_origin.cuda()
-        masks = masks_GT.repeat(1, 3, 1, 1)
-
-        # masks is just 3-channel-version masks_GT
-        return masks, masks_GT
-
-    def forward_image_generation(self,modified_input,modified_canny,logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
-        forward_stuff = self.netG(x=torch.cat((modified_input, modified_canny), dim=1))
-        forward_stuff = self.clamp_with_grad(forward_stuff)
-        forward_image, forward_null = forward_stuff[:, :3, :, :], forward_stuff[:, 3:, :, :]
-        psnr_forward = self.psnr(self.postprocess(modified_input), self.postprocess(forward_image)).item()
-
-        return forward_image, forward_null, psnr_forward
-
-    def tampering(self, forward_image, masks, masks_GT, modified_canny, modified_input, percent_range, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+    def tampering_PAMI(self, *,  forward_image, masks, masks_GT, modified_canny, percent_range,
+                       index=None):
         ####### Tamper ###############
-        attacked_forward = torch.zeros_like(forward_image)
-        for img_idx in range(batch_size):
-            way_tamper = img_idx%3
+        # attacked_forward = torch.zeros_like(modified_input)
+        # for img_idx in range(batch_size):
+        if index is None:
+            index = self.global_step
+        index = index % self.amount_of_tampering
 
-            if way_tamper==0:
-                # ## INPAINTING
-                with torch.no_grad():
-                    reversed_stuff, reverse_feature = self.netG(
-                        torch.cat((forward_image[img_idx:img_idx + 1] * (1 - masks[img_idx:img_idx + 1]),
-                                   torch.zeros_like(modified_canny[img_idx:img_idx + 1]).cuda()), dim=1), rev=True)
-                    reversed_ch1, reversed_ch2 = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
-                    reversed_image = self.clamp_with_grad(reversed_ch1)
+        if index in self.opt['simulated_splicing_indices']:  # self.using_splicing():
+            ####################################################################################################
+            # todo: splicing
+            # todo: invISP
+            ####################################################################################################
+            attacked_forward = forward_image * (1 - masks) + (self.previous_previous_images) * masks
+            # attack_name = "splicing"
+
+        elif index in self.opt['simulated_copymove_indices']:  # self.using_copy_move():
+            ####################################################################################################
+            # todo: copy-move
+            # todo: invISP
+            ####################################################################################################
+            batch_size, channels, height_width = forward_image.shape[0], forward_image.shape[1], forward_image.shape[2]
+            lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
+            ###### IMPORTANT NOTE: for ideal copy-mopv, here should be forward_image. If you want to ease the condition, can be changed to forward_iamge
+            tamper = forward_image.clone().detach()
+            x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
+            while retried < 20 and not (valid > lower_bound_percent and (
+                    abs(x_shift) > (height_width / 3) or abs(y_shift) > (height_width / 3))):
+                x_shift = int((height_width) * (np.random.rand() - 0.5))
+                y_shift = int((height_width) * (np.random.rand() - 0.5))
+
+                ### two times padding ###
+                mask_buff = torch.zeros((masks.shape[0], masks.shape[1],
+                                         masks.shape[2] + abs(2 * x_shift),
+                                         masks.shape[3] + abs(2 * y_shift))).cuda()
+
+                mask_buff[:, :,
+                abs(x_shift) + x_shift:abs(x_shift) + x_shift + height_width,
+                abs(y_shift) + y_shift:abs(y_shift) + y_shift + height_width] = masks
+
+                mask_buff = mask_buff[:, :,
+                            abs(x_shift):abs(x_shift) + height_width,
+                            abs(y_shift):abs(y_shift) + height_width]
+
+                valid = torch.mean(mask_buff)
+                retried += 1
+                if valid >= max_valid:
+                    max_valid = valid
+                    self.mask_shifted = mask_buff
+                    self.x_shift, self.y_shift = x_shift, y_shift
+
+            self.tamper_shifted = torch.zeros((batch_size, channels,
+                                               height_width + abs(2 * self.x_shift),
+                                               height_width + abs(2 * self.y_shift))).cuda()
+            self.tamper_shifted[:, :,
+            abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + height_width,
+            abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + height_width] = tamper
+
+            self.tamper_shifted = self.tamper_shifted[:, :,
+                                  abs(self.x_shift): abs(self.x_shift) + height_width,
+                                  abs(self.y_shift): abs(self.y_shift) + height_width]
+
+            masks = self.mask_shifted.clone().detach()
+            masks = self.clamp_with_grad(masks)
+            # valid = torch.mean(masks)
+
+            masks_GT = masks[:, :1, :, :]
+            attacked_forward = forward_image * (1 - masks) + self.tamper_shifted.clone().detach() * masks
+            # del self.tamper_shifted
+            # del self.mask_shifted
+            # torch.cuda.empty_cache()
+
+        elif index in self.opt['simulated_inpainting_indices']:  # self.using_simulated_inpainting:
+            ####################################################################################################
+            # todo: simulated inpainting
+            # todo: it is important, without protection, though the tampering can be close, it should also be detected.
+            ####################################################################################################
+            with torch.no_grad():
+                reversed_stuff, reverse_feature = self.netG(
+                    torch.cat((forward_image * (1 - masks),
+                               torch.zeros_like(modified_canny).cuda()), dim=1), rev=True)
+                reversed_ch1, reversed_ch2 = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
+                reversed_image = self.clamp_with_grad(reversed_ch1)
                 # attacked_forward = forward_image * (1 - masks) + modified_input.clone().detach() * masks
-                attacked_forward[img_idx:img_idx + 1] = forward_image[img_idx:img_idx + 1] * (1 - masks[img_idx:img_idx + 1]) \
-                                                        + reversed_image.clone().detach() * masks[img_idx:img_idx + 1]
+                attacked_forward = forward_image * (1 - masks) + reversed_image.clone().detach() * masks
                 # reversed_image = reversed_image.repeat(way_attack,1,1,1)
-                del reversed_stuff
-                del reverse_feature
+            del reversed_stuff
+            del reverse_feature
+        else:
+            raise NotImplementedError("Tamper的Index有错误，请检查！")
 
-            elif way_tamper == 1:
-
-                # # ideal inpainting
-                # attacked_forward[img_idx:img_idx + 1] = forward_image[img_idx:img_idx + 1] * (1 - masks[img_idx:img_idx + 1]) \
-                #                                         + modified_input[img_idx:img_idx + 1].clone().detach() * masks[img_idx:img_idx + 1]
-                # # SPLICING
-                attacked_forward[img_idx:img_idx + 1] = forward_image[img_idx:img_idx + 1] * (1 - masks[img_idx:img_idx + 1]) \
-                                                        + self.previous_previous_images[img_idx:img_idx + 1] * masks[img_idx:img_idx + 1]
-                # attack_name = "splicing"
-
-            else:
-                # SPLICING
-                # attacked_forward[img_idx:img_idx + 1] = forward_image[img_idx:img_idx + 1] * (1 - masks[img_idx:img_idx + 1]) \
-                #                                         + self.previous_previous_images[img_idx:img_idx + 1] * masks[img_idx:img_idx + 1]
-                # attack_name = "splicing"
-                # ## COPY-MOVE
-                lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
-                tamper = forward_image[img_idx:img_idx+1].clone().detach()
-                x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
-                while retried<20 and not (valid>lower_bound_percent and (abs(x_shift)>(modified_input.shape[2]/3) or abs(y_shift)>(modified_input.shape[3]/3))):
-                    x_shift = int((modified_input.shape[2]) * (np.random.rand() - 0.5))
-                    y_shift = int((modified_input.shape[3]) * (np.random.rand() - 0.5))
-
-                    ### two times padding ###
-                    mask_buff = torch.zeros((masks[img_idx:img_idx+1].shape[0], masks.shape[1],
-                                                masks.shape[2] + abs(2 * x_shift),
-                                                masks.shape[3] + abs(2 * y_shift))).cuda()
-
-                    mask_buff[:, :,
-                    abs(x_shift) + x_shift:abs(x_shift) + x_shift + modified_input.shape[2],
-                    abs(y_shift) + y_shift:abs(y_shift) + y_shift + modified_input.shape[3]] = masks[img_idx:img_idx+1]
-
-                    mask_buff = mask_buff[:, :,
-                                        abs(x_shift):abs(x_shift) + modified_input.shape[2],
-                                        abs(y_shift):abs(y_shift) + modified_input.shape[3]]
-
-                    valid = torch.mean(mask_buff)
-                    retried += 1
-                    if valid>=max_valid:
-                        max_valid = valid
-                        self.mask_shifted = mask_buff
-                        self.x_shift, self.y_shift = x_shift, y_shift
-
-                self.tamper_shifted = torch.zeros((modified_input[img_idx:img_idx+1].shape[0], modified_input.shape[1],
-                                                   modified_input.shape[2] + abs(2 * self.x_shift),
-                                                   modified_input.shape[3] + abs(2 * self.y_shift))).cuda()
-                self.tamper_shifted[:, :, abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + modified_input.shape[2],
-                abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + modified_input.shape[3]] = tamper
-
-
-                self.tamper_shifted = self.tamper_shifted[:, :,
-                                 abs(self.x_shift): abs(self.x_shift) + modified_input.shape[2],
-                                 abs(self.y_shift): abs(self.y_shift) + modified_input.shape[3]]
-
-                masks[img_idx:img_idx+1] = self.mask_shifted.clone().detach()
-                masks[img_idx:img_idx+1] = self.clamp_with_grad(masks[img_idx:img_idx+1])
-                valid = torch.mean(masks[img_idx:img_idx+1])
-
-                masks_GT[img_idx:img_idx+1] = masks[img_idx:img_idx+1, :1, :, :]
-                attacked_forward[img_idx:img_idx+1] = forward_image[img_idx:img_idx+1] * (1 - masks[img_idx:img_idx+1]) + self.tamper_shifted.clone().detach() * masks[img_idx:img_idx+1]
-                del self.tamper_shifted
-                del self.mask_shifted
-
-            # else:
-            #     ## SPLICING
-            #     attacked_forward[img_idx:img_idx+1] = forward_image[img_idx:img_idx+1] * (1 - masks[img_idx:img_idx+1]) + self.previous_previous_images[img_idx:img_idx+1] * masks[img_idx:img_idx+1]
-            #     attack_name = "splicing"
 
         attacked_forward = self.clamp_with_grad(attacked_forward)
         # attacked_forward = self.Quantization(attacked_forward)
 
-        return attacked_forward
+        return attacked_forward, masks, masks_GT
 
-    def benign_attacks(self, attacked_forward, quality_idx, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
-        attacked_real_jpeg = torch.rand_like(attacked_forward).cuda()
 
-        if self.global_step % 5 == 1:
-            blurring_layer = self.gaussian_blur
-        elif self.global_step % 5 == 2:
-            blurring_layer = self.median_blur
-        elif self.global_step % 5 == 0:
-            blurring_layer = self.resize
-        else:
-            blurring_layer = self.identity
 
-        quality = int(quality_idx * 5)
+    # def benign_attacks(self, attacked_forward, quality_idx, logs):
+    #     batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+    #     attacked_real_jpeg = torch.rand_like(attacked_forward).cuda()
+    #
+    #     if self.global_step % 5 == 1:
+    #         blurring_layer = self.gaussian_blur
+    #     elif self.global_step % 5 == 2:
+    #         blurring_layer = self.median_blur
+    #     elif self.global_step % 5 == 0:
+    #         blurring_layer = self.resize
+    #     else:
+    #         blurring_layer = self.identity
+    #
+    #     quality = int(quality_idx * 5)
+    #
+    #     jpeg_layer_after_blurring = self.jpeg_simulate[quality_idx - 10][0] if quality < 100 else self.identity
+    #     attacked_real_jpeg_simulate = self.Quantization(self.clamp_with_grad(jpeg_layer_after_blurring(blurring_layer(attacked_forward))))
+    #     if self.global_step % 5 == 4:
+    #         attacked_image = attacked_real_jpeg_simulate
+    #     else:  # if self.global_step%5==3:
+    #         for idx_atkimg in range(batch_size):
+    #             grid = attacked_forward[idx_atkimg]
+    #             realworld_attack = self.real_world_attacking_on_ndarray(grid, quality)
+    #             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
+    #
+    #         attacked_real_jpeg = attacked_real_jpeg.clone().detach()
+    #         attacked_image = attacked_real_jpeg_simulate + (attacked_real_jpeg - attacked_real_jpeg_simulate).clone().detach()
+    #
+    #     # error_scratch = attacked_real_jpeg - attacked_forward
+    #     # l_scratch = self.l1_loss(error_scratch, torch.zeros_like(error_scratch).cuda())
+    #     # logs.append(('SCRATCH', l_scratch.item()))
+    #     return attacked_image
+    #
+    # def benign_attacks_without_simulation(self, forward_image, quality_idx, logs):
+    #     batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+    #     attacked_real_jpeg = torch.rand_like(forward_image).cuda()
+    #
+    #     quality = int(quality_idx * 5)
+    #
+    #     for idx_atkimg in range(batch_size):
+    #         grid = forward_image[idx_atkimg]
+    #         realworld_attack = self.real_world_attacking_on_ndarray(grid, quality)
+    #         attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
+    #
+    #     return attacked_real_jpeg
+    #
+    # def real_world_attacking_on_ndarray(self,grid, qf_after_blur, index=None):
+    #     batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+    #     if index is None:
+    #         index = self.global_step % 5
+    #     if index == 0:
+    #         grid = self.resize(grid.unsqueeze(0))[0]
+    #     ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+    #     if index == 1:
+    #         realworld_attack = cv2.GaussianBlur(ndarr, (5, 5), 0)
+    #     elif index == 2:
+    #         realworld_attack = cv2.medianBlur(ndarr, 5)
+    #     else:
+    #         realworld_attack = ndarr
+    #     if qf_after_blur!=100:
+    #         _, realworld_attack = cv2.imencode('.jpeg', realworld_attack, (int(cv2.IMWRITE_JPEG_QUALITY), qf_after_blur))
+    #         realworld_attack = cv2.imdecode(realworld_attack, cv2.IMREAD_UNCHANGED)
+    #     # realworld_attack = data.util.channel_convert(realworld_attack.shape[2], 'RGB', [realworld_attack])[0]
+    #     # realworld_attack = cv2.resize(copy.deepcopy(realworld_attack), (height_width, height_width),
+    #     #                               interpolation=cv2.INTER_LINEAR)
+    #     realworld_attack = realworld_attack.astype(np.float32) / 255.
+    #     realworld_attack = torch.from_numpy(
+    #         np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).float()
+    #     realworld_attack = realworld_attack.unsqueeze(0).cuda()
+    #     return realworld_attack
 
-        jpeg_layer_after_blurring = self.jpeg_simulate[quality_idx - 10][0] if quality < 100 else self.identity
-        attacked_real_jpeg_simulate = self.Quantization(self.clamp_with_grad(jpeg_layer_after_blurring(blurring_layer(attacked_forward))))
-        if self.global_step % 5 == 4:
-            attacked_image = attacked_real_jpeg_simulate
-        else:  # if self.global_step%5==3:
-            for idx_atkimg in range(batch_size):
-                grid = attacked_forward[idx_atkimg]
-                realworld_attack = self.real_world_attacking_on_ndarray(grid, quality)
-                attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
-
-            attacked_real_jpeg = attacked_real_jpeg.clone().detach()
-            attacked_image = attacked_real_jpeg_simulate + (attacked_real_jpeg - attacked_real_jpeg_simulate).clone().detach()
-
-        # error_scratch = attacked_real_jpeg - attacked_forward
-        # l_scratch = self.l1_loss(error_scratch, torch.zeros_like(error_scratch).cuda())
-        # logs.append(('SCRATCH', l_scratch.item()))
-        return attacked_image
-
-    def benign_attacks_without_simulation(self, forward_image, quality_idx, logs):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
-        attacked_real_jpeg = torch.rand_like(forward_image).cuda()
-
-        quality = int(quality_idx * 5)
-
-        for idx_atkimg in range(batch_size):
-            grid = forward_image[idx_atkimg]
-            realworld_attack = self.real_world_attacking_on_ndarray(grid, quality)
-            attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
-
-        return attacked_real_jpeg
-
-    def real_world_attacking_on_ndarray(self,grid, qf_after_blur, index=None):
-        batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
-        if index is None:
-            index = self.global_step % 5
-        if index == 0:
-            grid = self.resize(grid.unsqueeze(0))[0]
-        ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
-        if index == 1:
-            realworld_attack = cv2.GaussianBlur(ndarr, (5, 5), 0)
-        elif index == 2:
-            realworld_attack = cv2.medianBlur(ndarr, 5)
-        else:
-            realworld_attack = ndarr
-        if qf_after_blur!=100:
-            _, realworld_attack = cv2.imencode('.jpeg', realworld_attack, (int(cv2.IMWRITE_JPEG_QUALITY), qf_after_blur))
-            realworld_attack = cv2.imdecode(realworld_attack, cv2.IMREAD_UNCHANGED)
-        # realworld_attack = data.util.channel_convert(realworld_attack.shape[2], 'RGB', [realworld_attack])[0]
-        # realworld_attack = cv2.resize(copy.deepcopy(realworld_attack), (height_width, height_width),
-        #                               interpolation=cv2.INTER_LINEAR)
-        realworld_attack = realworld_attack.astype(np.float32) / 255.
-        realworld_attack = torch.from_numpy(
-            np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).float()
-        realworld_attack = realworld_attack.unsqueeze(0).cuda()
-        return realworld_attack
-
-    def localization_loss(self,model, attacked_image,forward_image,masks_GT,modified_input,attacked_forward,logs):
+    def localization_loss(self,*, model, attacked_image,masks_GT):
         batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         ### LOCALIZATION
         gen_attacked_train = model(attacked_image)
-        # gen_non_attacked = self.localizer(forward_image)
-        # gen_not_protected = self.localizer(modified_input)
-        # gen_attacked_non_compress = self.localizer(attacked_forward)
+
         CE_recall = self.bce_with_logit_loss(gen_attacked_train, masks_GT)
-        # CE_precision = self.bce_with_logit_loss(gen_non_attacked, torch.zeros_like(masks_GT))
-        # CE_valid = self.bce_with_logit_loss(gen_not_protected, torch.ones_like(masks_GT))
-        # CE_non_compress = self.bce_with_logit_loss(gen_attacked_non_compress, masks_GT)
+
         CE = 0
-        # CE += 0.2*CE_precision
         CE += CE_recall
-        # CE += 0.2*CE_valid
-        # CE += (CE_precision + CE_valid + CE_non_compress) / 3
 
-        # return CE, CE_recall, CE_non_compress, CE_precision, CE_valid, gen_attacked_train
-        return CE, CE_recall, None, CE_recall, CE_recall, gen_attacked_train, gen_attacked_train, gen_attacked_train
+        return CE, gen_attacked_train
 
-    def recovery_image_generation(self,attacked_image,masks,modified_canny, logs):
+    def recovery_image_generation(self,attacked_image,masks,modified_canny):
         batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         ## RECOVERY
         tampered_attacked_image = attacked_image * (1 - masks)
@@ -919,14 +696,10 @@ class IRNpModel(BaseModel):
         reversed_image = reversed_ch1
         reversed_canny = reversed_ch2
 
-        # reversed_image = modified_expand*(1-masks_expand)+reversed_image*masks_expand
-        # reversed_canny = canny_expanded*(1-masks_expand[:,:1])+reversed_canny*masks_expand[:,:1]
-        # reversed_image_ideal = modified_input*(1-masks)+reversed_image_ideal*masks
-        # reversed_canny_ideal = modified_canny * (1 - masks) + reversed_canny_ideal * masks
 
         return reversed_image, reversed_canny
 
-    def GAN_loss(self,model, reversed_image, reversed_canny, modified_input, logs):
+    def GAN_loss(self,model, reversed_image, reversed_canny):
         batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         gen_input_fake = torch.cat((reversed_image,reversed_canny),dim=1)
         # dis_input_real = modified_input.clone().detach()
@@ -941,7 +714,7 @@ class IRNpModel(BaseModel):
         # REV_GAN += gen_style_loss
         return REV_GAN
 
-    def GAN_training(self,model, modified_input,modified_canny,reversed_image,reversed_canny,masks_GT,logs):
+    def GAN_training(self,model, modified_input,modified_canny,reversed_image,reversed_canny,masks_GT):
         dis_input_real = torch.cat((modified_input,modified_canny),dim=1)
         dis_input_fake = torch.cat((reversed_image,reversed_canny),dim=1)
         dis_real = model(dis_input_real)
@@ -1089,7 +862,7 @@ class IRNpModel(BaseModel):
 
         if self.global_step % 1000 == 999 or self.global_step==9:
             if self.rank == 0:
-                logger.info('Saving models and training states.')
+                print('Saving models and training states.')
                 self.save(self.global_step, folder='jpeg_model', network_list=self.network_list)
         if self.real_H is not None:
             self.previous_canny = self.canny_image
@@ -1104,6 +877,9 @@ class IRNpModel(BaseModel):
     def evaluate(self,data_origin=None,data_immunize=None,data_tampered=None,data_tampersource=None,data_mask=None):
         self.netG.eval()
         self.localizer.eval()
+
+        eval_size = 512
+
         with torch.no_grad():
             psnr_forward_sum, psnr_backward_sum = [0,0,0,0,0],  [0,0,0,0,0]
             ssim_forward_sum, ssim_backward_sum =  [0,0,0,0,0],  [0,0,0,0,0]
@@ -1122,7 +898,7 @@ class IRNpModel(BaseModel):
                 ori_path = os.path.join(p, q, r)
                 img_GT = self.load_image(ori_path)
                 print("Ori: {} {}".format(ori_path, img_GT.shape))
-                self.real_H = self.img_random_crop(img_GT, 608, 608).cuda().unsqueeze(0)
+                self.real_H = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
                 self.real_H = self.clamp_with_grad(self.real_H)
                 img_gray = rgb2gray(img_GT)
                 sigma = 2  # random.randint(1, 4)
@@ -1133,25 +909,25 @@ class IRNpModel(BaseModel):
                 immu_path = os.path.join(p, q, r)
                 img_GT = self.load_image(immu_path)
                 print("Imu: {} {}".format(immu_path, img_GT.shape))
-                self.immunize = self.img_random_crop(img_GT, 608, 608).cuda().unsqueeze(0)
+                self.immunize = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
                 self.immunize = self.clamp_with_grad(self.immunize)
                 p, q, r = image_list_tamper[idx]
                 attack_path = os.path.join(p, q, r)
                 img_GT = self.load_image(attack_path)
                 print("Atk: {} {}".format(attack_path, img_GT.shape))
-                self.attacked_image = self.img_random_crop(img_GT, 608, 608).cuda().unsqueeze(0)
+                self.attacked_image = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
                 self.attacked_image = self.clamp_with_grad(self.attacked_image)
                 p, q, r = image_list_tampersource[idx]
                 another_path = os.path.join(p, q, r)
                 img_GT = self.load_image(another_path)
                 print("Another: {} {}".format(another_path, img_GT.shape))
-                self.another_image = self.img_random_crop(img_GT, 608, 608).cuda().unsqueeze(0)
+                self.another_image = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
                 self.another_image = self.clamp_with_grad(self.another_image)
                 p, q, r = image_list_mask[idx]
                 mask_path = os.path.join(p, q, r)
                 img_GT = self.load_image(mask_path, grayscale=True)
                 print("Mask: {} {}".format(mask_path, img_GT.shape))
-                self.mask = self.img_random_crop(img_GT, 608, 608, grayscale=True).cuda().unsqueeze(0)
+                self.mask = self.img_random_crop(img_GT, eval_size, eval_size, grayscale=True).cuda().unsqueeze(0)
                 self.mask = self.clamp_with_grad(self.mask)
                 self.mask = self.mask.repeat(1,3,1,1)
 
@@ -1297,7 +1073,7 @@ class IRNpModel(BaseModel):
             torchvision.utils.save_image((camera_ready * 255).round() / 255,
                                          name, nrow=1, padding=0, normalize=False)
 
-    def load_image(self, path, readimg=False, Height=608, Width=608,grayscale=False):
+    def load_image(self, path, readimg=False, Height=512, Width=512,grayscale=False):
         import data.util as util
         GT_path = path
 
@@ -1311,7 +1087,7 @@ class IRNpModel(BaseModel):
         img_GT = cv2.resize(copy.deepcopy(img_GT), (Width, Height), interpolation=cv2.INTER_LINEAR)
         return img_GT
 
-    def img_random_crop(self, img_GT, Height=608, Width=608, grayscale=False):
+    def img_random_crop(self, img_GT, Height=512, Width=512, grayscale=False):
         # # randomly crop
         # H, W = img_GT.shape[0], img_GT.shape[1]
         # rnd_h = random.randint(0, max(0, H - Height))
@@ -1361,56 +1137,56 @@ class IRNpModel(BaseModel):
         if 'netG' in network_list:
             load_path_G = pretrain + "_netG.pth"
             if load_path_G is not None:
-                logger.info('Loading model for class [{:s}] ...'.format(load_path_G))
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
                     self.load_network(load_path_G, self.netG, strict=True)
                 else:
-                    logger.info('Did not find model for class [{:s}] ...'.format(load_path_G))
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
         if 'KD_JPEG' in network_list:
             load_path_G = pretrain + "_KD_JPEG.pth"
             if load_path_G is not None:
-                logger.info('Loading model for class [{:s}] ...'.format(load_path_G))
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.KD_JPEG_net, strict=False)
+                    self.load_network(load_path_G, self.KD_JPEG_net, strict=True)
                 else:
-                    logger.info('Did not find model for class [{:s}] ...'.format(load_path_G))
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
         if 'discriminator_mask' in network_list:
             load_path_G = pretrain + "_discriminator_mask.pth"
             if load_path_G is not None:
-                logger.info('Loading model for class [{:s}] ...'.format(load_path_G))
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.discriminator_mask, strict=False)
+                    self.load_network(load_path_G, self.discriminator_mask, strict=True)
                 else:
-                    logger.info('Did not find model for class [{:s}] ...'.format(load_path_G))
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
         if 'qf_predict' in network_list:
             load_path_G = pretrain + "_qf_predict.pth"
             if load_path_G is not None:
-                logger.info('Loading model for class [{:s}] ...'.format(load_path_G))
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
                     self.load_network(load_path_G, self.qf_predict_network, self.opt['path']['strict_load'])
                 else:
-                    logger.info('Did not find model for class [{:s}] ...'.format(load_path_G))
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
         if 'localizer' in network_list:
             load_path_G = pretrain + "_localizer.pth"
             if load_path_G is not None:
-                logger.info('Loading model for class [{:s}] ...'.format(load_path_G))
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.localizer, strict=False)
+                    self.load_network(load_path_G, self.localizer, strict=True)
                 else:
-                    logger.info('Did not find model for class [{:s}] ...'.format(load_path_G))
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
         if 'generator' in network_list:
             load_path_G = pretrain + "_generator.pth"
             if load_path_G is not None:
-                logger.info('Loading model for class [{:s}] ...'.format(load_path_G))
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
                     self.load_network(load_path_G, self.generator, strict=True)
                 else:
-                    logger.info('Did not find model for class [{:s}] ...'.format(load_path_G))
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
     def save(self, iter_label, folder='model', network_list=['netG','localizer']):
         if 'netG' in network_list:
