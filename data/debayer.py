@@ -1,7 +1,7 @@
 import numpy as np
 import math
 import time
-import utility
+import data.utility as utility
 from scipy import signal
 
 # =============================================================

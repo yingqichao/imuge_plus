@@ -994,6 +994,16 @@ def set_metadata_pickle(dataset_root, camera_name):
 # 这里用来处理数据集 如裁剪等
 # 数据集可用 data_mode=RAW表明是对插值后的图像
 if __name__ == '__main__':
+    import h5py
+    dnd_root = '/groupshare/dnd_raw/'
+    info_path = os.path.join(dnd_root, 'info.mat')
+    info_data = h5py.File(info_path, 'r')['info']
+    for i in range(50):
+        filename = os.path.join(dnd_root, '%04d.mat' % (i + 1))
+        img = h5py.File(filename, 'r')
+        noisy = np.float32(np.array(img['Inoisy']).T)
+        bayer_pattern = np.asarray(info_data[info_data['camera'][0][i]]['pattern']).tolist()
+    exit(0)
     from data.pipeline import rawpy_tensor2image
     from data.pipeline import pipeline_tensor2image
     from data.pipeline import isp_tensor2image
@@ -1040,15 +1050,17 @@ if __name__ == '__main__':
                             drop_last=True,
                             pin_memory=False)
     start = time.time()
+    len_dataset = len(val_set)
 
-    for i, value in enumerate(dataloader):
+    for i in range(20*32, len_dataset, 1):
         # print(value)
+        value = val_set[i]
         file_name = value['file_name']
         camera_name = value['camera_name']
-        print(camera_name[0], file_name[0], value['bayer_pattern'][0])
+        print(camera_name, file_name, value['bayer_pattern'])
         # metadata = train_set.metadata_list[file_name[0]]
 
-        input_raw = value['input_raw'][0]
+        input_raw = value['input_raw']
         # 测试 my own pipeline
         # metadata = train_set.metadata_list[file_name[0]]
         # flip_val = metadata['flip_val']
@@ -1059,7 +1071,7 @@ if __name__ == '__main__':
         #
         # # print(metadata)
         input_raw = input_raw.permute(1, 2, 0).squeeze(2)
-        numpy_rgb = isp_tensor2image(raw_image=input_raw, metadata=None, file_name=file_name[0], camera_name=camera_name[0])
+        numpy_rgb = isp_tensor2image(raw_image=input_raw, metadata=None, file_name=file_name, camera_name=camera_name)
         numpy_rgb = (numpy_rgb * 255).astype(np.uint8)
 
         # 测试rawpy
@@ -1068,13 +1080,13 @@ if __name__ == '__main__':
         # ###########################################################################
         # numpy_rgb = rawpy_tensor2image(raw_image=input_raw, template=file_name[0], camera_name=camera_name[0],
         #                                patch_size=512)
-        target_rgb = value['target_rgb'][0].permute(1, 2, 0).cpu().numpy() * 255
+        target_rgb = value['target_rgb'].permute(1, 2, 0).cpu().numpy() * 255
         target_rgb = target_rgb.astype(np.uint8)
         # print(target_rgb[0])
         # print('--split--')
         # print(numpy_rgb[0])
         numpy_rgb = np.concatenate([numpy_rgb, target_rgb], axis=1)
-        PIL.Image.fromarray(numpy_rgb).save(os.path.join('./test/', f'testrawpy_{i}.png'), subsampling=1)
+        # PIL.Image.fromarray(numpy_rgb).save(os.path.join('./test/', f'testrawpy_{i}.png'), subsampling=1)
         # exit(0)
         # numpy_rgb = torch.from_numpy(np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).float()
         # print(f"numpy_rgb:{numpy_rgb.shape}")

@@ -3,6 +3,7 @@ import logging
 import os
 import math
 import cv2
+import imageio
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -49,7 +50,7 @@ from utils.commons import create_folder
 # # get all coco class labels
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
-# from MantraNet.mantranet import pre_trained_model
+from MantraNet.mantranet import pre_trained_model
 # from .invertible_net import Inveritible_Decolorization_PAMI
 # from models.networks import UNetDiscriminator
 # from loss import PerceptualLoss, StyleLoss
@@ -58,15 +59,15 @@ from utils.commons import create_folder
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 from loss import GrayscaleLoss
-from .invertible_net import Inveritible_Decolorization_PAMI
-from models.networks import UNetDiscriminator
+# from .invertible_net import Inveritible_Decolorization_PAMI
+# from models.networks import UNetDiscriminator
 from loss import PerceptualLoss, StyleLoss
 # from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet
 from lama_models.my_own_elastic_dtcwt import my_own_elastic
 
 class BaseModel():
-    def __init__(self, opt,  args, train_set=None):
+    def __init__(self, opt,  args, train_set=None, val_set=None):
         self.mode_dict = {
             0: 'generating protected images(val)',
             1: 'tampering localization on generating protected images(val)',
@@ -83,6 +84,7 @@ class BaseModel():
         self.optimizers = []
 
         self.train_set = train_set
+        self.val_set = val_set
         self.rank = torch.distributed.get_rank()
         self.opt = opt
         self.args = args
@@ -230,16 +232,48 @@ class BaseModel():
         create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
 
     def define_localizer(self):
-        if self.args.mode in [5.0] or self.opt['test_restormer']:
+        if self.args.mode in [5.0] or self.opt['test_restormer'] == 2:
             print("using restormer as testing ISP...")
             from restormer.model_restormer import Restormer
             self.localizer = Restormer(dim=16, ).cuda()
         else:
-            from ImageForensicsOSN.test import get_model
-            # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
-            # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
-            #                                     find_unused_parameters=True)
-            self.localizer = get_model('/groupshare/ISP_results/models/')
+            which_model = self.opt['using_which_model_for_test']
+            if 'OSN' in which_model:
+                from ImageForensicsOSN.test import get_model
+                # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
+                # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
+                #                                     find_unused_parameters=True)
+                self.localizer = get_model('/groupshare/ISP_results/models/')
+            elif 'CAT' in which_model:
+                from CATNet.model import get_model
+                self.localizer = get_model()
+            elif 'MVSS' in which_model:
+                model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
+                from MVSS.models.mvssnet import get_mvss
+                self.localizer = get_mvss(
+                    backbone='resnet50',
+                    pretrained_base=True,
+                    nclass=1,
+                    sobel=True,
+                    constrain=True,
+                    n_input=3
+                )
+                ckp = torch.load(model_path, map_location='cpu')
+                self.localizer.load_state_dict(ckp, strict=True)
+                self.localizer = nn.DataParallel(self.localizer).cuda()
+                self.localizer.eval()
+            elif 'Mantra' in which_model:
+                model_path = './MantraNetv4.pt'
+                self.localizer = nn.DataParallel(pre_trained_model(model_path)).cuda()
+                self.localizer.eval()
+            elif 'Resfcn' in which_model:
+                print('resfcn here')
+                from MVSS.models.resfcn import ResFCN
+                discriminator_mask = ResFCN().cuda()
+                checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
+                discriminator_mask.load_state_dict(checkpoint, strict=True)
+                self.localizer = discriminator_mask
+                self.localizer.eval()
 
     def define_RAW2RAW_network(self):
         if 'UNet' not in self.task_name:
@@ -409,6 +443,84 @@ class BaseModel():
         modified_psdown = input_psdown + self.KD_JPEG(input_psdown)
         modified_raw_one_dim = self.psup(modified_psdown)
         return modified_raw_one_dim
+
+    def render_image_using_ISP(self, *, input_raw, input_raw_one_dim, gt_rgb,
+                                     file_name, camera_name
+                                     ):
+        ### gt_rgb is only loaded to read tensor size
+
+        ### three networks used during training
+        if self.opt['test_restormer'] == 0:
+            self.generator.eval()
+            self.qf_predict_network.eval()
+            self.netG.eval()
+            if self.global_step % 3 == 0:
+                isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
+            elif self.global_step % 3 == 1:
+                isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
+            else:  # if self.global_step%3==2:
+                isp_model_0, isp_model_1 = self.netG, self.generator
+
+            #### invISP AS SUBSEQUENT ISP####
+            modified_input_0 = isp_model_0(input_raw)
+            if self.opt['use_gamma_correction']:
+                modified_input_0 = self.gamma_correction(modified_input_0)
+            modified_input_0 = self.clamp_with_grad(modified_input_0)
+
+            modified_input_1 = isp_model_1(input_raw)
+            if self.opt['use_gamma_correction']:
+                modified_input_1 = self.gamma_correction(modified_input_1)
+            modified_input_1 = self.clamp_with_grad(modified_input_1)
+
+            skip_the_second = np.random.rand() > 0.8
+            alpha_0 = 1.0 if skip_the_second else np.random.rand()
+            alpha_1 = 1 - alpha_0
+            non_tampered_image = alpha_0 * modified_input_0
+            non_tampered_image += alpha_1 * modified_input_1
+
+        ### conventional ISP
+        elif self.opt['test_restormer'] == 1:
+            from data.pipeline import isp_tensor2image, pipeline_tensor2image, rawpy_tensor2image
+            non_tampered_image = torch.zeros_like(gt_rgb)
+            for idx_pipeline in range(gt_rgb.shape[0]):
+                # [B C H W]->[H,W]
+                raw_1 = input_raw_one_dim[idx_pipeline]
+                # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
+                #                                   output_stage='gamma')
+                numpy_rgb = rawpy_tensor2image(raw_image=raw_1, template=file_name[idx_pipeline],
+                                             camera_name=camera_name[idx_pipeline], patch_size=512) / 255
+
+                non_tampered_image[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
+                    np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+
+            # non_tampered_image = torch.zeros_like(gt_rgb)
+            # for idx_pipeline in range(gt_rgb.shape[0]):
+            #     metadata = self.val_set.metadata_list[file_name[idx_pipeline]]
+            #     flip_val = metadata['flip_val']
+            #     metadata = metadata['metadata']
+            #     # 在metadata中加入要用的flip_val和camera_name
+            #     metadata['flip_val'] = flip_val
+            #     metadata['camera_name'] = camera_name
+            #     # [B C H W]->[H,W]
+            #     raw_1 = input_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+            #     # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
+            #     #                                   output_stage='gamma')
+            #     numpy_rgb = isp_tensor2image(raw_image=raw_1, metadata=None, file_name=file_name[idx_pipeline],
+            #                                  camera_name=camera_name[idx_pipeline])
+            #
+            #     non_tampered_image[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
+            #         np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+        ### restormer
+        elif self.opt['test_restormer'] == 2:
+            self.localizer.eval()
+            non_tampered_image = self.localizer(input_raw)
+
+        else:
+            # print('here')
+            non_tampered_image = gt_rgb
+
+        # non_tampered_image = gt_rgb
+        return non_tampered_image
 
     def ISP_image_generation_general(self, *, network, input_raw, target):
         modified_input_generator = network(input_raw)
@@ -1229,22 +1341,41 @@ def getIOU(pre, gt):
 
 ## here test iou and auc
 if __name__ == '__main__':
-    gt = np.random.choice(2, [32, 256, 256, 1])
-    pre = np.random.choice(2, [32, 256, 256, 1])
-    f1, recall = getFScore(pre.flatten(), gt.flatten())
-    exit(0)
-    iou = getIOU(pre, gt)
-    print(iou)
-    from sklearn.metrics import f1_score
-    api_f1 = f1_score(gt.flatten(), pre.flatten())
-    print(api_f1)
-    auc = getAUC(pre.flatten(), gt.flatten())
-    # auc = getAUC(pre, gt)
-    print(auc)
-    [TN, TP, FN, FP] = getLabels(pre*255, gt*255)
-    # print("{} {} {} {}".format(TN,TP,FN,FP))
-    our_f1 = getF1(TP, FP, FN)
-    print(our_f1)
+    os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+    model_path = './MantraNetv4.pt'
+    localizer = nn.DataParallel(pre_trained_model(model_path)).cuda()
+    image_files = './data/test2/'
+    os.makedirs('./data/test', exist_ok=True)
+    import glob
+    import imageio
+    rgb_files = glob.glob(image_files+'*.png')
+    for rgb_file in rgb_files:
+        image = imageio.imread(rgb_file)
+        image = image / 255
+        image = np.expand_dims(image, axis=3)
+        image = torch.Tensor(image).permute(3, 2, 0, 1).cuda()
+        out = localizer(image)
+        out = torch.sigmoid(out)
+        out = out.permute(2, 3, 0, 1).detach().squeeze(2).cpu().numpy()
+        out_image = (out * 255).astype(np.uint8)
+        bname = os.path.basename(rgb_file)
+        imageio.imwrite(os.path.join('./data/test', bname), out_image)
+    # gt = np.random.choice(2, [32, 256, 256, 1])
+    # pre = np.random.choice(2, [32, 256, 256, 1])
+    # f1, recall = getFScore(pre.flatten(), gt.flatten())
+    # exit(0)
+    # iou = getIOU(pre, gt)
+    # print(iou)
+    # from sklearn.metrics import f1_score
+    # api_f1 = f1_score(gt.flatten(), pre.flatten())
+    # print(api_f1)
+    # auc = getAUC(pre.flatten(), gt.flatten())
+    # # auc = getAUC(pre, gt)
+    # print(auc)
+    # [TN, TP, FN, FP] = getLabels(pre*255, gt*255)
+    # # print("{} {} {} {}".format(TN,TP,FN,FP))
+    # our_f1 = getF1(TP, FP, FN)
+    # print(our_f1)
 
 
 ####################################################################################################

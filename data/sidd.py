@@ -249,7 +249,7 @@ def get_scene_instance(path: str) -> List[str]:
 
 
 class SIDD(Dataset):
-    def __init__(self, base_dir, file_txt, number=10, patch_size=512):
+    def __init__(self, base_dir, file_txt, use_skip=False, patch_size=512):
         self.base_dir = base_dir
         source_file_path = os.path.join(base_dir, file_txt)
         # scene_instance_name_list = get_scene_instance(source_file_path)
@@ -262,8 +262,11 @@ class SIDD(Dataset):
         self.srgb_list = data['srgb_list']
         self.meta_list = data['meta_list']
         self.len_data = len(self.raw_list)
+        self.skip_raw_list = data['skip_raw_list']
+        self.skip_rgb_list = data['skip_rgb_list']
         # self.imio = imio('RGB', 'HWC')
         self.patch_size = patch_size
+        self.use_skip = use_skip
 
 
 
@@ -320,23 +323,29 @@ class SIDD(Dataset):
         return bayer_pattern
 
     def __getitem__(self, index):
-        raw_path = self.raw_list[index]
-        srgb_path = self.srgb_list[index]
         metadata = self.meta_list[index]
 
         flip_value = metadata['flip_val']
         bayer = metadata['bayer']
         wb = metadata['wb']
-        black_level = metadata['black_level']
-        white_level = metadata['white_level']
+        # black_level = metadata['black_level']
+        # white_level = metadata['white_level']
         filename = metadata['filename']
 
-        raw = read_raw(raw_path)
-        # flip_value, bayer, h, w, filename, wb, black_level, white_level = read_metadata(metadata_path)
-        # return flip_value, bayer, h, w, filename, wb, black_level, white_level, raw_path, srgb_path
-        raw = raw.transpose()
-        raw = fix_orientation(raw, flip_value)
-        srgb = imageio.imread(srgb_path)
+        if self.use_skip:
+            raw_path = self.skip_raw_list[index]
+            raw = np.load(raw_path)['raw']
+            rgb_path = self.skip_rgb_list[index]
+            srgb = imageio.imread(rgb_path)
+        else:
+            raw_path = self.raw_list[index]
+            srgb_path = self.srgb_list[index]
+            raw = read_raw(raw_path)
+            # flip_value, bayer, h, w, filename, wb, black_level, white_level = read_metadata(metadata_path)
+            # return flip_value, bayer, h, w, filename, wb, black_level, white_level, raw_path, srgb_path
+            raw = raw.transpose()
+            raw = fix_orientation(raw, flip_value)
+            srgb = imageio.imread(srgb_path)
         raw, srgb = center_crop(self.patch_size, raw, srgb, False)
         raw = np.expand_dims(raw, axis=2)
         srgb = srgb / 255
@@ -567,12 +576,76 @@ class SIDD_Dataset(Dataset):
     def __len__(self):
         return self.len_data
 
+def data_process_skip(dataset_root, pickle_file):
+    def pack_raw(raw):
+        # 两个相机都是RGGB
+        H, W = raw.shape[0], raw.shape[1]
+        raw = np.expand_dims(raw, axis=2)
+        R = raw[0:H:2, 0:W:2, :]
+        Gr = raw[0:H:2, 1:W:2, :]
+        Gb = raw[1:H:2, 0:W:2, :]
+        B = raw[1:H:2, 1:W:2, :]
+        out = np.concatenate((R, Gr, Gb, B), axis=2)
+        return out
+    pickle_file_path = os.path.join(dataset_root, pickle_file)
+    with open(pickle_file_path, 'rb') as f:
+        data = pickle.load(f)
+    raw_list, srgb_list, meta_list = data['raw_list'], data['srgb_list'], data['meta_list']
+    new_root = '/groupshare/sidd_test_skip/'
+    output_rgb_path = os.path.join(new_root, 'RGB')
+    output_raw_path = os.path.join(new_root, 'RAW')
+    os.makedirs(output_rgb_path, exist_ok=True)
+    os.makedirs(output_raw_path, exist_ok=True)
+    len_dataset = len(raw_list)
+    skip_raw_list = []
+    skip_rgb_list = []
+    for i in tqdm(range(len_dataset)):
+        raw_path = raw_list[i]
+        rgb_path = srgb_list[i]
+        raw_name = os.path.basename(raw_path)
+        rgb_name = os.path.basename(rgb_path)
+
+        meta_info = meta_list[i]
+        flip_value = meta_info['flip_val']
+        raw = read_raw(raw_path)
+        # flip_value, bayer, h, w, filename, wb, black_level, white_level = read_metadata(metadata_path)
+        # return flip_value, bayer, h, w, filename, wb, black_level, white_level, raw_path, srgb_path
+        raw = raw.transpose()
+        raw = fix_orientation(raw, flip_value)
+        rgb = imageio.imread(rgb_path)
+
+        rgb_h, rgb_w, _ = rgb.shape
+        raw_h, raw_w = raw.shape
+        assert raw_h == rgb_h and raw_w == rgb_w
+        rgb_h = rgb_h - (rgb_h % 8)
+        rgb_w = rgb_w - (rgb_w % 8)
+        rgb_resize = rgb[0:rgb_h:4, 0:rgb_w:4, :]
+        raw_img = raw[0:rgb_h, 0:rgb_w]
+        imageio.imwrite(os.path.join(output_rgb_path, rgb_name), rgb_resize)
+        skip_rgb_list.append(os.path.join(output_rgb_path, rgb_name))
+        p_raw = pack_raw(raw_img)
+        raw_resize = p_raw[0:rgb_h:4, 0:rgb_w:4, :]
+        new_H, new_W = raw_resize.shape[0], raw_resize.shape[1]
+        v_im = np.zeros([new_H * 2, new_W * 2], dtype=np.float32)
+        v_im[0:new_H * 2:2, 0:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 0]
+        v_im[0:new_H * 2:2, 1:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 1]
+        v_im[1:new_H * 2:2, 0:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 2]
+        v_im[1:new_H * 2:2, 1:new_W * 2:2] = raw_resize[0:new_H, 0:new_W, 3]
+        file_name = raw_name.replace('.MAT', '.npz')
+        np.savez(os.path.join(output_raw_path, file_name), raw=v_im)
+        skip_raw_list.append(os.path.join(output_raw_path, file_name))
+    data['skip_raw_list'] = skip_raw_list
+    data['skip_rgb_list'] = skip_rgb_list
+    with open(pickle_file_path, 'wb') as f:
+        pickle.dump(data, f)
 
 # 用来测试数据集类是否有误
 if __name__ == '__main__':
     dataset_root = '/groupshare/SIDD_xxhu/'
     txt_file = 'meta.pickle'
-    dataset = SIDD('/groupshare/SIDD_xxhu/',txt_file)
+    # data_process_skip(dataset_root, txt_file)
+    # exit(0)
+    dataset = SIDD('/groupshare/SIDD_xxhu/',txt_file, use_skip=True)
     len_dataset = len(dataset)
     print(len_dataset)
     raw_list = []

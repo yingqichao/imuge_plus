@@ -1,15 +1,15 @@
 
 ### these variables are the most important, make sure dont mess them up
-activate_OSN: false
+activate_OSN: true
 
 test_baseline: false
-test_restormer: 1
+test_restormer: 3 # 1代表addISP 2是restormer 0是MixISP
 #### load pretrained models: number
-load_discriminator_models: 10999 # 9
-load_RAW_models: 10999 # 9
+load_discriminator_models: 11499 # 9
+load_RAW_models: 11499 # 9
 load_ISP_models: 20999
 load_customized_models: 64999
-dtcwt_layers: 16 # 12 for baseline and 16 for all the rest
+dtcwt_layers: 16
 ### directory
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
 task_name_KD_JPEG_model: my_own_elastic
@@ -47,10 +47,10 @@ raw_classes: 5
 #### test settings
 inference_benign_attack_begin_idx: 0
 inference_load_real_world_tamper: true
-inference_do_subsequent_prediction: true
+inference_do_subsequent_prediction: false
 inference_tamper_index: 2
-inference_save_image: true
-using_which_model_for_test: discriminator_mask # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
+inference_save_image: false
+using_which_model_for_test: OSN_localizer  #discriminator_mask #Resfcn_localizer #discriminator_mask #CAT_localizer # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
 
 ####################################################################################
 datasets:

@@ -224,6 +224,16 @@ def main(args,opt):
         print(f'FiveK dataset size:{GT_size}')
         val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=GT_size)
 
+        # from data.sidd import SIDD
+        # val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)
+
+        # from data.dnd import DND
+        # val_set = DND('/groupshare/dnd_raw/', 'data/dnd.pickle')
+
+        # from data.sr_raw import SrRaw
+        # data_root = '/groupshare/sr_raw/train0/'
+        # val_set = SrRaw(data_root)
+
         # from data.LQGT_dataset import LQGTDataset as D
         # val_set = D(opt, dataset_opt)
     else:
@@ -232,7 +242,7 @@ def main(args,opt):
     val_size = int(math.ceil(len(val_set) / 1))
     # val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=False, num_workers=0,
-                                pin_memory=True)
+                                pin_memory=True, drop_last=True)
 
     if rank <= 0:
         print('Number of val images: {:,d}, iters: {:,d}'.format(
@@ -262,7 +272,7 @@ def main(args,opt):
         model = M(opt, args)
     elif which_model == 'ISP':
         from models.Modified_invISP import Modified_invISP as M
-        model = M(opt, args, train_set)
+        model = M(opt, args, train_set, val_set)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
@@ -283,7 +293,8 @@ def main(args,opt):
             variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1','RECALL','RECALL_1',
                               'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
         elif 'ISP' in which_model and args.mode==4:
-            variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'RAW_PSNR', 'RGB_PSNR']
+            # variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'AUC', 'IoU']
+            variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'AUC', 'IoU', 'RAW_PSNR', 'RGB_PSNR']
         elif 'ISP' in which_model and args.mode==0:
             variables_list = ['RAW_L1', 'RAW_PSNR','loss','ERROR', 'CE','CEL1','F1','F1_1','RECALL','RECALL_1',
                               'RGB_PSNR_0','RGB_PSNR_1','RGB_PSNR_2']
@@ -310,7 +321,7 @@ def main(args,opt):
             print('Start training from epoch: {:d}, iter: {:d}, total: {:d}'.format(start_epoch, current_step, total))
         latest_values = None
 
-        print_step, restart_step = 10, 1000
+        print_step, restart_step = 1, 1500
         start = time.time()
 
         # train_generator_1 = iter(train_loader_1)
@@ -348,6 +359,19 @@ def main(args,opt):
                         val_item = next(val_generator)
                     except StopIteration as e:
                         print("The end of val set is reached. Refreshing...")
+
+                        info_str = f'valid_idx:{valid_idx} '
+                        for i in range(len(variables_list)):
+                            info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.4f} '
+                        with open('./test_result_5.txt', 'a') as f:
+                            f.write(info_str+'\n')
+                        f.close()
+                        opt['inference_benign_attack_begin_idx'] = opt['inference_benign_attack_begin_idx'] + 1
+                        if opt['inference_benign_attack_begin_idx'] >= 24:
+                            raise StopIteration()
+                        current_step = 0
+                        running_list = [0.0] * len(variables_list)
+                        valid_idx = 0
                         val_generator = iter(val_loader)
                         val_item = next(val_generator)
                     model.feed_data_val_router(batch=val_item, mode=args.mode)
@@ -376,9 +400,9 @@ def main(args,opt):
                     info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.4f} s'
                     print(info_str)
                     start = time.time()
-                    if valid_idx>=restart_step:
-                        running_list = [0.0] * len(variables_list)
-                        valid_idx = 0
+                    # if valid_idx>=restart_step:
+                    #     running_list = [0.0] * len(variables_list)
+                    #     valid_idx = 0
 
                 current_step += 1
                 # if rank <= 0:
@@ -451,7 +475,7 @@ if __name__ == '__main__':
     parser.add_argument('-load_models', type=int, default=1, help='load checkpoint or not.')
     args = parser.parse_args()
     opt = option.parse(args.opt, args=args)
-
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
     main(args, opt)
 
 
