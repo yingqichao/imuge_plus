@@ -108,15 +108,6 @@ def main(args,opt):
     ####################################################################################################
     train_set, val_set, train_sampler, train_loader, val_loader = create_dataset(opt=opt, args=args, rank=rank, seed=seed)
 
-    # from data.sidd import SIDD
-    # val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)
-
-    # from data.dnd import DND
-    # val_set = DND('/groupshare/dnd_raw/', 'data/dnd.pickle')
-
-    # from data.sr_raw import SrRaw
-    # data_root = '/groupshare/sr_raw/train0/'
-    # val_set = SrRaw(data_root)
 
 
 
@@ -134,7 +125,7 @@ def main(args,opt):
     ####################################################################################################
     start_epoch, current_step = 0,  opt['train']['current_step']
 
-    if 'ISP' in which_model or 'PAMI' in which_model:
+    if 'ISP' in which_model or ('PAMI' in which_model and args.mode==0.0):
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
@@ -144,7 +135,7 @@ def main(args,opt):
             print('Start training from epoch: {:d}, iter: {:d}, total: {:d}'.format(start_epoch, current_step, total))
         latest_values = None
 
-        print_step, restart_step = 10, 1000
+        print_step, restart_step = 40, 1000
         start = time.time()
 
         # train_generator_1 = iter(train_loader_1)
@@ -239,11 +230,11 @@ def main(args,opt):
         if rank<=0:
             print('Start evaluating... ')
             if 'COCO' in opt['eval_dataset']:
-                root = '/home/qcying/real_world_test_images'
+                root = '/groupshare/real_world_test_images'
             elif 'ILSVRC' in opt['eval_dataset']:
-                root = '/home/qcying/real_world_test_images_ILSVRC'
+                root = '/groupshare/real_world_test_images_ILSVRC'
             else:
-                root = '/home/qcying/real_world_test_images_CelebA'
+                root = '/groupshare/real_world_test_images_CelebA'
             data_origin = os.path.join(root,opt['eval_kind'],'ori_COCO_0114')
             data_immunize = os.path.join(root,opt['eval_kind'],'immu_COCO_0114')
             data_tampered = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114')

@@ -19,11 +19,6 @@ from .base_model import BaseModel
 from .conditional_jpeg_generator import QF_predictor
 from .invertible_net import Inveritible_Decolorization_PAMI, ResBlock
 
-# import matlab.engine
-
-# print("Starting MATLAB engine...")
-# engine = matlab.engine.start_matlab()
-# print("MATLAB engine loaded successful.")
 logger = logging.getLogger('base')
 # json_path = '/home/qichaoying/Documents/COCOdataset/annotations/incnances_val2017.json'
 # load coco data
@@ -67,7 +62,7 @@ class IRNpModel(BaseModel):
                                                 )  # find_unused_parameters=True
             # self.generator = Discriminator(in_channels=3, use_sigmoid=True).cuda()
             # self.generator = DistributedDataParallel(self.generator, device_ids=[torch.cuda.current_device()])
-            self.discriminator_mask = UNetDiscriminator(in_channels=4, residual_blocks=1) #Localizer().cuda()
+            self.discriminator_mask = UNetDiscriminator(in_channels=4, out_channels=1, residual_blocks=2) #Localizer().cuda()
             self.discriminator_mask = self.discriminator_mask.cuda()
             self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
                                                               device_ids=[torch.cuda.current_device()],
@@ -119,7 +114,7 @@ class IRNpModel(BaseModel):
             # good_models: '/model/Rerun_4/29999'
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/model/Rerun_3/'
-            self.model_path = str(999) # 42999
+            self.model_path = str(8999) # 42999
         else:
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/jpeg_model/Rerun_3/'
@@ -176,13 +171,13 @@ class IRNpModel(BaseModel):
         self.optimizer_G.zero_grad()
         self.optimizer_localizer.zero_grad()
         # self.optimizer_generator.zero_grad()
-        # self.optimizer_discriminator.zero_grad()
+        # self.optimizer_discriminator_mask.zero_grad()
 
         logs, debug_logs = {}, []
 
         self.real_H = self.clamp_with_grad(self.real_H)
         batch_size, num_channels, height_width, _ = self.real_H.shape
-        psnr_thresh = 33
+        psnr_thresh = self.opt['psnr_thresh']
         save_interval = 1000
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
@@ -203,8 +198,10 @@ class IRNpModel(BaseModel):
                                                        percent_range=None, index=self.global_step)
 
                 ### tamper-based data augmentation
-                modified_input, modified_canny = self.tamper_based_augmentation(
-                    modified_input=modified_input, modified_canny=modified_canny, masks=masks, masks_GT=masks_GT, index=self.global_step)
+                skip_aug = np.random.rand()>self.opt['skip_aug_probability']
+                if not skip_aug:
+                    modified_input, modified_canny = self.tamper_based_augmentation(
+                        modified_input=modified_input, modified_canny=modified_canny, masks=masks, masks_GT=masks_GT, index=self.global_step)
 
                 ### forward image generation
                 forward_stuff = self.netG(x=torch.cat((modified_input, modified_canny), dim=1))
@@ -233,15 +230,16 @@ class IRNpModel(BaseModel):
                     else:
                         quality_idx = np.random.randint(self.opt["strong_JPEG_lower_bound"], self.opt["strong_JPEG_upper_bound"])
 
-                    kernel = random.choice([3,5,7])
+                    kernel = random.choice([7]) # 3,5,7
+                    logs['kernel'] = kernel
                     resize_ratio = (int(self.random_float(0.7, 1.5)*self.width_height),
                                     int(self.random_float(0.7, 1.5)*self.width_height))
                     ### real-world attack: simulated + (real-simulated).detach
-                    attacked_image, attacked_real_jpeg_simulate = self.benign_attacks(attacked_forward=attacked_forward,
-                                                         quality_idx=quality_idx,
-                                                         index=self.global_step,
-                                                         kernel_size=kernel,
-                                                         resize_ratio=resize_ratio
+                    attacked_image, attacked_real_jpeg_simulate, kernel = self.benign_attacks(attacked_forward=attacked_forward,
+                                                                                     quality_idx=quality_idx,
+                                                                                     index=self.global_step,
+                                                                                     kernel_size=kernel,
+                                                                                     resize_ratio=resize_ratio
                                                                                       )
 
                     # UPDATE THE GROUND-TRUTH TO EASE TRAINING
@@ -250,7 +248,8 @@ class IRNpModel(BaseModel):
                                                                                quality_idx=quality_idx,
                                                                                index=self.global_step,
                                                                                kernel_size=kernel,
-                                                                               resize_ratio=resize_ratio).detach()
+                                                                               resize_ratio=resize_ratio
+                                                                               ).detach()
 
                     error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_forward)).item()
                     logs['ERROR'] = error_l1
@@ -260,9 +259,11 @@ class IRNpModel(BaseModel):
 
                 else:
                     attacked_image = attacked_forward
+                    attacked_real_jpeg_simulate = attacked_forward
                     # UPDATE THE GROUND-TRUTH TO EASE TRAINING
                     GT_modified_input = modified_input
-                    logs['ERROR'], logs['SIMU'] = 40, 40
+                    error_l1, real_and_simulate = 40, 40
+                    logs['ERROR'], logs['SIMU'] = error_l1, real_and_simulate
 
                 ## train localizer
                 gen_attacked_train = self.localizer(attacked_image.detach())
@@ -280,26 +281,50 @@ class IRNpModel(BaseModel):
                 ## IMAGE RECOVERY
                 ## RECOVERY
                 tampered_attacked_image = attacked_image * (1 - masks)
-                tampered_attacked_image = self.clamp_with_grad(tampered_attacked_image)
+                # tampered_attacked_image = self.clamp_with_grad(tampered_attacked_image)
                 canny_input = torch.zeros_like(modified_canny).cuda()
                 reversed_stuff, _ = self.netG(torch.cat((tampered_attacked_image, canny_input), dim=1), rev=True)
                 reversed_image, reversed_canny = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
                 reversed_image = self.clamp_with_grad(reversed_image)
+                reversed_canny = self.clamp_with_grad(reversed_canny)
                 l_backward = self.l1_loss(reversed_image, GT_modified_input)
                 l_backward_local = self.l1_loss(reversed_image * masks, GT_modified_input * masks)
-                reversed_canny = self.clamp_with_grad(reversed_canny)
+
                 l_back_canny = self.l1_loss(reversed_canny, modified_canny)
                 l_back_canny_local = self.l1_loss(reversed_canny * masks, modified_canny * masks)
                 l_percept_bk_ssim = - self.ssim_loss(reversed_image, GT_modified_input)
                 psnr_backward = self.psnr(self.postprocess(GT_modified_input), self.postprocess(reversed_image)).item()
 
+                # # ## training gan
+                # if self.global_step % self.opt["GAN_update_period"] == self.opt["GAN_update_period"]-1:
+                #     dis_input_real = torch.cat((modified_input, modified_canny), dim=1)
+                #     dis_input_fake = torch.cat((reversed_image, reversed_canny), dim=1)
+                #     dis_input = torch.cat([dis_input_real,dis_input_fake],dim=0)
+                #     dis_batch = self.discriminator_mask(dis_input.detach())
+                #     # dis_fake = self.discriminator_mask(dis_input_fake)
+                #     dis_loss = self.bce_with_logit_loss(dis_batch, torch.cat([torch.ones_like(masks_GT), 1-masks_GT],dim=0))
+                #     # dis_fake_loss = self.bce_with_logit_loss(dis_fake, 1 - masks_GT)
+                #     # dis_loss = (dis_real_loss + dis_fake_loss) / 2
+                #     logs['DIS'] = dis_loss.item()*self.opt["GAN_update_period"]
+                # # modified_simulated = modified_input + self.discriminator_mask(modified_input)
+                # # modified_simulated = self.clamp_with_grad(modified_simulated)
+                # # dis_loss = self.l1_loss(modified_simulated, GT_modified_input)
+                # # dis_psnr = self.psnr(self.postprocess(GT_modified_input), self.postprocess(modified_simulated)).item()
+                # # logs['DIS'] = dis_psnr
+                #     dis_loss.backward()
+                #     # self.scaler_G.scale(loss).backward()
+                #     if self.train_opt['gradient_clipping']:
+                #         nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                #     self.optimizer_discriminator_mask.step()
+                #     self.optimizer_discriminator_mask.zero_grad()
 
-                ### LOCALIZATION LOSS
-                gen_attacked_train = self.localizer(attacked_image)
-                CE = self.bce_with_logit_loss(gen_attacked_train, masks_GT)
+
+                # ### LOCALIZATION LOSS
+                # gen_attacked_train = self.localizer(attacked_image)
+                # CE = self.bce_with_logit_loss(gen_attacked_train, masks_GT)
                 masks_real = torch.where(torch.sigmoid(gen_attacked_train) > 0.5, 1.0, 0.0)
                 masks_real = self.Erode_Dilate(masks_real).repeat(1, 3, 1, 1)
-                logs['CE_ema'] = CE.item()
+                # logs['CE_ema'] = CE.item()
 
                 ###################
                 ### LOSSES
@@ -332,10 +357,21 @@ class IRNpModel(BaseModel):
                 # l_back_canny_ideal = self.l1_loss(reversed_canny_ideal, modified_canny)
                 # l_backward_local_ideal = (self.l1_loss(reversed_image_ideal * masks, modified_input * masks))
                 l_backward_sum = 0
-                l_backward_sum += 1.0*l_backward
-                l_backward_sum += 1.0*l_backward_local
+                l_backward_sum += 0.5*l_backward
+                l_backward_sum += 0.5*l_backward_local
                 l_backward_sum += 1.0*l_back_canny
-                l_backward_sum += 1.0 * l_back_canny_local
+                # l_backward_sum += 0.1 * l_percept_bk_ssim
+
+                # ### dis_loss
+                # # if self.global_step % self.opt["GAN_update_period"] == self.opt["GAN_update_period"] - 1:
+                # dis_input_fake = torch.cat((reversed_image, reversed_canny), dim=1)
+                # dis_batch = self.discriminator_mask(dis_input_fake)
+                # dis_loss = self.bce_with_logit_loss(dis_batch, torch.ones_like(masks_GT))
+                # logs['DIS_A'] = dis_loss.item()*self.opt["GAN_update_period"]
+                #
+                # l_backward_sum += self.opt['GAN_weight'] * dis_loss
+
+                # l_backward_sum += 1.0 * l_back_canny_local
                 # l_backward_sum += 0.01*l_percept_bk_ssim
                 logs['lB'] = l_backward.item()
                 logs['local'] = l_backward_local.item()
@@ -343,7 +379,6 @@ class IRNpModel(BaseModel):
 
                 weight_bk = self.opt['Loss_back_psnr_less'] if psnr_forward < psnr_thresh else self.opt['Loss_back_psnr_higher']
                 loss += weight_bk * l_backward_sum
-                # loss += 0.1 * (l_percept_bk_ssim)
                 #################
                 ## PERCEPTUAL LOSS: loss is like [0.34], but lpips is lile [0.34,0.34,0.34]
                 # l_forward_percept = self.perceptual_loss(forward_image, modified_input).squeeze()
@@ -355,9 +390,12 @@ class IRNpModel(BaseModel):
                 ### CROSS-ENTROPY
                 weight_CE = self.opt['CE_psnr_less'] if psnr_forward < psnr_thresh else self.opt['CE_psnr_less']
                 # weight_GAN = 0.002
-                loss += weight_CE * CE
+                #loss += weight_CE * CE
 
                 logs['loss'] = loss.item()
+
+
+
                 # logs.append(('ID', self.gpu_id))
                 # logs.append(('W', weight_CE))
                 # logs.append(('WF', weight_fw))
@@ -391,6 +429,38 @@ class IRNpModel(BaseModel):
                 # logs.append(('FW', psnr_forward))
                 # logs.append(('BK', psnr_backward))
                 # logs.append(('LOCAL', l_backward_local.item()))
+
+                ##### handling errorous example
+                loss_without_canny = (loss-l_null).item()
+                if loss_without_canny > 0.01 or error_l1 < 25 or real_and_simulate < 30:
+                    print(
+                        f"Error in tamper {self.global_step % self.amount_of_tampering} attack {self.global_step % self.amount_of_benign_attack}")
+                    print(logs)
+                    images = stitch_images(
+                        self.postprocess(modified_input),
+                        self.postprocess(forward_image),
+                        self.postprocess(10 * torch.abs(modified_input - forward_image)),
+                        self.postprocess(attacked_forward),
+                        self.postprocess(attacked_real_jpeg_simulate),
+                        self.postprocess(attacked_image),
+                        self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
+                        self.postprocess(tampered_attacked_image),
+                        self.postprocess(reversed_image),
+                        self.postprocess(modified_input),
+                        self.postprocess(10 * torch.abs(modified_input - reversed_image)),
+                        self.postprocess(reversed_canny),
+                        self.postprocess(10 * torch.abs(modified_canny - reversed_canny)),
+                        img_per_row=1
+                    )
+
+                    name = self.out_space_storage + '/errors/' + str(self.global_step).zfill(5) + "_ " + str(
+                        self.gpu_id) + "_ " + str(self.rank) \
+                           + ".png"
+                    print('\nsaving sample ' + name)
+                    images.save(name)
+
+                    if loss_without_canny>1:
+                        raise StopIteration(f"Oh! the gradient has exploded.{loss_without_canny}")
 
                 loss.backward()
                 # self.scaler_G.scale(loss).backward()
@@ -581,7 +651,7 @@ class IRNpModel(BaseModel):
             with torch.no_grad():
                 reversed_stuff, reverse_feature = self.netG(
                     torch.cat((forward_image * (1 - masks),
-                               torch.zeros_like(modified_canny).cuda()), dim=1), rev=True)
+                               torch.zeros_like(modified_canny)), dim=1), rev=True) # torch.zeros_like(modified_canny).cuda()
                 reversed_ch1, reversed_ch2 = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
                 reversed_image = self.clamp_with_grad(reversed_ch1)
                 # attacked_forward = forward_image * (1 - masks) + modified_input.clone().detach() * masks
@@ -957,12 +1027,14 @@ class IRNpModel(BaseModel):
                     self.attacked_image = self.clamp_with_grad(self.attacked_image)
 
                 index = np.random.randint(0,5)
-                self.attacked_image = self.real_world_attacking_on_ndarray(self.attacked_image[0],
+                resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
+                                int(self.random_float(0.7, 1.5) * self.width_height))
+                self.attacked_image = self.real_world_attacking_on_ndarray(grid=self.attacked_image[0],
                                                                            qf_after_blur=100 if index<3 else 70,
-                                                                           index=index)
-                self.reverse_GT = self.real_world_attacking_on_ndarray(self.real_H[0],
+                                                                           index=index, kernel=5, resize_ratio=resize_ratio)
+                self.reverse_GT = self.real_world_attacking_on_ndarray(grid=self.real_H[0],
                                                                            qf_after_blur=100 if index < 3 else 70,
-                                                                           index=index)
+                                                                           index=index, kernel=5, resize_ratio=resize_ratio)
 
                 # self.attacked_image = self.clamp_with_grad(self.attacked_image)
                 # self.attacked_image = self.Quantization(self.attacked_image)
@@ -977,13 +1049,14 @@ class IRNpModel(BaseModel):
                 F1, TP = self.F1score(self.predicted_mask, self.mask, thresh=0.5)
                 F1_sum[catogory] += F1
 
+                masks_GT = self.predicted_mask
                 self.predicted_mask = self.predicted_mask.repeat(1, 3, 1, 1)
 
                 self.rectified_image = self.attacked_image * (1 - self.predicted_mask)
                 self.rectified_image = self.clamp_with_grad(self.rectified_image)
 
 
-                canny_input = (torch.zeros_like(self.canny_image).cuda())
+                canny_input = masks_GT #(torch.zeros_like(self.canny_image).cuda())
 
                 reversed_stuff, reverse_feature = self.netG(
                     torch.cat((self.rectified_image, canny_input), dim=1), rev=True)

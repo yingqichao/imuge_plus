@@ -140,6 +140,16 @@ def create_dataset(*, opt,args,rank,seed):
         print(f'FiveK dataset size:{GT_size}')
         val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=GT_size)
 
+        # from data.sidd import SIDD
+        # val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)
+
+        # from data.dnd import DND
+        # val_set = DND('/groupshare/dnd_raw/', 'data/dnd.pickle')
+
+        # from data.sr_raw import SrRaw
+        # data_root = '/groupshare/sr_raw/train0/'
+        # val_set = SrRaw(data_root)
+
         # from data.LQGT_dataset import LQGTDataset as D
         # val_set = D(opt, dataset_opt)
     else:

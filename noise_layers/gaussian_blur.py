@@ -2,7 +2,7 @@
 import torch.nn as nn
 
 import torch
-
+from utils.metrics import PSNR
 import math
 class GaussianBlur(nn.Module):
     '''Adds random noise to a tensor.'''
@@ -11,6 +11,7 @@ class GaussianBlur(nn.Module):
         super(GaussianBlur, self).__init__()
         # self.device = config.device
         # self.kernel_size = kernel_size
+        self.psnr = PSNR(255.0).cuda()
         self.name = "G_Blur"
 
     def get_gaussian_kernel(self, kernel_size=5, sigma=2, channels=3):
@@ -49,8 +50,22 @@ class GaussianBlur(nn.Module):
 
         return self.gaussian_filter
 
-    def forward(self, tensor, kernel_size=5, cover_image=None):
+    def forward(self, tensor, kernel_size=5):
         self.name = "GaussianBlur"
-        gaussian_layer = self.get_gaussian_kernel(kernel_size).cuda()
-        return gaussian_layer(tensor)
+        result = tensor
+        for kernel in [3,5,7]:
+            gaussian_layer = self.get_gaussian_kernel(kernel).cuda()
+            blur_result = gaussian_layer(tensor)
+            psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()
+            if psnr>=30:
+                return blur_result, kernel
+        ## if none of the above satisfy psnr>30, we abandon the attack
+        # print("abandoned gaussian blur, we cannot find a suitable kernel that satisfy PSNR>=25")
+        return result, 0
+
+    def postprocess(self, img):
+        # [0, 1] => [0, 255]
+        img = img * 255.0
+        img = img.permute(0, 2, 3, 1)
+        return img.int()
 

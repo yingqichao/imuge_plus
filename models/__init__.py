@@ -31,7 +31,8 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
     variables_list = []
 
     if 'PAMI' in which_model:
-        variables_list = ['local','loss','null','lF','lB','canny','mask_rate','CE', 'CE_ema', 'ERROR', 'SIMU', 'PF', 'PB', 'SF', 'SB']
+        variables_list = ['local','loss','null','lF','lB','canny','mask_rate','CE', 'CE_ema', 'ERROR', 'SIMU', 'PF', 'PB', 'SF', 'SB',
+                          'DIS', 'DIS_A']
     elif 'ISP' in which_model and args.mode == 0:
         variables_list = ['RAW_L1', 'RAW_PSNR', 'loss', 'ERROR', 'CE', 'CEL1', 'F1', 'F1_1', 'RECALL', 'RECALL_1',
                           'RGB_PSNR_0', 'RGB_PSNR_1', 'RGB_PSNR_2']

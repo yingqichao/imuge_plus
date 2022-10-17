@@ -314,15 +314,21 @@ class BaseModel():
         wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
 
         if 'netG' in self.network_list:
+            lr = 'lr_finetune'
             self.optimizer_G = self.create_optimizer(self.netG,
-                                                     lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
+                                                     lr=self.train_opt[lr], weight_decay=wd_G)
+            print(f"optimizer netG: {lr}")
+
         if 'discriminator_mask' in self.network_list:
+            lr = 'lr_scratch'
             self.optimizer_discriminator_mask = self.create_optimizer(self.discriminator_mask,
-                                                                      lr=self.train_opt['lr_scratch'],
-                                                                      weight_decay=wd_G)
+                                                                      lr=self.train_opt[lr],weight_decay=wd_G)
+            print(f"optimizer discriminator_mask: {lr}")
         if 'localizer' in self.network_list:
+            lr = 'lr_finetune'
             self.optimizer_localizer = self.create_optimizer(self.localizer,
-                                                             lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+                                                             lr=self.train_opt[lr], weight_decay=wd_G)
+            print(f"optimizer localizer: {lr}")
         if 'KD_JPEG' in self.network_list:
             self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
                                                            lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
@@ -746,13 +752,15 @@ class BaseModel():
             blurring_layer = self.resize
             processed_image = blurring_layer(attacked_forward, resize_ratio=resize_ratio)
         elif index in self.opt['simulated_gblur_indices']:
+            ## additional care for gaussian and median blur
             blurring_layer = self.gaussian_blur
-            processed_image = blurring_layer(attacked_forward, kernel_size=kernel_size)
+            processed_image, kernel_size = blurring_layer(attacked_forward, kernel_size=kernel_size)
         elif index in self.opt['simulated_mblur_indices']:
             blurring_layer = self.median_blur
-            processed_image = blurring_layer(attacked_forward, kernel=kernel_size)
+            processed_image, kernel_size = blurring_layer(attacked_forward, kernel=kernel_size)
         elif index in self.opt['simulated_AWGN_indices']:
-            blurring_layer = self.gaussian
+            ## we dont simulate gaussian but direct add
+            blurring_layer = self.identity
             processed_image = blurring_layer(attacked_forward)
         elif index in self.opt['simulated_pure_JPEG_indices']:
             blurring_layer = self.identity
@@ -781,7 +789,7 @@ class BaseModel():
         # error_scratch = attacked_real_jpeg - attacked_forward
         # l_scratch = self.l1_loss(error_scratch, torch.zeros_like(error_scratch).cuda())
         # logs.append(('SCRATCH', l_scratch.item()))
-        return attacked_image, attacked_real_jpeg_simulate
+        return attacked_image, attacked_real_jpeg_simulate, kernel_size
 
     def benign_attacks_without_simulation(self, *, forward_image, quality_idx, kernel_size,
                                                          resize_ratio, index=None):
@@ -817,13 +825,14 @@ class BaseModel():
         elif index in self.opt['simulated_gblur_indices']:
             # kernel_list = [5]
             # kernel = random.choice(kernel_list)
-            realworld_attack = cv2.GaussianBlur(ndarr, (kernel, kernel), 0)
+            realworld_attack = cv2.GaussianBlur(ndarr, (kernel, kernel), 0) if kernel > 0 else ndarr
         elif index in self.opt['simulated_mblur_indices']:
             # kernel_list = [5]
             # kernel = random.choice(kernel_list)
-            realworld_attack = cv2.medianBlur(ndarr, kernel)
+            realworld_attack = cv2.medianBlur(ndarr, kernel) if kernel > 0 else ndarr
+
         elif index in self.opt['simulated_AWGN_indices']:
-            mean, sigma = 0, 0.1
+            mean, sigma = 0, 0.5
             gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
             # 给图片添加高斯噪声
             realworld_attack = ndarr + gauss
