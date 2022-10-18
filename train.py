@@ -214,9 +214,10 @@ def main(args,opt):
                     info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.4f} s'
                     print(info_str)
                     start = time.time()
-                    # if valid_idx>=restart_step:
-                    #     running_list = [0.0] * len(variables_list)
-                    #     valid_idx = 0
+                    ## refresh the counter to see if the model behaves abnormaly.
+                    if valid_idx>=restart_step:
+                        running_list = [0.0] * len(variables_list)
+                        valid_idx = 0
 
                 current_step += 1
                 # if rank <= 0:
@@ -288,7 +289,8 @@ if __name__ == '__main__':
     parser.add_argument('-loading_from', type=str, default="COCO_base", help='loading checkpoints from?')
     parser.add_argument('-load_models', type=int, default=1, help='load checkpoint or not.')
     args = parser.parse_args()
-    opt = option.parse(args.opt, args=args)
+    opt = option.parse(opt_path=args.opt,
+                        args=args)
 
     main(args, opt)
 

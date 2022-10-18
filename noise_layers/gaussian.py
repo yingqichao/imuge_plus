@@ -7,7 +7,7 @@ class Gaussian(nn.Module):
     def __init__(self):
         super(Gaussian, self).__init__()
 
-    def forward(self, tensor, cover_image=None, mean=0, stddev=0.5):
+    def forward(self, tensor, cover_image=None, mean=0, stddev=1.0):
 
         self.name="Gaussian"
         noise = torch.nn.init.normal_(torch.Tensor(tensor.size()).cuda(), mean, stddev)

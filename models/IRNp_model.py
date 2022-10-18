@@ -114,7 +114,7 @@ class IRNpModel(BaseModel):
             # good_models: '/model/Rerun_4/29999'
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/model/Rerun_3/'
-            self.model_path = str(999) # 42999
+            self.model_path = str(2999) # 42999
         else:
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/jpeg_model/Rerun_3/'
@@ -223,16 +223,8 @@ class IRNpModel(BaseModel):
                 skip_robust = np.random.rand() > self.opt['skip_attack_probability']
                 if not skip_robust:
                     ## settings for attack
-                    if self.global_step % self.amount_of_benign_attack not in set(
-                            self.opt['simulated_pure_JPEG_indices']
-                    ):
-                        ## perform weak JPEG compression after other attacks
-                        quality_idx = np.random.randint(self.opt["weak_JPEG_lower_bound"], 21)
-                    else:
-                        quality_idx = np.random.randint(self.opt["strong_JPEG_lower_bound"], self.opt["strong_JPEG_upper_bound"])
-
-                    kernel = random.choice([7]) # 3,5,7
-                    logs['kernel'] = kernel
+                    quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
+                    kernel = random.choice([3,5,7]) # 3,5,7
                     resize_ratio = (int(self.random_float(0.7, 1.5)*self.width_height),
                                     int(self.random_float(0.7, 1.5)*self.width_height))
                     ### real-world attack: simulated + (real-simulated).detach
@@ -243,6 +235,8 @@ class IRNpModel(BaseModel):
                                                                                      resize_ratio=resize_ratio
                                                                                       )
                     kernel, quality_idx, resize_ratio = adjusted_settings
+                    logs['kernel'] = kernel
+                    logs['quality_idx'] = quality_idx
                     # UPDATE THE GROUND-TRUTH TO EASE TRAINING
                     # GT_modified_input = modified_input
                     GT_modified_input = self.benign_attacks_without_simulation(forward_image=modified_input,
@@ -441,12 +435,16 @@ class IRNpModel(BaseModel):
                     print(logs)
                     images = stitch_images(
                         self.postprocess(modified_input),
+                        self.postprocess(modified_canny),
                         self.postprocess(forward_image),
                         self.postprocess(10 * torch.abs(modified_input - forward_image)),
                         self.postprocess(attacked_forward),
-                        self.postprocess(attacked_real_jpeg_simulate),
                         self.postprocess(attacked_image),
                         self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
+                        self.postprocess(masks_GT),
+                        self.postprocess(torch.sigmoid(gen_attacked_train)),
+                        self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(gen_attacked_train))),
+                        self.postprocess(masks_real),
                         self.postprocess(tampered_attacked_image),
                         self.postprocess(reversed_image),
                         self.postprocess(modified_input),
@@ -477,12 +475,14 @@ class IRNpModel(BaseModel):
             self.localizer.module.update_clock()
 
             ### update and track history losses
-            self.update_history_losses(index=self.global_step,PSNR=psnr_backward,loss=l_backward_local.item())
+            self.update_history_losses(index=self.global_step,PSNR=psnr_backward,loss=l_backward_local.item(),
+                                       loss_CE=CE.item(),PSNR_attack=error_l1)
             if self.global_step%200==199 or self.global_step<=10:
                 print(f"history loss: {self.history_attack_loss}")
                 print(f"history PSNR: {self.history_attack_PSNR}")
                 print(f"history CE: {self.history_attack_CE}")
                 print(f"history times: {self.history_attack_times}")
+                print(f"history attack: {self.history_attack_data}")
 
 
 

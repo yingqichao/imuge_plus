@@ -6,7 +6,7 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
     which_model = opt['model']
 
     if which_model == 'CVPR':
-        from models.Modified_invISP import IRNModel as M
+        from models.ISP.Modified_invISP import IRNModel as M
         model = M(opt, args)
     elif which_model == 'PAMI':
         from models.IRNp_model import IRNpModel as M
@@ -20,7 +20,7 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
         from models.IRNclrNew_model import IRNclrModel as M
         model = M(opt, args)
     elif which_model == 'ISP':
-        from models.Modified_invISP import Modified_invISP as M
+        from models.ISP.Modified_invISP import Modified_invISP as M
         model = M(opt, args, train_set)
     else:
         raise NotImplementedError('大神是不是搞错了？')

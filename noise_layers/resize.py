@@ -17,13 +17,14 @@ class Resize(nn.Module):
     """
     Resize the image. The target size is original size * resize_ratio
     """
-    def __init__(self, resize_ratio_range=(0.5,1.5), interpolation_method='bilinear'):
+    def __init__(self, resize_ratio_range=(0.5,1.5), interpolation_method='bilinear', opt=None):
         super(Resize, self).__init__()
         self.name = "Resize"
         self.psnr = PSNR(255.0).cuda()
         self.resize_ratio_min = resize_ratio_range[0]
         self.resize_ratio_max = resize_ratio_range[1]
         self.interpolation_method = interpolation_method
+        self.psnr_thresh = 28 if opt is None else opt['minimum_PSNR_caused_by_attack']
 
 
     def forward(self, noised_image, resize_ratio=None):
@@ -57,7 +58,7 @@ class Resize(nn.Module):
             #     mode='nearest')
             recover = torch.clamp(recover, 0, 1)
             psnr = self.psnr(self.postprocess(recover), self.postprocess(noised_image)).item()
-            if psnr>=28:
+            if psnr>=self.psnr_thresh:
                 break
             else:
                 resize_ratio = (int(random_float(0.7, 1.5) * original_width),

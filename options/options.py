@@ -5,16 +5,27 @@ import yaml
 from utils.util import OrderedYaml
 Loader, Dumper = OrderedYaml()
 
+default_attack_opt = {
+    'ISP': 'options/train/attack_layer_setting/ISP_attack_layer.yml',
+    'PAMI': 'options/train/attack_layer_setting/PAMI_attack_layer.yml'
+}
 
-def parse(opt_path,
-          base_opt_path='options/train/ISP/train_ISP_base.yml',
-          attack_opt_path='options/train/attack_layer_setting/PAMI_attack_layer.yml',
+default_base_opt = {
+    'ISP': 'options/train/ISP/train_ISP_base.yml',
+    'PAMI': 'options/train/PAMI/train_PAMI_base.yml'
+}
+
+def parse(*, opt_path,
+          base_opt_path=None,
+          attack_opt_path=None,
           args=None):
-    ## attack layer option ##
-    with open(attack_opt_path, mode='r') as f:
-        opt_attack = yaml.load(f, Loader=Loader)
 
     ## base option ##
+    if base_opt_path is None:
+        if 'ISP' in opt_path:
+            base_opt_path = default_base_opt['ISP']
+        elif 'PAMI' in opt_path:
+            base_opt_path = default_base_opt['PAMI']
     with open(base_opt_path, mode='r') as f:
         opt = yaml.load(f, Loader=Loader)
 
@@ -23,21 +34,33 @@ def parse(opt_path,
         opt_new = yaml.load(f, Loader=Loader)
 
     opt.update(opt_new)
+
+    ## attack layer option ##
+    if attack_opt_path is None:
+        if 'ISP' in opt_path:
+            attack_opt_path = default_attack_opt['ISP']
+        elif 'PAMI' in opt_path:
+            attack_opt_path = default_attack_opt['PAMI']
+    with open(attack_opt_path, mode='r') as f:
+        opt_attack = yaml.load(f, Loader=Loader)
     opt.update(opt_attack)
 
     ## add default values if not specified in cunstom yml
-    if 'task_name_discriminator_model' not in opt:
-        print(f"using default value as task_name_discriminator_model: {args.task_name}")
-        opt['task_name_discriminator_model'] = args.task_name
-    if 'task_name_KD_JPEG_model' not in opt:
-        print(f"using default value as task_name_KD_JPEG_model: {args.task_name}")
-        opt['task_name_KD_JPEG_model'] = args.task_name
-    if "task_name_ISP_model" not in opt:
-        print("using default value as task_name_KD_JPEG_model: UNet")
-        opt['task_name_ISP_model'] = "UNet"
-    if "load_customized_models" not in opt:
-        print("using default value as load_customized_models: ISP_alone")
-        opt['load_customized_models'] = "ISP_alone"
+    if 'ISP' in opt_path:
+        if 'task_name_discriminator_model' not in opt:
+            print(f"using default value as task_name_discriminator_model: {args.task_name}")
+            opt['task_name_discriminator_model'] = args.task_name
+        if 'task_name_KD_JPEG_model' not in opt:
+            print(f"using default value as task_name_KD_JPEG_model: {args.task_name}")
+            opt['task_name_KD_JPEG_model'] = args.task_name
+        if "task_name_ISP_model" not in opt:
+            print("using default value as task_name_KD_JPEG_model: UNet")
+            opt['task_name_ISP_model'] = "UNet"
+        if "load_customized_models" not in opt:
+            print("using default value as load_customized_models: ISP_alone")
+            opt['load_customized_models'] = "ISP_alone"
+    elif 'PAMI' in opt_path:
+        pass
 
     print(f"Opt List: {opt}")
 

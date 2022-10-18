@@ -1,36 +1,22 @@
 import copy
+# from .networks import SPADE_UNet
 import os
-import math
+from collections import OrderedDict
+
 import cv2
-import imageio
-import numpy as np
-import torch
 import torch.distributed as dist
 import torch.nn as nn
+# from data.pipeline import pipeline_tensor2image
+# import matlab.engine
+import torch.nn.functional as Functional
 import torchvision
-from collections import OrderedDict
 import torchvision.transforms.functional as F
 from PIL import Image
 from skimage.color import rgb2gray
 from torch.nn.parallel import DistributedDataParallel
+
 # from cycleisp_models.cycleisp import Raw2Rgb
 import pytorch_ssim
-# from MVSS.models.mvssnet import get_mvss
-# from MVSS.models.resfcn import ResFCN
-from utils.metrics import PSNR
-from models.modules.Quantization import diff_round
-from noise_layers import *
-from noise_layers.crop import Crop
-from noise_layers.dropout import Dropout
-from noise_layers.gaussian import Gaussian
-from noise_layers.gaussian_blur import GaussianBlur
-from noise_layers.middle_filter import MiddleBlur
-from noise_layers.resize import Resize
-from utils.JPEG import DiffJPEG
-# from data.pipeline import pipeline_tensor2image
-# import matlab.engine
-import torch.nn.functional as Functional
-from utils.commons import create_folder
 # from data.pipeline import rawpy_tensor2image
 # print("Starting MATLAB engine...")
 # engine = matlab.engine.start_matlab()
@@ -56,29 +42,42 @@ from MantraNet.mantranet import pre_trained_model
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 from losses.loss import GrayscaleLoss
-from .invertible_net import Inveritible_Decolorization_PAMI
-from models.networks import UNetDiscriminator
 from losses.loss import PerceptualLoss, StyleLoss
-# from .networks import SPADE_UNet
-from lama_models.HWMNet import HWMNet
-from lama_models.my_own_elastic_dtcwt import my_own_elastic
+from models.modules.Quantization import diff_round
+from noise_layers import *
+from noise_layers.dropout import Dropout
+from noise_layers.gaussian import Gaussian
+from noise_layers.gaussian_blur import GaussianBlur
+from noise_layers.resize import Resize
+from utils.JPEG import DiffJPEG
+from utils.commons import create_folder
+# from MVSS.models.mvssnet import get_mvss
+# from MVSS.models.resfcn import ResFCN
+from utils.metrics import PSNR
+
 
 class BaseModel():
     def __init__(self, opt,  args, train_set=None, val_set=None):
-        self.mode_dict = {
-            0: 'generating protected images(val)',
-            1: 'tampering localization on generating protected images(val)',
-            2: 'regular training, including ISP, RAW2RAW and localization(train)',
-            3: 'regular training for ablation(RGB protection), including RAW2RAW and localization (train)',
-            4: 'OSN performance(val)',
-            5: 'train a ISP using restormer for validation(train)',
-            6: 'train resfcn (train)',
-        }
+        ### todo: options
         self.opt = opt
-        self.device = torch.device('cuda' if opt['gpu_ids'] is not None else 'cpu')
         self.is_train = opt['is_train']
         self.schedulers = []
         self.optimizers = []
+
+        self.train_set = train_set
+        self.val_set = val_set
+        self.rank = torch.distributed.get_rank()
+        self.opt = opt
+        self.args = args
+        self.train_opt = opt['train']
+        self.test_opt = opt['test']
+
+        self.task_name = args.task_name
+        print("Task Name: {}".format(self.task_name))
+
+        ### todo: constants
+        self.global_step = 0
+        self.width_height = opt['datasets']['train']['GT_size']
         self.amount_of_tampering = len(
             self.opt['simulated_splicing_indices'] +
             self.opt['simulated_copymove_indices'] +
@@ -92,23 +91,11 @@ class BaseModel():
             self.opt['simulated_AWGN_indices'] +
             self.opt['simulated_pure_JPEG_indices']
         )
-        self.train_set = train_set
-        self.val_set = val_set
-        self.rank = torch.distributed.get_rank()
-        self.opt = opt
-        self.args = args
-        self.train_opt = opt['train']
-        self.test_opt = opt['test']
-
-        self.task_name = args.task_name  # self.opt['datasets']['train']['name']  # self.train_opt['task_name']
-        
-        print("Task Name: {}".format(self.task_name))
-        self.global_step = 0
-
         self.history_attack_loss = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
         self.history_attack_times = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
         self.history_attack_PSNR = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
         self.history_attack_CE = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
+        self.history_attack_data = {"resize": 0, "gblur": 0, "mblur": 0, "AWGN": 0, "JPEG": 0}
         self.history_term_mapping = {
                                         'simulated_resize_indices':'resize',
                                         'simulated_gblur_indices':'gblur',
@@ -120,41 +107,33 @@ class BaseModel():
         for attack_name in self.history_term_mapping:
             for item in self.opt[attack_name]:
                 self.index_to_attack[item] = self.history_term_mapping[attack_name]
-        ####################################################################################################
-        # todo: constants
-        ####################################################################################################
-        self.width_height = opt['datasets']['train']['GT_size']
-        self.kernel_RAW_k0 = torch.tensor([[[1, 0], [0, 0]], [[0, 1], [1, 0]], [[0, 0], [0, 1]]], device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k1 = torch.tensor([[[0, 0], [1, 0]], [[1, 0], [0, 1]], [[0, 1], [0, 0]]], device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k2 = torch.tensor([[[0, 0], [0, 1]], [[0, 1], [1, 0]], [[1, 0], [0, 0]]], device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k3 = torch.tensor([[[0, 1], [0, 0]], [[0, 1], [1, 0]], [[0, 0], [1, 0]]], device="cuda",
-                                          requires_grad=False)
-        expand_times = int(self.width_height // 2)
-        self.kernel_RAW_k0 = self.kernel_RAW_k0.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k1 = self.kernel_RAW_k1.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k2 = self.kernel_RAW_k2.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, 1, expand_times, expand_times)
+
 
         self.IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP']
 
-        ####################################################################################################
-        # todo: TASKS Specification
-        # todo: Why the networks are named like these? because their predecessors are named like these...
-        # todo: in order to reduce modification, we let KD_JPEG=RAW2RAW network, generator=invISP, netG/discrimitator_mask/localizer=three detection networks
-        ####################################################################################################
+        ### todo: network definitions
         self.network_list = []
-        self.default_ISP_networks = ['generator', 'netG', 'qf_predict_network']
-        self.default_RAW_to_RAW_networks = ['KD_JPEG']
-        self.default_detection_networks = ['discriminator_mask']
-        self.default_customized_networks = ['localizer']
+        self.real_H, self.real_H_path, self.previous_images = None, None, None
+        self.previous_previous_images, self.previous_previous_canny = None, None
+        self.previous_protected, self.previous_canny = None, None
 
-        ####################################################################################################
-        # todo: losses and attack layers
-        # todo: JPEG attack rescaling deblurring
-        ####################################################################################################
+        # self.optimizer_G = None
+        # self.optimizer_localizer = None
+        # self.optimizer_discriminator_mask = None
+        # self.optimizer_discriminator = None
+        # self.optimizer_KD_JPEG = None
+        # self.optimizer_generator = None
+        # self.optimizer_qf_predict = None
+        # self.netG = None
+        # self.localizer = None
+        # self.discriminator = None
+        # self.discriminator_mask = None
+        # self.KD_JPEG = None
+        self.global_step = 0
+        self.out_space_storage = ""
+
+
+        ### todo: losses and attack layers
         self.psup = nn.PixelShuffle(upscale_factor=2).cuda()
         self.psdown = nn.PixelUnshuffle(downscale_factor=2).cuda()
         self.tanh = nn.Tanh().cuda()
@@ -166,9 +145,9 @@ class BaseModel():
         self.dropout = Dropout().cuda()
         self.gaussian = Gaussian().cuda()
         self.salt_pepper = SaltPepper(prob=0.01).cuda()
-        self.gaussian_blur = GaussianBlur().cuda()
-        self.median_blur = MiddleBlur().cuda()
-        self.resize = Resize().cuda()
+        self.gaussian_blur = GaussianBlur(opt=self.opt).cuda()
+        self.median_blur = MiddleBlur(opt=self.opt).cuda()
+        self.resize = Resize(opt=self.opt).cuda()
         self.identity = Identity().cuda()
         self.gray_scale_loss = GrayscaleLoss().cuda()
         self.jpeg_simulate = [
@@ -200,31 +179,8 @@ class BaseModel():
         self.init_gaussian = None
         # self.adversarial_loss = AdversarialLoss(type="nsgan").cuda()
 
-        self.real_H, self.real_H_path, self.previous_images = None, None, None
-        self.previous_previous_images, self.previous_previous_canny = None, None
-        self.previous_protected = None
-        self.previous_canny = None
 
-        self.optimizer_G = None
-        self.optimizer_localizer = None
-        self.optimizer_discriminator_mask = None
-        self.optimizer_discriminator = None
-        self.optimizer_KD_JPEG = None
-        self.optimizer_generator = None
-        self.optimizer_qf_predict = None
-        self.netG = None
-        self.localizer = None
-        self.discriminator = None
-        self.discriminator_mask = None
-        self.KD_JPEG = None
-        self.global_step = 0
-        self.updated_step = 0
-        self.out_space_storage = ""
-
-    ####################################################################################################
-    # todo: Abstract Methods
-    # todo: router, etc.
-    ####################################################################################################
+    ### todo: Abstract Methods
 
     def optimize_parameters_router(self, mode, step=None):
         pass
@@ -235,16 +191,22 @@ class BaseModel():
     def feed_data_val_router(self, batch, mode):
         pass
 
-    # def using_invISP(self):
-    #     return self.global_step % 4 == 0
-    # def using_cycleISP(self):
-    #     return self.global_step % 4 == 1
-    # def using_my_own_pipeline(self):
-    #     return self.global_step % 4 == 2
-    ####################################################################################################
-    # todo: Helpers
-    # todo: router, etc.
-    ####################################################################################################
+    def gaussian_batch(self, dims):
+        return self.clamp_with_grad(torch.randn(tuple(dims)).cuda())
+
+    def feed_data(self, data):
+        pass
+
+    def optimize_parameters(self):
+        pass
+
+    def save(self, label):
+        pass
+
+    def load(self):
+        pass
+
+    ### todo: Helper functions
     def exponential_weight_for_backward(self, *, value):
         '''
             exponential loss for recovery loss's weight.
@@ -253,7 +215,11 @@ class BaseModel():
         '''
         return min(1, self.opt['Loss_back_psnr_higher']*((1.2)**(value-33)))
 
-    def update_history_losses(self, *, index, PSNR, loss):
+    def update_history_losses(self, *, index, PSNR, loss, loss_CE, PSNR_attack):
+        '''
+            print loss history so that we can see
+            under which attack the performance is the worst.
+        '''
         if index is None:
             index = self.global_step
         index = index % self.amount_of_benign_attack
@@ -261,15 +227,23 @@ class BaseModel():
         prev_psnr = self.history_attack_PSNR[self.index_to_attack[index]]
         prev_times = self.history_attack_times[self.index_to_attack[index]]
         prev_CE = self.history_attack_CE[self.index_to_attack[index]]
+        prev_attack = self.history_attack_data[self.index_to_attack[index]]
         self.history_attack_loss[self.index_to_attack[index]] = (prev_loss*prev_times + loss)/(prev_times+1)
         self.history_attack_PSNR[self.index_to_attack[index]] = (prev_psnr*prev_times + PSNR)/(prev_times+1)
-        self.history_attack_CE[self.index_to_attack[index]] = (prev_CE * prev_times + loss) / (prev_times + 1)
+        self.history_attack_CE[self.index_to_attack[index]] = (prev_CE * prev_times + loss_CE) / (prev_times + 1)
+        self.history_attack_data[self.index_to_attack[index]] = (prev_attack * prev_times + PSNR_attack) / (prev_times + 1)
         self.history_attack_times[self.index_to_attack[index]] = prev_times + 1
-    ####################################################################################################
-    # todo: definitions
-    # todo: router, etc.
-    ####################################################################################################
 
+    def print_this_image(self, image, filename):
+        '''
+            the input should be sized [C,H,W], not [N,C,H,W]
+        '''
+        camera_ready = image.unsqueeze(0)
+        torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                     filename, nrow=1,
+                                     padding=0, normalize=False)
+
+    ### todo: optimizer
     def create_optimizer(self, net, lr=1e-4, weight_decay=0):
         ## lr should be train_opt['lr_scratch'] in default
         optim_params = []
@@ -286,6 +260,7 @@ class BaseModel():
 
         return optimizer
 
+    ### todo: folders
     def create_folders_for_the_experiment(self):
         create_folder(self.out_space_storage)
         create_folder(self.out_space_storage + "/model")
@@ -295,440 +270,13 @@ class BaseModel():
         create_folder(self.out_space_storage + "/images/" + self.task_name)
         create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
 
-    def define_localizer(self):
-        if self.args.mode in [5.0] or self.opt['test_restormer'] == 2:
-            print("using restormer as testing ISP...")
-            from restormer.model_restormer import Restormer
-            self.localizer = Restormer(dim=16, ).cuda()
-        else:
-            which_model = self.opt['using_which_model_for_test']
-            if 'OSN' in which_model:
-                from ImageForensicsOSN.test import get_model
-                # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
-                # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
-                #                                     find_unused_parameters=True)
-                self.localizer = get_model('/groupshare/ISP_results/models/')
-            elif 'CAT' in which_model:
-                from CATNet.model import get_model
-                self.localizer = get_model()
-            elif 'MVSS' in which_model:
-                model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
-                from MVSS.models.mvssnet import get_mvss
-                self.localizer = get_mvss(
-                    backbone='resnet50',
-                    pretrained_base=True,
-                    nclass=1,
-                    sobel=True,
-                    constrain=True,
-                    n_input=3
-                )
-                ckp = torch.load(model_path, map_location='cpu')
-                self.localizer.load_state_dict(ckp, strict=True)
-                self.localizer = nn.DataParallel(self.localizer).cuda()
-                self.localizer.eval()
-            elif 'Mantra' in which_model:
-                model_path = './MantraNetv4.pt'
-                self.localizer = nn.DataParallel(pre_trained_model(model_path)).cuda()
-                self.localizer.eval()
-            elif 'Resfcn' in which_model:
-                print('resfcn here')
-                from MVSS.models.resfcn import ResFCN
-                discriminator_mask = ResFCN().cuda()
-                checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
-                discriminator_mask.load_state_dict(checkpoint, strict=True)
-                self.localizer = discriminator_mask
-                self.localizer.eval()
-
-    def define_RAW2RAW_network(self):
-        if 'UNet' not in self.task_name:
-            print("using my_own_elastic as KD_JPEG.")
-            n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4 # 36/48 12
-            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.opt['dtcwt_layers'],
-                                          use_norm_conv=False).cuda()
-        else:
-            self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
-                                  use_dwt=False).cuda()
-            # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
-            # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
-        # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
-        self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
-                                               find_unused_parameters=True)
-
-    def define_optimizers(self):
-        wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
-
-        if 'netG' in self.network_list:
-            lr = 'lr_finetune'
-            self.optimizer_G = self.create_optimizer(self.netG,
-                                                     lr=self.train_opt[lr], weight_decay=wd_G)
-            print(f"optimizer netG: {lr}")
-
-        if 'discriminator_mask' in self.network_list:
-            lr = 'lr_scratch'
-            self.optimizer_discriminator_mask = self.create_optimizer(self.discriminator_mask,
-                                                                      lr=self.train_opt[lr],weight_decay=wd_G)
-            print(f"optimizer discriminator_mask: {lr}")
-        if 'localizer' in self.network_list:
-            lr = 'lr_scratch'
-            self.optimizer_localizer = self.create_optimizer(self.localizer,
-                                                             lr=self.train_opt[lr], weight_decay=wd_G)
-            print(f"optimizer localizer: {lr}")
-        if 'KD_JPEG' in self.network_list:
-            self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
-                                                           lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
-        # if 'discriminator' in self.network_list:
-        #     self.optimizer_discriminator = self.create_optimizer(self.discriminator,
-        #                                                          lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
-        if 'generator' in self.network_list:
-            self.optimizer_generator = self.create_optimizer(self.generator,
-                                                             lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
-        if 'qf_predict_network' in self.network_list:
-            self.optimizer_qf = self.create_optimizer(self.qf_predict_network,
-                                                      lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
-
-    def define_ISP_network_training(self):
-        self.generator = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
-                                                         ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
-        self.generator = DistributedDataParallel(self.generator, device_ids=[torch.cuda.current_device()],
-                                                 find_unused_parameters=True)
-
-        self.qf_predict_network = UNetDiscriminator(in_channels=3, out_channels=3, use_SRM=False).cuda()
-        self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
-                                                          device_ids=[torch.cuda.current_device()],
-                                                          find_unused_parameters=True)
-
-        self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
-        self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
-                                            find_unused_parameters=True)
-
-    def define_tampering_localization_network(self):
-        if self.args.mode==6:
-            from MVSS.models.mvssnet import get_mvss
-            from MVSS.models.resfcn import ResFCN
-            from MantraNet.mantranet import MantraNet
-            print("Building ResFCN...........please wait...")
-            self.discriminator_mask = ResFCN().cuda()
-        elif 'UNet' not in self.task_name:
-            print("using my_own_elastic as discriminator_mask.")
-            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
-                                                     use_norm_conv=True).cuda()
-        else:
-            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
-                                             style_control=False, use_dwt=False, use_norm_conv=True).cuda()
-            # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
-        self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
-                                                          device_ids=[torch.cuda.current_device()],
-                                                          find_unused_parameters=True)
-
-    ####################################################################################################
-    # todo: using which tampering attacks during training? (also could be specified during inference)
-    ####################################################################################################
-    def using_simulated_inpainting(self):
-        return self.global_step % 9 in self.opt['simulated_inpainting_indices']
-    def using_splicing(self):
-        return self.global_step % 9 in self.opt['simulated_splicing_indices']
-    def using_copy_move(self):
-        return self.global_step % 9 in self.opt['simulated_copymove_indices']
-
-    ####################################################################################################
-    # todo: using which image processing attacks?
-    ####################################################################################################
-    def using_weak_jpeg_plus_blurring_etc(self, *,  index):
-        return index % 8 in {0,1,2,4,6,7}
-
-    def begin_using_momentum(self):
-        return False #self.global_step>=0
-
-    ####################################################################################################
-    # todo: settings for beginning training
-    ####################################################################################################
-    def data_augmentation_on_rendered_rgb(self, modified_input, index=None):
-        if index is None:
-            index = self.global_step % 7
-
-        is_stronger = np.random.rand() > 0.5
-        if index % 4 in [0]:
-            ## careful!
-            strength = np.random.rand() * (0.2 if is_stronger>0 else -0.2)
-            modified_adjusted = F.adjust_hue(modified_input, hue_factor=0+strength)  # 0.5 ave
-        elif index % 4 in [1,4]:
-            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
-            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1+strength)  # 1 ave
-        # elif self.global_step%5==2:
-        ## not applicable
-        # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
-        elif index % 4 in [2,5]:
-            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
-            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1+strength)
-        elif index % 4 in [3,6]:
-            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
-            modified_adjusted = F.adjust_brightness(modified_input,
-                                                    brightness_factor=1+strength)  # 1 ave
-        modified_adjusted = self.clamp_with_grad(modified_adjusted)
-
-        return modified_adjusted #modified_input + (modified_adjusted - modified_input).detach()
-
-    def gamma_correction(self, tensor, avg=4095, digit=2.2):
-    ## gamma correction
-    #             norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
-    #             input_raw_img = np.power(input_raw_img, 1 / 2.2)
-        norm = math.pow(avg, 1 / digit)
-        tensor = torch.pow(tensor*avg, 1/digit)
-        tensor = tensor / norm
-
-        return tensor
-
-    def do_aug_train(self, *, attacked_forward):
-        skip_augment = np.random.rand() > 0.85
-        if not skip_augment and self.opt["conduct_augmentation"]:
-            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
-        else:
-            attacked_adjusted = attacked_forward
-
-        return attacked_adjusted
-
-    def do_postprocess_train(self, *, attacked_adjusted):
-        skip_robust = np.random.rand() > 0.85
-        if not skip_robust and self.opt["consider_robost"]:
-            if self.using_weak_jpeg_plus_blurring_etc(index=self.global_step):
-                quality_idx = np.random.randint(20, 21)
-            else:
-                quality_idx = np.random.randint(10, 20)
-            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted,
-                                                 quality_idx=quality_idx)
-        else:
-            attacked_image = attacked_adjusted
-
-        return attacked_image
-
-    ####################################################################################################
-    # todo:  Method specification
-    # todo: RAW2RAW, baseline, ISP generation, localization
-    ####################################################################################################
-    def baseline_generate_protected_rgb(self, *, gt_rgb):
-        return gt_rgb + self.KD_JPEG(gt_rgb)
-
-    def RAW_protection_by_my_own_elastic(self,*,input_raw_one_dim):
-        input_psdown = self.psdown(input_raw_one_dim)
-        modified_psdown = input_psdown + self.KD_JPEG(input_psdown)
-        modified_raw_one_dim = self.psup(modified_psdown)
-        return modified_raw_one_dim
-
-    def render_image_using_ISP(self, *, input_raw, input_raw_one_dim, gt_rgb,
-                                     file_name, camera_name
-                                     ):
-        ### gt_rgb is only loaded to read tensor size
-
-        ### three networks used during training
-        if self.opt['test_restormer'] == 0:
-            self.generator.eval()
-            self.qf_predict_network.eval()
-            self.netG.eval()
-            if self.global_step % 3 == 0:
-                isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
-            elif self.global_step % 3 == 1:
-                isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
-            else:  # if self.global_step%3==2:
-                isp_model_0, isp_model_1 = self.netG, self.generator
-
-            #### invISP AS SUBSEQUENT ISP####
-            modified_input_0 = isp_model_0(input_raw)
-            if self.opt['use_gamma_correction']:
-                modified_input_0 = self.gamma_correction(modified_input_0)
-            modified_input_0 = self.clamp_with_grad(modified_input_0)
-
-            modified_input_1 = isp_model_1(input_raw)
-            if self.opt['use_gamma_correction']:
-                modified_input_1 = self.gamma_correction(modified_input_1)
-            modified_input_1 = self.clamp_with_grad(modified_input_1)
-
-            skip_the_second = np.random.rand() > 0.8
-            alpha_0 = 1.0 if skip_the_second else np.random.rand()
-            alpha_1 = 1 - alpha_0
-            non_tampered_image = alpha_0 * modified_input_0
-            non_tampered_image += alpha_1 * modified_input_1
-
-        ### conventional ISP
-        elif self.opt['test_restormer'] == 1:
-            from data.pipeline import isp_tensor2image, pipeline_tensor2image, rawpy_tensor2image
-            non_tampered_image = torch.zeros_like(gt_rgb)
-            for idx_pipeline in range(gt_rgb.shape[0]):
-                # [B C H W]->[H,W]
-                raw_1 = input_raw_one_dim[idx_pipeline]
-                # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
-                #                                   output_stage='gamma')
-                numpy_rgb = rawpy_tensor2image(raw_image=raw_1, template=file_name[idx_pipeline],
-                                             camera_name=camera_name[idx_pipeline], patch_size=512) / 255
-
-                non_tampered_image[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
-                    np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-
-            # non_tampered_image = torch.zeros_like(gt_rgb)
-            # for idx_pipeline in range(gt_rgb.shape[0]):
-            #     metadata = self.val_set.metadata_list[file_name[idx_pipeline]]
-            #     flip_val = metadata['flip_val']
-            #     metadata = metadata['metadata']
-            #     # 在metadata中加入要用的flip_val和camera_name
-            #     metadata['flip_val'] = flip_val
-            #     metadata['camera_name'] = camera_name
-            #     # [B C H W]->[H,W]
-            #     raw_1 = input_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
-            #     # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
-            #     #                                   output_stage='gamma')
-            #     numpy_rgb = isp_tensor2image(raw_image=raw_1, metadata=None, file_name=file_name[idx_pipeline],
-            #                                  camera_name=camera_name[idx_pipeline])
-            #
-            #     non_tampered_image[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
-            #         np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-        ### restormer
-        elif self.opt['test_restormer'] == 2:
-            self.localizer.eval()
-            non_tampered_image = self.localizer(input_raw)
-
-        else:
-            # print('here')
-            non_tampered_image = gt_rgb
-
-        # non_tampered_image = gt_rgb
-        return non_tampered_image
-
-    def ISP_image_generation_general(self, *, network, input_raw, target):
-        modified_input_generator = network(input_raw)
-        ISP_L1_FOR = self.l1_loss(input=modified_input_generator, target=target)
-        # ISP_SSIM = - self.ssim_loss(modified_input_generator, gt_rgb)
-        modified_input_generator = self.clamp_with_grad(modified_input_generator)
-        if self.opt['use_gamma_correction']:
-            modified_input_generator = self.gamma_correction(modified_input_generator)
-
-        ISP_loss = ISP_L1_FOR
-
-        return modified_input_generator, ISP_loss
-
-    def standard_attack_layer(self, *, modified_input, gt_rgb, idx_clip, num_per_clip, tamper_index=None):
-        ####################################################################################################
-        # todo: cropping
-        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
-        ####################################################################################################
-
-        # if self.opt['conduct_cropping']:
-        #     locs, cropped, scaled_cropped = self.cropping_mask_generation(
-        #         forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
-        #     h_start, h_end, w_start, w_end = locs
-        #     _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
-        # else:
-        #     scaled_cropped = modified_input
-        #     tamper_source_cropped = tamper_source
-
-        ####################################################################################################
-        # todo: TAMPERING
-        # todo: including using_simulated_inpainting copy-move and splicing
-        ####################################################################################################
-        percent_range = (0.05, 0.2) if self.using_copy_move() else (0.05, 0.25)
-        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=percent_range)
-
-        # attacked_forward = tamper_source_cropped
-        attacked_forward, masks, masks_GT = self.tampering(
-            forward_image=gt_rgb, masks=masks, masks_GT=masks_GT,
-            modified_input=modified_input, percent_range=percent_range,
-            idx_clip=idx_clip, num_per_clip=num_per_clip, index=tamper_index
-        )
-
-        ####################################################################################################
-        # todo: white-balance, gamma, tone mapping, etc.
-        # todo:
-        ####################################################################################################
-        # # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000],
-        # white_balance_again_red = 0.7+0.6*torch.rand((batch_size,1)).cuda()
-        # white_balance_again_green = torch.ones((batch_size, 1)).cuda()
-        # white_balance_again_blue = 0.7+0.6* torch.rand((batch_size, 1)).cuda()
-        # white_balance_again = torch.cat((white_balance_again_red,white_balance_again_green,white_balance_again_blue),dim=1).unsqueeze(2).unsqueeze(3)
-        # modified_wb = white_balance_again * modified_input
-        # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
-        skip_augment = np.random.rand() > 0.85
-        if not skip_augment and self.opt['conduct_augmentation']:
-            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
-        else:
-            attacked_adjusted = attacked_forward
-
-        ####################################################################################################
-        # todo: Benign attacks
-        # todo: including JPEG compression Gaussian Blurring, Median blurring and resizing
-        ####################################################################################################
-        skip_robust = np.random.rand() > 0.85
-        if not skip_robust and self.opt['consider_robost']:
-            if self.using_weak_jpeg_plus_blurring_etc(index=self.global_step):
-                quality_idx = np.random.randint(18, 21)
-            else:
-                quality_idx = np.random.randint(10, 19)
-            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted,
-                                                 quality_idx=quality_idx)
-        else:
-            attacked_image = attacked_adjusted
-
-        return attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT
-
-    ####################################################################################################
-    # todo:  Momentum update of the key encoder
-    # todo: param_k: momentum
-    ####################################################################################################
-    @torch.no_grad()
-    def _momentum_update_key_encoder(self, momentum=0.9):
-
-
-        for param_q, param_k in zip(self.discriminator_mask.parameters(), self.discriminator.parameters()):
-            param_k.data = param_k.data * momentum + param_q.data * (1. - momentum)
-
-    def visualize_raw(self, raw_to_raw_tensor, bayer_pattern, white_balance=None, eval=False):
-        batch_size, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[2]
-        # 两个相机都是RGGB
-        # im = np.expand_dims(raw, axis=2)
-        # if self.kernel_RAW_k0.ndim!=4:
-        #     self.kernel_RAW_k0 = self.kernel_RAW_k0.unsqueeze(0).repeat(batch_size,1,1,1)
-        #     self.kernel_RAW_k1 = self.kernel_RAW_k1.unsqueeze(0).repeat(batch_size, 1, 1, 1)
-        #     self.kernel_RAW_k2 = self.kernel_RAW_k2.unsqueeze(0).repeat(batch_size, 1, 1, 1)
-        #     self.kernel_RAW_k3 = self.kernel_RAW_k3.unsqueeze(0).repeat(batch_size, 1, 1, 1)
-        #     print(f"visualize_raw is inited. Current shape {self.kernel_RAW_k0.shape}")
-        out_tensor = None
-        for idx in range(batch_size):
-
-            used_kernel = getattr(self, f"kernel_RAW_k{bayer_pattern[idx]}")
-            v_im = raw_to_raw_tensor[idx:idx+1].repeat(1,3,1,1) * used_kernel
-
-            if white_balance is not None:
-                # v_im (1,3,512,512) white_balance (1,3)
-                # print(white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3).shape)
-                # print(v_im.shape)
-                v_im = v_im * white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3)
-
-            out_tensor = v_im if out_tensor is None else torch.cat((out_tensor, v_im), dim=0)
-
-        return out_tensor.float() #.half() if not eval else out_tensor
-
-    def pack_raw(self, raw_to_raw_tensor):
-        # 两个相机都是RGGB
-        batch_size, num_channels, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[1], raw_to_raw_tensor.shape[2]
-
-        H, W = raw_to_raw_tensor.shape[2], raw_to_raw_tensor.shape[3]
-        R = raw_to_raw_tensor[:,:, 0:H:2, 0:W:2]
-        Gr = raw_to_raw_tensor[:,:, 0:H:2, 1:W:2]
-        Gb = raw_to_raw_tensor[:,:, 1:H:2, 0:W:2]
-        B = raw_to_raw_tensor[:,:, 1:H:2, 1:W:2]
-        G_avg = (Gr + Gb) / 2
-        out = torch.cat((R, G_avg, B), dim=1)
-        print(out.shape)
-        out = Functional.interpolate(
-            out,
-            size=[height_width, height_width],
-            mode='bilinear')
-        return out
-
+    ### todo: cropping attack
     def cropping_mask_generation(self, forward_image, locs=None, min_rate=0.6, max_rate=1.0):
-        ####################################################################################################
-        # todo: cropping
-        # todo: cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
-        ####################################################################################################
         # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         # masks_GT = torch.ones_like(self.canny_image)
+        '''
+            if locs is specified, the cropped mask is determined
+        '''
 
         self.height_ratio = min_rate + (max_rate - min_rate) * np.random.rand()
         self.width_ratio = min_rate + (max_rate - min_rate) * np.random.rand()
@@ -755,14 +303,22 @@ class BaseModel():
 
         return (h_start, h_end, w_start, w_end), cropped, scaled_cropped #, masks, masks_GT
 
-
-    def print_this_image(self, image, filename):
-        camera_ready = image.unsqueeze(0)
-        torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                     filename, nrow=1,
-                                     padding=0, normalize=False)
+    def get_quality_idx_by_iteration(self, *, index=None):
+        if index is None:
+            index = self.global_step
+        if index % self.amount_of_benign_attack not in set(
+                self.opt['simulated_pure_JPEG_indices']
+        ):
+            ## perform weak JPEG compression after other attacks
+            quality_idx = np.random.randint(self.opt["weak_JPEG_lower_bound"], 21)
+        else:
+            quality_idx = np.random.randint(self.opt["strong_JPEG_lower_bound"], self.opt["strong_JPEG_upper_bound"])
+        return quality_idx
 
     def mask_generation(self, *, modified_input, percent_range=None, index=None):
+        '''
+            generate free-form mask. percent can be determined.
+        '''
         if index is None:
             index = self.global_step
         index = index % self.amount_of_tampering
@@ -784,12 +340,22 @@ class BaseModel():
         return masks, masks_GT, percent_range
 
 
-    def benign_attacks(self, attacked_forward, quality_idx, kernel_size, resize_ratio, index=None):
+    def benign_attacks(self, *, attacked_forward, quality_idx, kernel_size=None, resize_ratio=None, index=None):
+        '''
+            contains both simulation and real-world attack
+            we restrict the lower bound of PSNR by attack, can be modified in setting.
+        '''
         batch_size, height_width = attacked_forward.shape[0], attacked_forward.shape[2]
         attacked_real_jpeg = torch.empty_like(attacked_forward).cuda()
         if index is None:
             index = self.global_step
         index = index % self.amount_of_benign_attack
+        if kernel_size is None:
+            kernel_size = random.choice([3, 5, 7])  # 3,5,7
+        if resize_ratio is None:
+            resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
+                        int(self.random_float(0.7, 1.5) * self.width_height))
+
 
         ## id of weak JPEG: 0,1,2,4,6,7
         if index in self.opt['simulated_resize_indices']:
@@ -820,7 +386,7 @@ class BaseModel():
             jpeg_layer_after_blurring = self.jpeg_simulate[q_index - 10][0] if quality < 100 else self.identity
             jpeg_result = jpeg_layer_after_blurring(processed_image)
             psnr = self.psnr(self.postprocess(jpeg_result), self.postprocess(processed_image)).item()
-            if psnr>=28:
+            if psnr>=self.opt['minimum_PSNR_caused_by_attack']:
                 break
         attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_result)
 
@@ -843,6 +409,9 @@ class BaseModel():
 
     def benign_attacks_without_simulation(self, *, forward_image, quality_idx, kernel_size,
                                                          resize_ratio, index=None):
+        '''
+            real-world attack, whose setting should be fed.
+        '''
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
         attacked_real_jpeg = torch.empty_like(forward_image).cuda()
 
@@ -859,6 +428,9 @@ class BaseModel():
 
     def real_world_attacking_on_ndarray(self, *,  grid, qf_after_blur, kernel, resize_ratio, index=None):
         # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
+        '''
+            real-world attack (CV2)
+        '''
         if index is None:
             index = self.global_step
         index = index % self.amount_of_benign_attack
@@ -882,7 +454,7 @@ class BaseModel():
             realworld_attack = cv2.medianBlur(ndarr, kernel) if kernel > 0 else ndarr
 
         elif index in self.opt['simulated_AWGN_indices']:
-            mean, sigma = 0, 0.5
+            mean, sigma = 0, 1.0
             gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
             # 给图片添加高斯噪声
             realworld_attack = ndarr + gauss
@@ -920,7 +492,7 @@ class BaseModel():
         realworld_attack = realworld_attack.unsqueeze(0).cuda()
         return realworld_attack
 
-
+    ### todo: trivial stuffs
     def is_image_file(self, filename):
         return any(filename.endswith(extension) for extension in self.IMG_EXTENSIONS)
 
@@ -934,7 +506,9 @@ class BaseModel():
         return np.random.rand() * (max - min) + min
 
     def get_paths_from_images(self, path):
-        '''get image path list from image folder'''
+        '''
+            get image path list from image folder
+        '''
         assert os.path.isdir(path), '{:s} is not a valid directory'.format(path)
         images = []
         for dirpath, _, fnames in sorted(os.walk(path)):
@@ -1011,35 +585,9 @@ class BaseModel():
         img_t = F.to_tensor(np.asarray(img)).float()
         return img_t
 
-
-
     def clamp_with_grad(self, tensor):
         tensor_clamp = torch.clamp(tensor, 0, 1)
         return tensor + (tensor_clamp - tensor).clone().detach()
-
-    def gaussian_batch(self, dims):
-        return self.clamp_with_grad(torch.randn(tuple(dims)).cuda())
-
-    def feed_data(self, data):
-        pass
-
-    def optimize_parameters(self):
-        pass
-
-    def get_current_visuals(self):
-        pass
-
-    def get_current_losses(self):
-        pass
-
-    def print_network(self):
-        pass
-
-    def save(self, label):
-        pass
-
-    def load(self):
-        pass
 
     def _set_lr(self, lr_groups_l):
         ''' set learning rate for warmup,
@@ -1111,56 +659,56 @@ class BaseModel():
                 load_net_clean[k] = v
         network.load_state_dict(load_net_clean, strict=strict)
 
-    def save_training_state(self, epoch, iter_step, model_path, network_list):
-        '''Saves training state during training, which will be used for resuming'''
-        state = {'epoch': epoch, 'iter': iter_step, 'schedulers': [], 'optimizers': []}
-        if 'localizer' in network_list:
-            state['optimizer_localizer'] = self.optimizer_localizer.state_dict()
-        if 'discriminator_mask' in network_list:
-            state['optimizer_discriminator_mask'] = self.optimizer_discriminator_mask.state_dict()
+    # def save_training_state(self, epoch, iter_step, model_path, network_list):
+    #     '''Saves training state during training, which will be used for resuming'''
+    #     state = {'epoch': epoch, 'iter': iter_step, 'schedulers': [], 'optimizers': []}
+    #     if 'localizer' in network_list:
+    #         state['optimizer_localizer'] = self.optimizer_localizer.state_dict()
+    #     if 'discriminator_mask' in network_list:
+    #         state['optimizer_discriminator_mask'] = self.optimizer_discriminator_mask.state_dict()
+    #
+    #     if 'discriminator' in network_list:
+    #         state['optimizer_discriminator'] = self.optimizer_discriminator.state_dict()
+    #
+    #     if 'netG' in network_list:
+    #         state['optimizer_G'] = self.optimizer_G.state_dict()
+    #         state['clock'] = self.netG.module.clock
+    #
+    #     if 'generator' in network_list:
+    #         state['optimizer_generator'] = self.optimizer_generator.state_dict()
+    #     if 'KD_JPEG' in network_list:
+    #         state['optimizer_KD_JPEG'] = self.optimizer_KD_JPEG.state_dict()
+    #     if 'qf_predict' in network_list:
+    #         state['optimizer_qf_predict'] = self.optimizer_qf_predict.state_dict()
+    #     # for s in self.schedulers:
+    #     #     state['schedulers'].append(s.state_dict())
+    #     # for o in self.optimizers:
+    #     #     state['optimizers'].append(o.state_dict())
+    #
+    #     save_filename = '{}.state'.format(iter_step)
+    #     save_path = os.path.join(model_path , save_filename)
+    #     print("State saved to: {}".format(save_path))
+    #     torch.save(state, save_path)
 
-        if 'discriminator' in network_list:
-            state['optimizer_discriminator'] = self.optimizer_discriminator.state_dict()
-
-        if 'netG' in network_list:
-            state['optimizer_G'] = self.optimizer_G.state_dict()
-            state['clock'] = self.netG.module.clock
-
-        if 'generator' in network_list:
-            state['optimizer_generator'] = self.optimizer_generator.state_dict()
-        if 'KD_JPEG' in network_list:
-            state['optimizer_KD_JPEG'] = self.optimizer_KD_JPEG.state_dict()
-        if 'qf_predict' in network_list:
-            state['optimizer_qf_predict'] = self.optimizer_qf_predict.state_dict()
-        # for s in self.schedulers:
-        #     state['schedulers'].append(s.state_dict())
-        # for o in self.optimizers:
-        #     state['optimizers'].append(o.state_dict())
-
-        save_filename = '{}.state'.format(iter_step)
-        save_path = os.path.join(model_path , save_filename)
-        print("State saved to: {}".format(save_path))
-        torch.save(state, save_path)
-
-    def resume_training(self, state_path, network_list):
-        resume_state = torch.load(state_path)
-        if 'clock' in resume_state and 'netG' in network_list:
-            self.localizer.module.clock = resume_state['clock']
-        ##  Resume the optimizers and schedulers for training
-        if 'optimizer_G' in resume_state and 'netG' in network_list:
-            self.optimizer_G.load_state_dict(resume_state['optimizer_G'])
-        if 'optimizer_localizer' in resume_state and 'localizer' in network_list:
-            self.optimizer_localizer.load_state_dict(resume_state['optimizer_localizer'])
-        if 'optimizer_discriminator_mask' in resume_state and 'discriminator_mask' in network_list:
-            self.optimizer_discriminator_mask.load_state_dict(resume_state['optimizer_discriminator_mask'])
-        if 'optimizer_discriminator' in resume_state and 'discriminator' in network_list:
-            self.optimizer_discriminator.load_state_dict(resume_state['optimizer_discriminator'])
-        if 'optimizer_qf_predict' in resume_state and 'qf_predict' in network_list:
-            self.optimizer_qf_predict.load_state_dict(resume_state['optimizer_qf_predict'])
-        if 'optimizer_generator' in resume_state and 'generator' in network_list:
-            self.optimizer_generator.load_state_dict(resume_state['optimizer_generator'])
-        if 'optimizer_KD_JPEG' in resume_state and 'KD_JPEG' in network_list:
-            self.optimizer_KD_JPEG.load_state_dict(resume_state['optimizer_KD_JPEG'])
+    # def resume_training(self, state_path, network_list):
+    #     resume_state = torch.load(state_path)
+    #     if 'clock' in resume_state and 'netG' in network_list:
+    #         self.localizer.module.clock = resume_state['clock']
+    #     ##  Resume the optimizers and schedulers for training
+    #     if 'optimizer_G' in resume_state and 'netG' in network_list:
+    #         self.optimizer_G.load_state_dict(resume_state['optimizer_G'])
+    #     if 'optimizer_localizer' in resume_state and 'localizer' in network_list:
+    #         self.optimizer_localizer.load_state_dict(resume_state['optimizer_localizer'])
+    #     if 'optimizer_discriminator_mask' in resume_state and 'discriminator_mask' in network_list:
+    #         self.optimizer_discriminator_mask.load_state_dict(resume_state['optimizer_discriminator_mask'])
+    #     if 'optimizer_discriminator' in resume_state and 'discriminator' in network_list:
+    #         self.optimizer_discriminator.load_state_dict(resume_state['optimizer_discriminator'])
+    #     if 'optimizer_qf_predict' in resume_state and 'qf_predict' in network_list:
+    #         self.optimizer_qf_predict.load_state_dict(resume_state['optimizer_qf_predict'])
+    #     if 'optimizer_generator' in resume_state and 'generator' in network_list:
+    #         self.optimizer_generator.load_state_dict(resume_state['optimizer_generator'])
+    #     if 'optimizer_KD_JPEG' in resume_state and 'KD_JPEG' in network_list:
+    #         self.optimizer_KD_JPEG.load_state_dict(resume_state['optimizer_KD_JPEG'])
 
         # resume_optimizers = resume_state['optimizers']
         # resume_schedulers = resume_state['schedulers']
@@ -1250,8 +798,6 @@ class BaseModel():
 
         return height_start, height_start + remaining_height, width_start, width_start + remaining_width, r_float_height * r_float_width
 
-    def random_float(self, min, max):
-        return np.random.rand() * (max - min) + min
 
     def metric_single_image(self, get_auc, thresh, test_images):
         predicted_binary, gt_image = test_images
@@ -1388,11 +934,6 @@ if __name__ == '__main__':
     # our_f1 = getF1(TP, FP, FN)
     # print(our_f1)
 
-
-####################################################################################################
-# todo: Load models according to the specific mode
-# todo:
-####################################################################################################
 # if 'localizer' in self.network_list:
 #     ####################################################################################################
 #     # todo: (Deprecated!!!!) Image Manipulation Detection Network (Downstream task) will be loaded

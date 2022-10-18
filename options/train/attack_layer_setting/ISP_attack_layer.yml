@@ -14,17 +14,22 @@ simulated_mblur_indices: [2]
 simulated_AWGN_indices: [1]
 simulated_pure_JPEG_indices: [3,4,7]
 
-CE_psnr_less: !!float 2e-5
-CE_psnr_higher: !!float 1e-4
+simulated_hue: [0]
+simulated_contrast: [1,4]
+simulated_saturation: [2,5]
+simulated_brightness: [3,6]
 
-#Loss_back_psnr_less: 0.2 # ori: 0.15
-Loss_back_psnr_higher: 0.333 # ori: 0.25
-Null_loss: 2
-Loss_forward: 1
-
-skip_attack_probability: 0.85
-GAN_weight: 0.01
-GAN_update_period: 5
-skip_aug_probability: 0.66
-psnr_thresh: 33
+#CE_psnr_less: !!float 2e-5
+#CE_psnr_higher: !!float 1e-4
+#
+##Loss_back_psnr_less: 0.2 # ori: 0.15
+#Loss_back_psnr_higher: 0.333 # ori: 0.25
+#Null_loss: 2
+#Loss_forward: 1
+#
+#skip_attack_probability: 0.85
+#GAN_weight: 0.01
+#GAN_update_period: 5
+#skip_aug_probability: 0.66
+#psnr_thresh: 33
 minimum_PSNR_caused_by_attack: 25

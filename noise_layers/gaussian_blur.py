@@ -8,12 +8,13 @@ class GaussianBlur(nn.Module):
     '''
     Adds random noise to a tensor.'''
 
-    def __init__(self, kernel_size=5):
+    def __init__(self, kernel_size=5, opt=None):
         super(GaussianBlur, self).__init__()
         # self.device = config.device
         # self.kernel_size = kernel_size
         self.psnr = PSNR(255.0).cuda()
         self.name = "G_Blur"
+        self.psnr_thresh = 28 if opt is None else opt['minimum_PSNR_caused_by_attack']
 
     def get_gaussian_kernel(self, kernel_size=5, sigma=2, channels=3):
         # kernel_size = self.kernel_size
@@ -53,16 +54,16 @@ class GaussianBlur(nn.Module):
 
     def forward(self, tensor, kernel_size=5):
         self.name = "GaussianBlur"
-        result = tensor
+        blur_result = tensor
         for kernel in [3,5,7]:
             gaussian_layer = self.get_gaussian_kernel(kernel).cuda()
             blur_result = gaussian_layer(tensor)
             psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()
-            if psnr>=28:
+            if psnr>=self.psnr_thresh:
                 return blur_result, kernel
         ## if none of the above satisfy psnr>30, we abandon the attack
         # print("abandoned gaussian blur, we cannot find a suitable kernel that satisfy PSNR>=25")
-        return result, 0
+        return tensor, 0
 
     def postprocess(self, img):
         # [0, 1] => [0, 255]
