@@ -18,7 +18,7 @@ class MiddleBlur(nn.Module):
 		for idx, kernel in enumerate([3, 5, 7]):
 			blur_result = self.middle_filters[idx](tensor)
 			psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()
-			if psnr >= 30:
+			if psnr >= 28:
 				return blur_result, kernel
 		## if none of the above satisfy psnr>30, we abandon the attack
 		# print("abandoned median blur, we cannot find a suitable kernel that satisfy PSNR>=25")

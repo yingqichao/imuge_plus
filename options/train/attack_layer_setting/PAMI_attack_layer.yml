@@ -1,10 +1,10 @@
 #### indices
-simulated_inpainting_indices: [1,4,7]
-simulated_splicing_indices: [0,3,6]
+simulated_inpainting_indices: [1,7]
+simulated_splicing_indices: [0,3]
 simulated_copymove_indices: [2,5,8]
-simulated_copysplicing_indices: []
+simulated_copysplicing_indices: [4,6]
 
-weak_JPEG_lower_bound: 20
+weak_JPEG_lower_bound: 18
 strong_JPEG_upper_bound: 19
 strong_JPEG_lower_bound: 10
 
@@ -17,8 +17,8 @@ simulated_pure_JPEG_indices: [3,4,7]
 CE_psnr_less: !!float 2e-5
 CE_psnr_higher: !!float 1e-4
 
-Loss_back_psnr_less: 0.15
-Loss_back_psnr_higher: 0.25
+#Loss_back_psnr_less: 0.2 # ori: 0.15
+Loss_back_psnr_higher: 0.333 # ori: 0.25
 Null_loss: 2
 Loss_forward: 1
 

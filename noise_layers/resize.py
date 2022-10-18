@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import torch
+from utils.metrics import PSNR
 
 def random_float(min, max):
     """
@@ -19,7 +20,7 @@ class Resize(nn.Module):
     def __init__(self, resize_ratio_range=(0.5,1.5), interpolation_method='bilinear'):
         super(Resize, self).__init__()
         self.name = "Resize"
-
+        self.psnr = PSNR(255.0).cuda()
         self.resize_ratio_min = resize_ratio_range[0]
         self.resize_ratio_max = resize_ratio_range[1]
         self.interpolation_method = interpolation_method
@@ -36,21 +37,37 @@ class Resize(nn.Module):
         else:
             newWidth, newHeight = resize_ratio
 
-        out = F.interpolate(
-                                    noised_image,
-                                    size=[newWidth, newHeight],
-                                    mode=self.interpolation_method).contiguous()
+        while True:
 
-        recover = F.interpolate(
-                                    out,
-                                    size=[original_width, original_height],
-                                    # scale_factor=(1/resize_ratio, 1/resize_ratio),
-                                    mode=self.interpolation_method).contiguous()
-        # resize_back = F.interpolate(
-        #     noised_image,
-        #     size=[original_width, original_height],
-        #     recompute_scale_factor=True,
-        #     mode='nearest')
-        recover = torch.clamp(recover, 0, 1)
+            out = F.interpolate(
+                                        noised_image,
+                                        size=[newWidth, newHeight],
+                                        mode=self.interpolation_method).contiguous()
 
-        return recover
+            recover = F.interpolate(
+                                        out,
+                                        size=[original_width, original_height],
+                                        # scale_factor=(1/resize_ratio, 1/resize_ratio),
+                                        mode=self.interpolation_method).contiguous()
+
+            # resize_back = F.interpolate(
+            #     noised_image,
+            #     size=[original_width, original_height],
+            #     recompute_scale_factor=True,
+            #     mode='nearest')
+            recover = torch.clamp(recover, 0, 1)
+            psnr = self.psnr(self.postprocess(recover), self.postprocess(noised_image)).item()
+            if psnr>=28:
+                break
+            else:
+                resize_ratio = (int(random_float(0.7, 1.5) * original_width),
+                                int(random_float(0.7, 1.5) * original_width))
+                newWidth, newHeight = resize_ratio
+
+        return recover, resize_ratio
+
+    def postprocess(self, img):
+        # [0, 1] => [0, 255]
+        img = img * 255.0
+        img = img.permute(0, 2, 3, 1)
+        return img.int()

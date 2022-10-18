@@ -5,7 +5,8 @@ import torch
 from utils.metrics import PSNR
 import math
 class GaussianBlur(nn.Module):
-    '''Adds random noise to a tensor.'''
+    '''
+    Adds random noise to a tensor.'''
 
     def __init__(self, kernel_size=5):
         super(GaussianBlur, self).__init__()
@@ -57,7 +58,7 @@ class GaussianBlur(nn.Module):
             gaussian_layer = self.get_gaussian_kernel(kernel).cuda()
             blur_result = gaussian_layer(tensor)
             psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()
-            if psnr>=30:
+            if psnr>=28:
                 return blur_result, kernel
         ## if none of the above satisfy psnr>30, we abandon the attack
         # print("abandoned gaussian blur, we cannot find a suitable kernel that satisfy PSNR>=25")

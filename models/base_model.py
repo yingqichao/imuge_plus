@@ -105,6 +105,21 @@ class BaseModel():
         print("Task Name: {}".format(self.task_name))
         self.global_step = 0
 
+        self.history_attack_loss = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
+        self.history_attack_times = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
+        self.history_attack_PSNR = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
+        self.history_attack_CE = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
+        self.history_term_mapping = {
+                                        'simulated_resize_indices':'resize',
+                                        'simulated_gblur_indices':'gblur',
+                                        'simulated_mblur_indices':'mblur',
+                                        'simulated_AWGN_indices':'AWGN',
+                                        'simulated_pure_JPEG_indices':'JPEG'
+        }
+        self.index_to_attack = {}
+        for attack_name in self.history_term_mapping:
+            for item in self.opt[attack_name]:
+                self.index_to_attack[item] = self.history_term_mapping[attack_name]
         ####################################################################################################
         # todo: constants
         ####################################################################################################
@@ -185,7 +200,8 @@ class BaseModel():
         self.init_gaussian = None
         # self.adversarial_loss = AdversarialLoss(type="nsgan").cuda()
 
-        self.real_H, self.real_H_path, self.previous_images, self.previous_previous_images = None, None, None, None
+        self.real_H, self.real_H_path, self.previous_images = None, None, None
+        self.previous_previous_images, self.previous_previous_canny = None, None
         self.previous_protected = None
         self.previous_canny = None
 
@@ -225,6 +241,34 @@ class BaseModel():
     #     return self.global_step % 4 == 1
     # def using_my_own_pipeline(self):
     #     return self.global_step % 4 == 2
+    ####################################################################################################
+    # todo: Helpers
+    # todo: router, etc.
+    ####################################################################################################
+    def exponential_weight_for_backward(self, *, value):
+        '''
+            exponential loss for recovery loss's weight.
+            PSNR  29     30     31     32     33(base)   34     35
+            Weigh 0.161  0.192  0.231  0.277  0.333      0.400  0.500
+        '''
+        return min(1, self.opt['Loss_back_psnr_higher']*((1.2)**(value-33)))
+
+    def update_history_losses(self, *, index, PSNR, loss):
+        if index is None:
+            index = self.global_step
+        index = index % self.amount_of_benign_attack
+        prev_loss = self.history_attack_loss[self.index_to_attack[index]]
+        prev_psnr = self.history_attack_PSNR[self.index_to_attack[index]]
+        prev_times = self.history_attack_times[self.index_to_attack[index]]
+        prev_CE = self.history_attack_CE[self.index_to_attack[index]]
+        self.history_attack_loss[self.index_to_attack[index]] = (prev_loss*prev_times + loss)/(prev_times+1)
+        self.history_attack_PSNR[self.index_to_attack[index]] = (prev_psnr*prev_times + PSNR)/(prev_times+1)
+        self.history_attack_CE[self.index_to_attack[index]] = (prev_CE * prev_times + loss) / (prev_times + 1)
+        self.history_attack_times[self.index_to_attack[index]] = prev_times + 1
+    ####################################################################################################
+    # todo: definitions
+    # todo: router, etc.
+    ####################################################################################################
 
     def create_optimizer(self, net, lr=1e-4, weight_decay=0):
         ## lr should be train_opt['lr_scratch'] in default
@@ -325,7 +369,7 @@ class BaseModel():
                                                                       lr=self.train_opt[lr],weight_decay=wd_G)
             print(f"optimizer discriminator_mask: {lr}")
         if 'localizer' in self.network_list:
-            lr = 'lr_finetune'
+            lr = 'lr_scratch'
             self.optimizer_localizer = self.create_optimizer(self.localizer,
                                                              lr=self.train_opt[lr], weight_decay=wd_G)
             print(f"optimizer localizer: {lr}")
@@ -749,8 +793,9 @@ class BaseModel():
 
         ## id of weak JPEG: 0,1,2,4,6,7
         if index in self.opt['simulated_resize_indices']:
+            ## resize sometimes will also cause very low PSNR
             blurring_layer = self.resize
-            processed_image = blurring_layer(attacked_forward, resize_ratio=resize_ratio)
+            processed_image, resize_ratio = blurring_layer(attacked_forward, resize_ratio=resize_ratio)
         elif index in self.opt['simulated_gblur_indices']:
             ## additional care for gaussian and median blur
             blurring_layer = self.gaussian_blur
@@ -768,13 +813,18 @@ class BaseModel():
         else:
             raise NotImplementedError("postprocess的Index没有找到，请检查！")
 
-        quality = int(quality_idx * 5)
+        ## we regulate that jpeg attack also should not cause PSNR to be lower than 30dB
+        jpeg_result = processed_image
+        for q_index in range(quality_idx,21):
+            quality = int(q_index * 5)
+            jpeg_layer_after_blurring = self.jpeg_simulate[q_index - 10][0] if quality < 100 else self.identity
+            jpeg_result = jpeg_layer_after_blurring(processed_image)
+            psnr = self.psnr(self.postprocess(jpeg_result), self.postprocess(processed_image)).item()
+            if psnr>=28:
+                break
+        attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_result)
 
-        jpeg_layer_after_blurring = self.jpeg_simulate[quality_idx - 10][0] if quality < 100 else self.identity
-        attacked_real_jpeg_simulate = self.clamp_with_grad(jpeg_layer_after_blurring(processed_image))
-        # if self.using_jpeg_simulation_only():
-        #     attacked_image = attacked_real_jpeg_simulate
-        # else:  # if self.global_step%5==3:
+        ## real-world attack
         for idx_atkimg in range(batch_size):
             grid = attacked_forward[idx_atkimg]
             realworld_attack = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality,
@@ -789,7 +839,7 @@ class BaseModel():
         # error_scratch = attacked_real_jpeg - attacked_forward
         # l_scratch = self.l1_loss(error_scratch, torch.zeros_like(error_scratch).cuda())
         # logs.append(('SCRATCH', l_scratch.item()))
-        return attacked_image, attacked_real_jpeg_simulate, kernel_size
+        return attacked_image, attacked_real_jpeg_simulate, (kernel_size, quality_idx, resize_ratio)
 
     def benign_attacks_without_simulation(self, *, forward_image, quality_idx, kernel_size,
                                                          resize_ratio, index=None):
