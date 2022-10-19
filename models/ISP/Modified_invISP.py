@@ -466,12 +466,12 @@ class Modified_invISP(BaseModel):
                             self.previous_protected = self.label[0:1]
                         self.previous_images = self.label[0:1]
 
-                        masks, masks_GT = self.mask_generation(modified_input=source_image,
+                        masks, masks_GT, percent_range = self.mask_generation(modified_input=source_image,
                                                                percent_range=None)
 
                         test_input, masks, mask_GT = self.tampering_RAW(
                             masks=masks, masks_GT=masks_GT,
-                            modified_input=source_image, percent_range=None,
+                            modified_input=source_image, percent_range=percent_range,
                             idx_clip=None, num_per_clip=None, index=self.opt['inference_tamper_index'],
                         )
 
@@ -1448,7 +1448,7 @@ class Modified_invISP(BaseModel):
                 self.previous_protected = self.label[0:1]
             self.previous_images = self.label[0:1]
 
-            masks, masks_GT = self.mask_generation(modified_input=gt_rgb,
+            masks, masks_GT, percent_range = self.mask_generation(modified_input=gt_rgb,
                                                    percent_range=None)
 
             self.previous_protected = gt_rgb
@@ -1456,7 +1456,7 @@ class Modified_invISP(BaseModel):
             #####  conduct tampering  ######
             test_input, masks, mask_GT = self.tampering_RAW(
                 masks=masks, masks_GT=masks_GT,
-                modified_input=non_tampered_image, percent_range=None,
+                modified_input=non_tampered_image, percent_range=percent_range,
                 idx_clip=None, num_per_clip=None, index=self.opt['inference_tamper_index'],
             )
 
@@ -1730,6 +1730,7 @@ class Modified_invISP(BaseModel):
             # attacked_forward = modified_input * (1 - masks) + forward_image * masks
             attacked_forward = modified_input * (1 - masks) + (self.previous_images if idx_clip is None else self.previous_images[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous())* masks
         else:
+            print(index)
             raise NotImplementedError("Tamper的方法没找到！请检查！")
 
         attacked_forward = self.clamp_with_grad(attacked_forward)
@@ -1811,6 +1812,7 @@ class Modified_invISP(BaseModel):
         self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
         self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                             find_unused_parameters=True)
+        # print('ISP Network OK')
 
     def define_tampering_localization_network(self):
         if self.args.mode==6:
@@ -2009,12 +2011,12 @@ class Modified_invISP(BaseModel):
         #     tamper_source_cropped = tamper_source
 
         ###############   TAMPERING   ##################################################################################
-        masks, masks_GT = self.mask_generation(modified_input=modified_input, percent_range=None)
+        masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input, percent_range=None)
 
         # attacked_forward = tamper_source_cropped
         attacked_forward, masks, masks_GT = self.tampering_RAW(
             masks=masks, masks_GT=masks_GT,
-            modified_input=modified_input, percent_range=None,
+            modified_input=modified_input, percent_range=percent_range,
             idx_clip=idx_clip, num_per_clip=num_per_clip, index=tamper_index
         )
 
@@ -2038,7 +2040,7 @@ class Modified_invISP(BaseModel):
         if not skip_robust and self.opt['consider_robost']:
             quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
 
-            attacked_image = self.benign_attacks(attacked_forward=attacked_adjusted,
+            attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_adjusted,
                                                  quality_idx=quality_idx)
         else:
             attacked_image = attacked_adjusted

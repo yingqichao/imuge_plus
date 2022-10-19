@@ -1,4 +1,6 @@
 import os
+
+import imageio
 import rawpy
 import data.imaging as imaging
 import numpy as np
@@ -101,6 +103,7 @@ def get_metadata(raw):
     color_matrix = raw.rgb_xyz_matrix[:3]
     bitdepth = raw.sizes.top_margin
     camera_whitebalance = raw.camera_whitebalance
+    # camera_whitebalance = [i/camera_whitebalance[0] for i in camera_whitebalance]
     raw_pattern, color_desc = raw.raw_pattern, raw.color_desc
     flip_val = raw.sizes.flip
     bayer_pattern = get_bayer_pattern(raw_pattern, color_desc, flip_val)
@@ -120,8 +123,11 @@ def get_metadata(raw):
 
 
 if __name__ == '__main__':
-    test_raw_path = 'images/a0031-WP_CRW_0736.dng'
+    # test_raw_path = 'images/a0031-WP_CRW_0736.dng'
+    test_raw_path = './r00b8d4a2t.NEF'
     raw = rawpy.imread(test_raw_path)
+    # rgb = raw.postprocess(no_auto_bright=True, use_auto_wb=False)
+    # imageio.imwrite('./test2.png', rgb)
     metadata = get_metadata(raw)
     raw_image = raw.raw_image_visible.copy()
     raw_image = flip(raw_image, metadata['flip_val'])

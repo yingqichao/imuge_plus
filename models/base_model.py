@@ -767,6 +767,7 @@ class BaseModel():
                                                  im_size[1])
             mask = np.minimum(mask, 1.0)
             percent = np.mean(mask)
+            # print(percent, lower_bound_percent)
             if percent >= lower_bound_percent:
                 break
 
@@ -779,7 +780,7 @@ class BaseModel():
 
     def np_free_form_mask(self, mask_re, minVertex, maxVertex, minLength, maxLength, minBrushWidth, maxBrushWidth,
                           maxAngle, h, w):
-        mask = np.empty_like(mask_re)
+        mask = np.zeros_like(mask_re)
         numVertex = np.random.randint(minVertex, maxVertex + 1)
         startY = np.random.randint(h)
         startX = np.random.randint(w)

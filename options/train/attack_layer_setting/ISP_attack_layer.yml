@@ -1,8 +1,8 @@
 #### indices
-simulated_inpainting_indices: [1,7]
-simulated_splicing_indices: [0,3]
-simulated_copymove_indices: [2,5,8]
-simulated_copysplicing_indices: [4,6]
+simulated_splicing_indices: [1, 3, 5, 7]
+simulated_copymove_indices: [0, 2, 6, 4, 8]
+simulated_inpainting_indices: []
+simulated_copysplicing_indices: []
 
 weak_JPEG_lower_bound: 18
 strong_JPEG_upper_bound: 19
