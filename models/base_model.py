@@ -206,6 +206,39 @@ class BaseModel():
     def load(self):
         pass
 
+    def define_optimizers(self):
+        wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
+
+        if 'netG' in self.network_list:
+            lr = 'lr_finetune'
+            self.optimizer_G = self.create_optimizer(self.netG,
+                                                     lr=self.train_opt[lr], weight_decay=wd_G)
+            print(f"optimizer netG: {lr}")
+
+        if 'discriminator_mask' in self.network_list:
+            lr = 'lr_scratch'
+            self.optimizer_discriminator_mask = self.create_optimizer(self.discriminator_mask,
+                                                                      lr=self.train_opt[lr],weight_decay=wd_G)
+            print(f"optimizer discriminator_mask: {lr}")
+        if 'localizer' in self.network_list:
+            lr = 'lr_scratch'
+            self.optimizer_localizer = self.create_optimizer(self.localizer,
+                                                             lr=self.train_opt[lr], weight_decay=wd_G)
+            print(f"optimizer localizer: {lr}")
+        if 'KD_JPEG' in self.network_list:
+            self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
+                                                           lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+        # if 'discriminator' in self.network_list:
+        #     self.optimizer_discriminator = self.create_optimizer(self.discriminator,
+        #                                                          lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+        if 'generator' in self.network_list:
+            self.optimizer_generator = self.create_optimizer(self.generator,
+                                                             lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
+        if 'qf_predict_network' in self.network_list:
+            self.optimizer_qf = self.create_optimizer(self.qf_predict_network,
+                                                      lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
+
+
     ### todo: Helper functions
     def exponential_weight_for_backward(self, *, value):
         '''

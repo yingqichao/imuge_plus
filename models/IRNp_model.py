@@ -114,7 +114,7 @@ class IRNpModel(BaseModel):
             # good_models: '/model/Rerun_4/29999'
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/model/Rerun_3/'
-            self.model_path = str(2999) # 42999
+            self.model_path = str(28999) # 42999
         else:
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/jpeg_model/Rerun_3/'
@@ -581,7 +581,96 @@ class IRNpModel(BaseModel):
 
         return modified_input, modified_canny
 
+    def splicing(self, *, forward_image, masks):
+        return  forward_image * (1 - masks) + (self.previous_previous_images) * masks
 
+    def inpainting(self, *, forward_image, masks, modified_canny):
+        with torch.no_grad():
+            reversed_stuff, reverse_feature = self.netG(
+                torch.cat((forward_image * (1 - masks),
+                           torch.zeros_like(modified_canny)), dim=1),
+                rev=True)  # torch.zeros_like(modified_canny).cuda()
+            reversed_ch1, reversed_ch2 = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
+            reversed_image = self.clamp_with_grad(reversed_ch1)
+            # attacked_forward = forward_image * (1 - masks) + modified_input.clone().detach() * masks
+            attacked_forward = forward_image * (1 - masks) + reversed_image.clone().detach() * masks
+            # reversed_image = reversed_image.repeat(way_attack,1,1,1)
+        del reversed_stuff
+        del reverse_feature
+
+        return attacked_forward
+
+    def get_shifted_image_for_copymove(self, *, forward_image, percent_range, masks):
+        batch_size, channels, height_width = forward_image.shape[0], forward_image.shape[1], forward_image.shape[2]
+        lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
+        ###### IMPORTANT NOTE: for ideal copy-mopv, here should be forward_image. If you want to ease the condition, can be changed to forward_iamge
+        tamper = forward_image.clone().detach()
+        x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
+        mask_shifted = masks
+        while retried <= 10 and not (valid > lower_bound_percent and (
+                abs(x_shift) > (height_width / 3) or abs(y_shift) > (height_width / 3))):
+            x_shift = int((height_width) * (np.random.rand() - 0.5))
+            y_shift = int((height_width) * (np.random.rand() - 0.5))
+
+            ### two times padding ###
+            mask_buff = torch.zeros((masks.shape[0], masks.shape[1],
+                                     masks.shape[2] + abs(2 * x_shift),
+                                     masks.shape[3] + abs(2 * y_shift))).cuda()
+
+            mask_buff[:, :,
+            abs(x_shift) + x_shift:abs(x_shift) + x_shift + height_width,
+            abs(y_shift) + y_shift:abs(y_shift) + y_shift + height_width] = masks
+
+            mask_buff = mask_buff[:, :,
+                        abs(x_shift):abs(x_shift) + height_width,
+                        abs(y_shift):abs(y_shift) + height_width]
+
+            valid = torch.mean(mask_buff)
+            retried += 1
+            if valid >= max_valid:
+                max_valid = valid
+                mask_shifted = mask_buff
+                x_shift, y_shift = x_shift, y_shift
+
+        tamper_shifted = torch.zeros((batch_size, channels,
+                                      height_width + abs(2 * x_shift),
+                                      height_width + abs(2 * y_shift))).cuda()
+        tamper_shifted[:, :,
+        abs(x_shift) + x_shift: abs(x_shift) + x_shift + height_width,
+        abs(y_shift) + y_shift: abs(y_shift) + y_shift + height_width] = tamper
+
+        tamper_shifted = tamper_shifted[:, :,
+                         abs(x_shift): abs(x_shift) + height_width,
+                         abs(y_shift): abs(y_shift) + height_width]
+
+        masks = mask_shifted.clone().detach()
+        masks = self.clamp_with_grad(masks)
+        # valid = torch.mean(masks)
+
+        masks_GT = masks[:, :1, :, :]
+
+        return tamper_shifted, masks, masks_GT
+
+    def copymove(self,*, forward_image,masks, masks_GT, percent_range):
+        batch_size, channels, height_width = forward_image.shape[0], forward_image.shape[1], forward_image.shape[2]
+        tamper_shifted, masks, masks_GT = self.get_shifted_image_for_copymove(forward_image=forward_image, percent_range=percent_range,
+                                                                                masks=masks)
+        attacked_forward = forward_image * (1 - masks) + tamper_shifted.clone().detach() * masks
+
+        return attacked_forward, masks, masks_GT
+
+    def copysplicing(self, *, forward_image, masks, percent_range):
+        with torch.no_grad():
+            another_generated = self.netG(
+                torch.cat([self.previous_previous_images, self.previous_previous_canny], dim=1))
+            another_immunized = another_generated[:, :3, :, :]
+            another_immunized = self.clamp_with_grad(another_immunized)
+            tamper_shifted, masks, masks_GT = self.get_shifted_image_for_copymove(forward_image=another_immunized,
+                                                                                  percent_range=percent_range, masks=masks)
+            attacked_forward = forward_image * (1 - masks) + another_immunized.clone().detach() * masks
+        del another_generated
+
+        return attacked_forward, masks, masks_GT
 
     def tampering_PAMI(self, *,  forward_image, masks, masks_GT, modified_canny, percent_range,
                        index=None):
@@ -593,97 +682,25 @@ class IRNpModel(BaseModel):
         index = index % self.amount_of_tampering
 
         if index in self.opt['simulated_splicing_indices']:  # self.using_splicing():
-            ####################################################################################################
-            # todo: splicing
-            # todo: invISP
-            ####################################################################################################
-            attacked_forward = forward_image * (1 - masks) + (self.previous_previous_images) * masks
+            ### todo: splicing
+            attacked_forward = self.splicing(forward_image=forward_image, masks=masks)
             # attack_name = "splicing"
 
         elif index in self.opt['simulated_copymove_indices']:  # self.using_copy_move():
-            ####################################################################################################
-            # todo: copy-move
-            # todo: invISP
-            ####################################################################################################
-            batch_size, channels, height_width = forward_image.shape[0], forward_image.shape[1], forward_image.shape[2]
-            lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
-            ###### IMPORTANT NOTE: for ideal copy-mopv, here should be forward_image. If you want to ease the condition, can be changed to forward_iamge
-            tamper = forward_image.clone().detach()
-            x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
-            while retried < 20 and not (valid > lower_bound_percent and (
-                    abs(x_shift) > (height_width / 3) or abs(y_shift) > (height_width / 3))):
-                x_shift = int((height_width) * (np.random.rand() - 0.5))
-                y_shift = int((height_width) * (np.random.rand() - 0.5))
-
-                ### two times padding ###
-                mask_buff = torch.zeros((masks.shape[0], masks.shape[1],
-                                         masks.shape[2] + abs(2 * x_shift),
-                                         masks.shape[3] + abs(2 * y_shift))).cuda()
-
-                mask_buff[:, :,
-                abs(x_shift) + x_shift:abs(x_shift) + x_shift + height_width,
-                abs(y_shift) + y_shift:abs(y_shift) + y_shift + height_width] = masks
-
-                mask_buff = mask_buff[:, :,
-                            abs(x_shift):abs(x_shift) + height_width,
-                            abs(y_shift):abs(y_shift) + height_width]
-
-                valid = torch.mean(mask_buff)
-                retried += 1
-                if valid >= max_valid:
-                    max_valid = valid
-                    self.mask_shifted = mask_buff
-                    self.x_shift, self.y_shift = x_shift, y_shift
-
-            self.tamper_shifted = torch.zeros((batch_size, channels,
-                                               height_width + abs(2 * self.x_shift),
-                                               height_width + abs(2 * self.y_shift))).cuda()
-            self.tamper_shifted[:, :,
-            abs(self.x_shift) + self.x_shift: abs(self.x_shift) + self.x_shift + height_width,
-            abs(self.y_shift) + self.y_shift: abs(self.y_shift) + self.y_shift + height_width] = tamper
-
-            self.tamper_shifted = self.tamper_shifted[:, :,
-                                  abs(self.x_shift): abs(self.x_shift) + height_width,
-                                  abs(self.y_shift): abs(self.y_shift) + height_width]
-
-            masks = self.mask_shifted.clone().detach()
-            masks = self.clamp_with_grad(masks)
-            # valid = torch.mean(masks)
-
-            masks_GT = masks[:, :1, :, :]
-            attacked_forward = forward_image * (1 - masks) + self.tamper_shifted.clone().detach() * masks
+            ### todo: copy-move
+            attacked_forward, masks, masks_GT = self.copymove(forward_image=forward_image, masks=masks, masks_GT=masks_GT,
+                                                              percent_range=percent_range)
             # del self.tamper_shifted
             # del self.mask_shifted
             # torch.cuda.empty_cache()
 
         elif index in self.opt['simulated_inpainting_indices']:  # self.using_simulated_inpainting:
-            ####################################################################################################
-            # todo: simulated inpainting
-            # todo: it is important, without protection, though the tampering can be close, it should also be detected.
-            ####################################################################################################
-            with torch.no_grad():
-                reversed_stuff, reverse_feature = self.netG(
-                    torch.cat((forward_image * (1 - masks),
-                               torch.zeros_like(modified_canny)), dim=1), rev=True) # torch.zeros_like(modified_canny).cuda()
-                reversed_ch1, reversed_ch2 = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
-                reversed_image = self.clamp_with_grad(reversed_ch1)
-                # attacked_forward = forward_image * (1 - masks) + modified_input.clone().detach() * masks
-                attacked_forward = forward_image * (1 - masks) + reversed_image.clone().detach() * masks
-                # reversed_image = reversed_image.repeat(way_attack,1,1,1)
-            del reversed_stuff
-            del reverse_feature
+            ### todo: simulated inpainting
+            attacked_forward = self.inpainting(forward_image=forward_image, masks=masks, modified_canny=modified_canny)
 
         elif index in self.opt['simulated_copysplicing_indices']:  # self.using_simulated_inpainting:
-            ####################################################################################################
-            # todo: copy-splicing
-            # todo: splice the image using another immunized image
-            ####################################################################################################
-            with torch.no_grad():
-                another_generated = self.netG(torch.cat([self.previous_previous_images, self.previous_previous_canny],dim=1))
-                another_immunized = another_generated[:, :3, :, :]
-                another_immunized = self.clamp_with_grad(another_immunized)
-                attacked_forward = forward_image * (1 - masks) + another_immunized.clone().detach() * masks
-            del another_generated
+            ### todo: copy-splicing
+            attacked_forward, masks, masks_GT = self.copysplicing(forward_image=forward_image, masks=masks, percent_range=percent_range)
 
         else:
             raise NotImplementedError("Tamper的Index有错误，请检查！")
@@ -1307,8 +1324,8 @@ class IRNpModel(BaseModel):
         if 'generator' in network_list:
             self.save_network(self.generator, 'generator', iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/')
         # if 'netG' in network_list:
-        self.save_training_state(epoch=0, iter_step=iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/',
-                                 network_list=network_list)
+        # self.save_training_state(epoch=0, iter_step=iter_label if self.rank==0 else 0, model_path=self.out_space_storage+f'/{folder}/'+self.task_name+'_'+str(self.gpu_id)+'/',
+        #                          network_list=network_list)
 
     def generate_stroke_mask(self, im_size, parts=5, parts_square=2, maxVertex=6, maxLength=64, maxBrushWidth=32,
                              maxAngle=360, percent_range=(0.0, 0.25)):

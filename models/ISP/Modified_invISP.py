@@ -1729,6 +1729,8 @@ class Modified_invISP(BaseModel):
             ####################################################################################################
             # attacked_forward = modified_input * (1 - masks) + forward_image * masks
             attacked_forward = modified_input * (1 - masks) + (self.previous_images if idx_clip is None else self.previous_images[idx_clip * num_per_clip:(idx_clip + 1) * num_per_clip].contiguous())* masks
+        else:
+            raise NotImplementedError("Tamper的方法没找到！请检查！")
 
         attacked_forward = self.clamp_with_grad(attacked_forward)
         # attacked_forward = self.Quantization(attacked_forward)
@@ -1794,37 +1796,6 @@ class Modified_invISP(BaseModel):
         self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
                                                find_unused_parameters=True)
 
-    def define_optimizers(self):
-        wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
-
-        if 'netG' in self.network_list:
-            lr = 'lr_finetune'
-            self.optimizer_G = self.create_optimizer(self.netG,
-                                                     lr=self.train_opt[lr], weight_decay=wd_G)
-            print(f"optimizer netG: {lr}")
-
-        if 'discriminator_mask' in self.network_list:
-            lr = 'lr_scratch'
-            self.optimizer_discriminator_mask = self.create_optimizer(self.discriminator_mask,
-                                                                      lr=self.train_opt[lr],weight_decay=wd_G)
-            print(f"optimizer discriminator_mask: {lr}")
-        if 'localizer' in self.network_list:
-            lr = 'lr_scratch'
-            self.optimizer_localizer = self.create_optimizer(self.localizer,
-                                                             lr=self.train_opt[lr], weight_decay=wd_G)
-            print(f"optimizer localizer: {lr}")
-        if 'KD_JPEG' in self.network_list:
-            self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
-                                                           lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
-        # if 'discriminator' in self.network_list:
-        #     self.optimizer_discriminator = self.create_optimizer(self.discriminator,
-        #                                                          lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
-        if 'generator' in self.network_list:
-            self.optimizer_generator = self.create_optimizer(self.generator,
-                                                             lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
-        if 'qf_predict_network' in self.network_list:
-            self.optimizer_qf = self.create_optimizer(self.qf_predict_network,
-                                                      lr=self.train_opt['lr_finetune'], weight_decay=wd_G)
 
     def define_ISP_network_training(self):
         self.generator = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
