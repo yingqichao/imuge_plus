@@ -9,15 +9,15 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
         from models.ISP.Modified_invISP import IRNModel as M
         model = M(opt, args)
     elif which_model == 'PAMI':
-        from models.IRNp_model import IRNpModel as M
+        from models.PAMI.IRNp_model import IRNpModel as M
         model = M(opt, args)
     elif which_model == 'ICASSP_NOWAY':
-        from models.IRNcrop_model import IRNcropModel as M
+        from models.CLRNet.IRNcrop_model import IRNcropModel as M
     elif which_model == 'ICASSP_RHI':
         from models.tianchi_model import IRNrhiModel as M
         # from .IRNrhi_model import IRNrhiModel as M
     elif which_model == 'CLRNet':
-        from models.IRNclrNew_model import IRNclrModel as M
+        from models.CLRNet.IRNclrNew_model import IRNclrModel as M
         model = M(opt, args)
     elif which_model == 'ISP':
         from models.ISP.Modified_invISP import Modified_invISP as M
