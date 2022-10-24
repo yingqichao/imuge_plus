@@ -3,6 +3,8 @@ import copy
 import os
 from collections import OrderedDict
 
+import numpy as np
+from skimage.feature import canny
 import cv2
 import torch.distributed as dist
 import torch.nn as nn
@@ -89,7 +91,8 @@ class BaseModel():
             self.opt['simulated_gblur_indices'] +
             self.opt['simulated_mblur_indices'] +
             self.opt['simulated_AWGN_indices'] +
-            self.opt['simulated_pure_JPEG_indices']
+            self.opt['simulated_strong_JPEG_indices'] +
+            self.opt['simulated_weak_JPEG_indices']
         )
         self.history_attack_loss = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
         self.history_attack_times = {"resize":0, "gblur":0, "mblur":0, "AWGN":0, "JPEG":0}
@@ -101,7 +104,8 @@ class BaseModel():
                                         'simulated_gblur_indices':'gblur',
                                         'simulated_mblur_indices':'mblur',
                                         'simulated_AWGN_indices':'AWGN',
-                                        'simulated_pure_JPEG_indices':'JPEG'
+                                        'simulated_strong_JPEG_indices':'JPEG',
+                                        'simulated_weak_JPEG_indices':'JPEG'
         }
         self.index_to_attack = {}
         for attack_name in self.history_term_mapping:
@@ -210,7 +214,7 @@ class BaseModel():
         wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
 
         if 'netG' in self.network_list:
-            lr = 'lr_finetune'
+            lr = 'lr_scratch'
             self.optimizer_G = self.create_optimizer(self.netG,
                                                      lr=self.train_opt[lr], weight_decay=wd_G)
             print(f"optimizer netG: {lr}")
@@ -240,13 +244,15 @@ class BaseModel():
 
 
     ### todo: Helper functions
-    def exponential_weight_for_backward(self, *, value):
+    def exponential_weight_for_backward(self, *, value, exp=1.5):
         '''
             exponential loss for recovery loss's weight.
             PSNR  29     30     31     32     33(base)   34     35
             Weigh 0.161  0.192  0.231  0.277  0.333      0.400  0.500
         '''
-        return min(1, self.opt['Loss_back_psnr_higher']*((1.2)**(value-33)))
+        if self.opt['exp_weight'] is not None:
+            exp = self.opt['exp_weight']
+        return min(1, self.opt['Loss_back_psnr_higher']*((exp)**(value-self.opt['psnr_thresh'])))
 
     def update_history_losses(self, *, index, PSNR, loss, loss_CE, PSNR_attack):
         '''
@@ -340,7 +346,7 @@ class BaseModel():
         if index is None:
             index = self.global_step
         if index % self.amount_of_benign_attack not in set(
-                self.opt['simulated_pure_JPEG_indices']
+                self.opt['simulated_strong_JPEG_indices']
         ):
             ## perform weak JPEG compression after other attacks
             quality_idx = np.random.randint(self.opt["weak_JPEG_lower_bound"], 21)
@@ -356,7 +362,7 @@ class BaseModel():
             index = self.global_step
         index = index % self.amount_of_tampering
         if percent_range is None:
-            percent_range = (0.05, 0.25) if index not in self.opt["simulated_copymove_indices"] else (0.05, 0.2)
+            percent_range = (0.0, 0.3) if index not in self.opt["simulated_copymove_indices"] else (0.0, 0.25)
 
         batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         masks_GT = torch.zeros(batch_size, 1, self.real_H.shape[2], self.real_H.shape[3]).cuda()
@@ -406,7 +412,7 @@ class BaseModel():
             ## we dont simulate gaussian but direct add
             blurring_layer = self.identity
             processed_image = blurring_layer(attacked_forward)
-        elif index in self.opt['simulated_pure_JPEG_indices']:
+        elif index in (self.opt['simulated_strong_JPEG_indices']+self.opt['simulated_weak_JPEG_indices']):
             blurring_layer = self.identity
             processed_image = blurring_layer(attacked_forward)
         else:
@@ -414,6 +420,7 @@ class BaseModel():
 
         ## we regulate that jpeg attack also should not cause PSNR to be lower than 30dB
         jpeg_result = processed_image
+        quality = quality_idx
         for q_index in range(quality_idx,21):
             quality = int(q_index * 5)
             jpeg_layer_after_blurring = self.jpeg_simulate[q_index - 10][0] if quality < 100 else self.identity
@@ -491,7 +498,7 @@ class BaseModel():
             gauss = np.random.normal(mean, sigma, (self.width_height, self.width_height, 3))
             # 给图片添加高斯噪声
             realworld_attack = ndarr + gauss
-        elif index in self.opt['simulated_pure_JPEG_indices']:
+        elif index in (self.opt['simulated_strong_JPEG_indices']+self.opt['simulated_weak_JPEG_indices']):
             realworld_attack = ndarr
         else:
             raise NotImplementedError("postprocess的Index没有找到，请检查！")
@@ -542,15 +549,20 @@ class BaseModel():
         '''
             get image path list from image folder
         '''
-        assert os.path.isdir(path), '{:s} is not a valid directory'.format(path)
-        images = []
+        # assert os.path.isdir(path), '{:s} is not a valid directory'.format(path)
+        if path is None:
+            return None, None
+
+        images_dict = {}
         for dirpath, _, fnames in sorted(os.walk(path)):
             for fname in sorted(fnames):
                 if self.is_image_file(fname):
-                    # img_path = os.path.join(dirpath, fname)
-                    images.append((path, dirpath[len(path) + 1:], fname))
-        assert images, '{:s} has no valid image file'.format(path)
-        return images
+                    img_path = os.path.join(dirpath, fname)
+                    # images.append((path, dirpath[len(path) + 1:], fname))
+                    images_dict[fname] = img_path
+        assert images_dict, '{:s} has no valid image file'.format(path)
+
+        return images_dict
 
     def print_individual_image(self, cropped_GT, name):
         for image_no in range(cropped_GT.shape[0]):
@@ -558,40 +570,39 @@ class BaseModel():
             torchvision.utils.save_image((camera_ready * 255).round() / 255,
                                          name, nrow=1, padding=0, normalize=False)
 
-    def load_image(self, path, readimg=False, Height=608, Width=608, grayscale=False):
+
+    def load_image(self, path, readimg=False, grayscale=False, require_canny=False):
         import data.util as util
         GT_path = path
 
         img_GT = util.read_img(GT_path)
 
         # change color space if necessary
-        # img_GT = util.channel_convert(img_GT.shape[2], 'RGB', [img_GT])[0]
+        img_GT = util.channel_convert(img_GT.shape[2], 'RGB', [img_GT])[0]
         if grayscale:
             img_GT = rgb2gray(img_GT)
 
-        img_GT = cv2.resize(copy.deepcopy(img_GT), (Width, Height), interpolation=cv2.INTER_LINEAR)
-        return img_GT
-
-    def img_random_crop(self, img_GT, Height=608, Width=608, grayscale=False):
-        # # randomly crop
-        # H, W = img_GT.shape[0], img_GT.shape[1]
-        # rnd_h = random.randint(0, max(0, H - Height))
-        # rnd_w = random.randint(0, max(0, W - Width))
-        #
-        # img_GT = img_GT[rnd_h:rnd_h + Height, rnd_w:rnd_w + Width, :]
-        #
-        # orig_height, orig_width, _ = img_GT.shape
-        # H, W = img_GT.shape[0], img_GT.shape[1]
+        img_GT = cv2.resize(copy.deepcopy(img_GT), (self.width_height, self.width_height),
+                            interpolation=cv2.INTER_LINEAR)
 
         # BGR to RGB, HWC to CHW, numpy to tensor
         if not grayscale:
-            img_GT = img_GT[:, :, [2, 1, 0]]
-            img_GT = torch.from_numpy(
-                np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).contiguous().float()
+            image = img_GT[:, :, [2, 1, 0]]
+            image = torch.from_numpy(
+                np.ascontiguousarray(np.transpose(image, (2, 0, 1)))).float()
         else:
-            img_GT = self.image_to_tensor(img_GT)
+            image = torch.from_numpy(
+                np.ascontiguousarray(img_GT)).float()
 
-        return img_GT.cuda()
+        if require_canny and not grayscale:
+            img_gray = rgb2gray(img_GT)
+            sigma = 2  # random.randint(1, 4)
+            cannied = canny(img_gray, sigma=sigma, mask=None).astype(np.float)
+            canny_image = torch.from_numpy(
+                np.ascontiguousarray(cannied)).float()
+            return image.cuda().unsqueeze(0), canny_image.cuda().unsqueeze(0).unsqueeze(0)
+        else:
+            return image.cuda().unsqueeze(0)
 
     def tensor_to_image(self, tensor):
 
@@ -754,9 +765,9 @@ class BaseModel():
 
     def generate_stroke_mask(self, im_size, parts=5, parts_square=2, maxVertex=6, maxLength=64, maxBrushWidth=32,
                              maxAngle=360, percent_range=(0.0, 0.25)):
-        minVertex, maxVertex = 1, 8
-        minLength, maxLength = int(im_size[0] * 0.02), int(im_size[0] * 0.125)
-        minBrushWidth, maxBrushWidth = int(im_size[0] * 0.02), int(im_size[0] * 0.125)
+        minVertex, maxVertex = 1, 6
+        minLength, maxLength = 8, int(im_size[0] * 0.2)
+        minBrushWidth, maxBrushWidth = 8, int(im_size[0] * 0.2)
         mask = np.zeros((im_size[0], im_size[1]), dtype=np.float32)
         lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
 

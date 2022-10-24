@@ -43,13 +43,13 @@ class Resize(nn.Module):
             out = F.interpolate(
                                         noised_image,
                                         size=[newWidth, newHeight],
-                                        mode=self.interpolation_method).contiguous()
+                                        mode=self.interpolation_method)
 
             recover = F.interpolate(
                                         out,
                                         size=[original_width, original_height],
                                         # scale_factor=(1/resize_ratio, 1/resize_ratio),
-                                        mode=self.interpolation_method).contiguous()
+                                        mode=self.interpolation_method)
 
             # resize_back = F.interpolate(
             #     noised_image,

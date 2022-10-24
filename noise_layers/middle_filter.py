@@ -9,7 +9,8 @@ class MiddleBlur(nn.Module):
 		self.psnr = PSNR(255.0).cuda()
 		self.middle_filters = [MedianBlur((3, 3)),
 							   MedianBlur((5, 5)),
-							   MedianBlur((7, 7))
+							   MedianBlur((7, 7)),
+							   MedianBlur((9, 9))
 							]
 		self.psnr_thresh = 28 if opt is None else opt['minimum_PSNR_caused_by_attack']
 

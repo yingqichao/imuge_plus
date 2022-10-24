@@ -116,7 +116,7 @@ def create_dataset(*, opt,args,rank,seed):
     if "PAMI" in opt['model'] or "CLR" in opt['model']:
         print("dataset with canny")
         from data.LQGT_dataset import LQGTDataset as D
-        val_set = D(opt, dataset_opt)
+        val_set = D(opt, dataset_opt, is_train=False)
     # elif "ICASSP_RHI" in opt['model']:
     #     print("dataset with jpeg")
     #     from data.tianchi_dataset import LQGTDataset as D

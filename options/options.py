@@ -24,7 +24,7 @@ def parse(*, opt_path,
     if base_opt_path is None:
         if 'ISP' in opt_path:
             base_opt_path = default_base_opt['ISP']
-        elif 'PAMI' in opt_path:
+        elif 'IRN+' in opt_path or 'PAMI' in opt_path:
             base_opt_path = default_base_opt['PAMI']
     with open(base_opt_path, mode='r') as f:
         opt = yaml.load(f, Loader=Loader)
@@ -39,7 +39,7 @@ def parse(*, opt_path,
     if attack_opt_path is None:
         if 'ISP' in opt_path:
             attack_opt_path = default_attack_opt['ISP']
-        elif 'PAMI' in opt_path:
+        elif 'IRN+' in opt_path or 'PAMI' in opt_path:
             attack_opt_path = default_attack_opt['PAMI']
     with open(attack_opt_path, mode='r') as f:
         opt_attack = yaml.load(f, Loader=Loader)

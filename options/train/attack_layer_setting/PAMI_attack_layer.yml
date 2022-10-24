@@ -4,15 +4,19 @@ simulated_splicing_indices: [0,3]
 simulated_copymove_indices: [2,5,8]
 simulated_copysplicing_indices: [4,6]
 
+crop_indices: [3,6,9]
+
 weak_JPEG_lower_bound: 18
 strong_JPEG_upper_bound: 19
 strong_JPEG_lower_bound: 10
+cropping_lower_bound: 0.7
 
 simulated_resize_indices: [0,5]
 simulated_gblur_indices: [6]
 simulated_mblur_indices: [2]
 simulated_AWGN_indices: [1]
-simulated_pure_JPEG_indices: [3,4,7]
+simulated_strong_JPEG_indices: [3,4]
+simulated_weak_JPEG_indices: [7]
 
 CE_psnr_less: !!float 2e-5
 CE_psnr_higher: !!float 1e-4
@@ -22,9 +26,10 @@ Loss_back_psnr_higher: 0.333 # ori: 0.25
 Null_loss: 2
 Loss_forward: 1
 
-skip_attack_probability: 0.85
+skip_attack_probability: 0.9
 GAN_weight: 0.01
 GAN_update_period: 5
-skip_aug_probability: 0.66
+skip_aug_probability: 1.0
 psnr_thresh: 33
 minimum_PSNR_caused_by_attack: 25
+exp_weight: 1.25

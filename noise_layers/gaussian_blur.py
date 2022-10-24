@@ -55,7 +55,7 @@ class GaussianBlur(nn.Module):
     def forward(self, tensor, kernel_size=5):
         self.name = "GaussianBlur"
         blur_result = tensor
-        for kernel in [3,5,7]:
+        for kernel in [3, 5, 7]:
             gaussian_layer = self.get_gaussian_kernel(kernel).cuda()
             blur_result = gaussian_layer(tensor)
             psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()
@@ -64,6 +64,10 @@ class GaussianBlur(nn.Module):
         ## if none of the above satisfy psnr>30, we abandon the attack
         # print("abandoned gaussian blur, we cannot find a suitable kernel that satisfy PSNR>=25")
         return tensor, 0
+
+    def forward_with_specific_kernel(self, tensor, kernel=3):
+        gaussian_layer = self.get_gaussian_kernel(kernel).cuda()
+        return gaussian_layer(tensor)
 
     def postprocess(self, img):
         # [0, 1] => [0, 255]

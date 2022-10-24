@@ -125,7 +125,7 @@ def main(args,opt):
     ####################################################################################################
     start_epoch, current_step = 0,  opt['train']['current_step']
 
-    if 'ISP' in which_model or ('PAMI' in which_model and args.mode==0.0):
+    if 'ISP' in which_model or ('PAMI' in which_model and args.mode in [0.0,3.0]):
         ####################################################################################################
         # todo: Training
         # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
@@ -236,19 +236,26 @@ def main(args,opt):
                 root = '/groupshare/real_world_test_images_ILSVRC'
             else:
                 root = '/groupshare/real_world_test_images_CelebA'
-            data_origin = os.path.join(root,opt['eval_kind'],'ori_COCO_0114')
-            data_immunize = os.path.join(root,opt['eval_kind'],'immu_COCO_0114')
-            data_tampered = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114')
-            data_tampersource = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114')
-            data_mask = os.path.join(root,opt['eval_kind'],'binary_masks_COCO_0114')
-            print(data_origin)
-            print(data_immunize)
-            print(data_tampered)
-            print(data_tampersource)
-            print(data_mask)
-            model.evaluate(data_origin,data_immunize,data_tampered,data_tampersource,data_mask)
+            ### test on hand-crafted 3000 images.
+            # model.evaluate(
+            #     data_origin = os.path.join(root,opt['eval_kind'],'ori_COCO_0114'),
+            #     data_immunize = os.path.join(root,opt['eval_kind'],'immu_COCO_0114'),
+            #     data_tampered = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114'),
+            #     data_tampersource = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114'),
+            #     data_mask = os.path.join(root,opt['eval_kind'],'binary_masks_COCO_0114')
+            # )
+            ### test on minor modification
+            model.evaluate(
+               data_origin=opt['path']['data_origin'],
+               data_immunize=opt['path']['data_immunize'],
+               data_tampered=opt['path']['data_tampered'],
+               data_tampersource=opt['path']['data_tampersource'],
+               data_mask=opt['path']['data_mask']
+            )
 
-    elif which_model == 'CVPR' and args.mode==2.0:
+
+
+    elif which_model == 'PAMI' and args.mode==2.0:
         ####################################################################################################
         # todo: Training the KD-JPEG
         # todo: customized for PAMI, KD_JPEG_Generator_training

@@ -98,39 +98,6 @@ class LQGTDataset(data.Dataset):
         if img_GT.shape[2] > 3:
             img_GT = img_GT[:, :, :3]
 
-
-        # filepath, tempfilepath = os.path.split(GT_path)
-
-        # load_jpeg = False
-        # if load_jpeg:
-        #     index = np.random.randint(0,5)
-        #     # index = 0
-        #     if index==0:
-        #         QF=0.1
-        #     elif index==1:
-        #         QF=0.3
-        #     elif index == 2:
-        #         QF = 0.5
-        #     elif index == 3:
-        #         QF = 0.7
-        #     else: #if index==4:
-        #         QF= 0.9
-        #     jpeg_path = os.path.join(self.jpeg_filepath[index],tempfilepath)
-        #
-        #     label = int((QF*10)/2)
-        #     # label = torch.zeros(5)
-        #     # label[int((QF*10)/2)] = 1
-        #     # print(jpeg_path)
-        #
-        #     ######### if exist jpeg path
-        #     img_jpeg_GT = util.read_img(jpeg_path)
-        #     ######### else
-        #     # img_jpeg_GT = util.read_img(GT_path)
-
-
-        # img_jpeg_GT = util.channel_convert(img_jpeg_GT.shape[2], self.dataset_opt['color'], [img_jpeg_GT])[0]
-
-
         ###### directly resize instead of crop
         # img_GT = cv2.resize(np.copy(img_GT), (GT_size, GT_size),
         #                     interpolation=cv2.INTER_LINEAR)

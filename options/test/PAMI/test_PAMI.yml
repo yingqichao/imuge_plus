@@ -40,7 +40,7 @@ datasets:
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 1 # 4
+    batch_size: 8 # 4
     GT_size: 512 # 608
     #########################
     use_flip: true
@@ -69,53 +69,26 @@ network_G:
 #### path
 
 path:
-#  pretrain_model: ../experiments/pretrained_RHI3_fine_models/12100        # RHI3
-#  pretrain_model: ../experiments/pretrained_crop_fine_models/32100        # Crop
-#  pretrain_model: ../experiments/pretrained_models/fine_models/COCO/22100  # Imuge++ 2100
-#  pretrain_model: ../experiments/pretrained_models/fine_models/CelebA/2100  # Imuge++ 2100
-#  pretrain_model: ../experiments/pretrained_models/230100
-#  pretrain_model: ../experiments/pretrained_models/64100
-  ######## Imuge #########
-  pretrain_model: /qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
-  #########################
-  strict_load: true
-  resume_state: ~
+  ### 1019 test
+  data_origin: /data/20220106_IMUGE/immunized_images_buffer
+  data_tampered: /data/20220106_IMUGE/1021/forged
+  data_tampersource: /data/20220106_IMUGE/1021/forged
+  data_mask: /data/20220106_IMUGE/1021/mask
+  data_storage: /data/20220106_IMUGE/1021
+
+#  data_origin: /groupshare/real_world_test_images/inpainting/ori_COCO_0114
+#  data_tampered: /groupshare/real_world_test_images/inpainting/tamper_COCO_0114
+#  data_tampersource: /groupshare/real_world_test_images/inpainting/tamper_COCO_0114
+#  data_mask: /groupshare/real_world_test_images/inpainting/binary_masks_COCO_0114
+#  data_storage: /groupshare/results/COCO/inpainting/JPEG70
 
 
-#### training settings: learning rate scheme, loss
+#### test setting
 
-train:
-  using_self_defined_dataset: 0.0
-  new_task: 1.0  # 0:imuge 1:outward imuge
-  task_name: ImugeV2 # ImugeV2 # CropLocalize # RHI3
-  debug_mode: 0
-  save_to_latest: 1.0
-  load: 0.0
-  lr_scratch: !!float 2e-5   # 2e-5
-  lr_finetune: !!float 1e-4
-  beta1: 0.9 #0.9
-  beta2: 0.999 #0.999
-  niter: 500000 # not necessary
-  warmup_iter: -1  # no warm up
+test:
+  index: 0
+  quality_idx: 18
 
-  lr_scheme: MultiStepLR
-  lr_steps: [20000, 40000, 60000, 80000 ,100000,120000,140000,160000,180000,200000]
-  lr_gamma: 0.5
-
-  pixel_criterion_forw: l2
-  pixel_criterion_back: l1
-
-  manual_seed: 12
-
-  val_freq: !!float 5e3
-
-  lambda_fit_forw: 16.
-  lambda_rec_back: 1
-  lambda_ce_forw: 1
-  weight_decay_G: !!float 1e-5
-  gradient_clipping: 10
-
-  current_step: 0
 
 #### logger
 

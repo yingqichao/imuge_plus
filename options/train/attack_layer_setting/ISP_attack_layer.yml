@@ -4,15 +4,19 @@ simulated_copymove_indices: [0, 2, 6, 4, 8]
 simulated_inpainting_indices: []
 simulated_copysplicing_indices: []
 
+crop_indices: [3,6,9]
+
 weak_JPEG_lower_bound: 18
 strong_JPEG_upper_bound: 19
 strong_JPEG_lower_bound: 10
+cropping_lower_bound: 0.7
 
 simulated_resize_indices: [0,5]
 simulated_gblur_indices: [6]
 simulated_mblur_indices: [2]
 simulated_AWGN_indices: [1]
-simulated_pure_JPEG_indices: [3,4,7]
+simulated_strong_JPEG_indices: [3,4]
+simulated_weak_JPEG_indices: [7]
 
 simulated_hue: [0]
 simulated_contrast: [1,4]

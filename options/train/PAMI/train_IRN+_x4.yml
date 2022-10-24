@@ -91,8 +91,8 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 1e-4   # 2e-5
-  lr_finetune: !!float 2e-5
+  lr_scratch: !!float 1e-5   # 2e-5
+  lr_finetune: !!float 1e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
   niter: 500000 # not necessary

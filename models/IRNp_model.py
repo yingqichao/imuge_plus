@@ -3,6 +3,7 @@ import logging
 import os
 
 import cv2
+import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms.functional as F
@@ -11,8 +12,7 @@ from skimage.color import rgb2gray
 from skimage.feature import canny
 from torch.nn.parallel import DistributedDataParallel
 
-from models.networks import UNetDiscriminator, \
-    JPEGGenerator
+from models.networks import UNetDiscriminator, JPEGGenerator
 from noise_layers import *
 from utils import stitch_images
 from .base_model import BaseModel
@@ -44,7 +44,7 @@ class IRNpModel(BaseModel):
         self.gpu_id = self.opt["gpu_ids"][0]
         ############## Nets ################################
         self.network_list = []
-        if self.args.mode in {0,1}: # training of Imuge+
+        if self.args.mode in {0,1,3}: # training of Imuge+
             self.network_list = ['netG', 'localizer','discriminator_mask']
 
             self.localizer = UNetDiscriminator() #Localizer().cuda()
@@ -94,7 +94,7 @@ class IRNpModel(BaseModel):
             self.scaler_qf_predict = torch.cuda.amp.GradScaler()
 
         else:
-            raise NotImplementedError("args.mode value error! please check...")
+            raise NotImplementedError("从1012开始，需要指定一下读取哪些模型")
 
         ####################################################################################################
         # todo: Optimizers and Schedulers
@@ -110,11 +110,11 @@ class IRNpModel(BaseModel):
         self.forward_image_buff = None
 
         ########## Load pre-trained ##################
-        if self.args.mode<2:
+        if self.args.mode in [0,1,3]:
             # good_models: '/model/Rerun_4/29999'
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/model/Rerun_3/'
-            self.model_path = str(28999) # 42999
+            self.model_path = str(16999) # 42999 # 8999 # newest: 14999
         else:
             self.out_space_storage = '/data/20220106_IMUGE'
             self.model_storage = '/jpeg_model/Rerun_3/'
@@ -148,6 +148,8 @@ class IRNpModel(BaseModel):
             return self.evaluate()
         elif mode==2.0:
             return self.KD_JPEG_Generator_training(step=step)
+        elif mode==3.0:
+            return self.generate_immunized_images_only(step=step)
 
     def feed_data_router(self, batch, mode):
         self.feed_data(batch, mode='train')
@@ -158,8 +160,12 @@ class IRNpModel(BaseModel):
 
     def feed_data(self, batch, mode="train"):
         img, label, canny_image = batch
-        self.real_H = img.cuda()
-        self.canny_image = canny_image.cuda()
+        if mode=="train":
+            self.real_H = img.cuda()
+            self.canny_image = canny_image.cuda()
+        else:
+            self.real_H_val = img.cuda()
+            self.canny_image_val = canny_image.cuda()
 
     def optimize_parameters(self, step=0, latest_values=None, train=True, eval_dir=None):
         self.netG.train()
@@ -193,15 +199,47 @@ class IRNpModel(BaseModel):
         if not (self.previous_images is None or self.previous_previous_images is None):
 
             with torch.enable_grad():
+                ## settings for attack
+                quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
+                kernel = random.choice([3, 5, 7])  # 3,5,7
+                resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
+                                int(self.random_float(0.7, 1.5) * self.width_height))
 
-                masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
-                                                       percent_range=None, index=self.global_step)
+                if self.global_step%10 in self.opt['crop_indices']:
+                        # not (self.global_step%self.amount_of_benign_attack in (self.opt['simulated_gblur_indices'] + self.opt['simulated_mblur_indices'])) and \
+                        # not (self.global_step%self.amount_of_benign_attack in self.opt['simulated_strong_JPEG_indices'] and quality_idx<16):
+                    logs["cropped"] = True
+                    percent_range = [0, 0.25]
+                    index_for_postprocessing = 7
+                else:
+                    logs["cropped"] = False
+                    percent_range = None
+                    index_for_postprocessing = self.global_step
 
-                ### tamper-based data augmentation
-                skip_aug = np.random.rand()>self.opt['skip_aug_probability']
-                if not skip_aug:
-                    modified_input, modified_canny = self.tamper_based_augmentation(
-                        modified_input=modified_input, modified_canny=modified_canny, masks=masks, masks_GT=masks_GT, index=self.global_step)
+                ## define the mask and augment
+                rate_mask, masks, masks_GT = 0, None, None
+                while rate_mask<0.05 or rate_mask>=0.33 or (logs["cropped"] and rate_mask>=0.2): # prevent too small or too big
+                    masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
+                                                           percent_range=percent_range, index=self.global_step)
+
+                    ### tamper-based data augmentation
+                    skip_aug = np.random.rand() > self.opt['skip_aug_probability']
+                    if not skip_aug:
+                        modified_input, modified_canny = self.tamper_based_augmentation(
+                            modified_input=modified_input, modified_canny=modified_canny, masks=masks,
+                            masks_GT=masks_GT, index=self.global_step)
+                    GT_input = modified_input.clone().detach()
+                    GT_canny = modified_canny.clone().detach()
+
+                    if logs["cropped"]:
+                        ### determine the crop location and mask
+                        locs, cropped, masks = self.cropping_mask_generation(
+                            forward_image=masks, min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
+                        masks = torch.where(masks > 0.5, 1.0, 0.0)
+                        masks_GT = masks[:, :1]
+
+                    rate_mask = torch.mean(masks_GT)
+
 
                 ### forward image generation
                 forward_stuff = self.netG(x=torch.cat((modified_input, modified_canny), dim=1))
@@ -214,23 +252,34 @@ class IRNpModel(BaseModel):
                 forward_image = self.clamp_with_grad(forward_image)
                 psnr_forward = self.psnr(self.postprocess(modified_input), self.postprocess(forward_image)).item()
 
+                ### cropping, skip the two blurs and heavy JPEG compression
+                if logs["cropped"]:
+                    # locs, cropped, forward_processed = self.cropping_mask_generation(
+                    #     forward_image=forward_image,  min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
+                    # h_start, h_end, w_start, w_end = locs
+                    _, _, forward_processed = self.cropping_mask_generation(forward_image=forward_image, locs=locs)
+                    ### adjust the ground truth
+                    # _, _, masks = self.cropping_mask_generation(forward_image=masks, locs=locs)
+                    _, _, GT_input = self.cropping_mask_generation(forward_image=GT_input, locs=locs)
+                    _, _, GT_canny = self.cropping_mask_generation(forward_image=GT_canny, locs=locs)
+                    # masks = torch.where(masks>0.5,1.0,0.0)
+                    # masks_GT = masks[:,:1]
+                else:
+                    forward_processed = forward_image
+
+
                 ### tampering the image
                 attacked_forward, masks, masks_GT = self.tampering_PAMI(
-                    forward_image=forward_image, masks=masks, masks_GT=masks_GT, modified_canny=modified_canny,
+                    forward_image=forward_processed, masks=masks, masks_GT=masks_GT, modified_canny=modified_canny,
                     percent_range=percent_range, index=self.global_step)
 
                 ### image post-processings
-                skip_robust = np.random.rand() > self.opt['skip_attack_probability']
+                skip_robust = logs["cropped"] or np.random.rand() > self.opt['skip_attack_probability']
                 if not skip_robust:
-                    ## settings for attack
-                    quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
-                    kernel = random.choice([3,5,7]) # 3,5,7
-                    resize_ratio = (int(self.random_float(0.7, 1.5)*self.width_height),
-                                    int(self.random_float(0.7, 1.5)*self.width_height))
                     ### real-world attack: simulated + (real-simulated).detach
                     attacked_image, attacked_real_jpeg_simulate, adjusted_settings = self.benign_attacks(attacked_forward=attacked_forward,
                                                                                      quality_idx=quality_idx,
-                                                                                     index=self.global_step,
+                                                                                     index=index_for_postprocessing,
                                                                                      kernel_size=kernel,
                                                                                      resize_ratio=resize_ratio
                                                                                       )
@@ -239,9 +288,9 @@ class IRNpModel(BaseModel):
                     logs['quality_idx'] = quality_idx
                     # UPDATE THE GROUND-TRUTH TO EASE TRAINING
                     # GT_modified_input = modified_input
-                    GT_modified_input = self.benign_attacks_without_simulation(forward_image=modified_input,
+                    GT_modified_input = self.benign_attacks_without_simulation(forward_image=GT_input,
                                                                                quality_idx=quality_idx,
-                                                                               index=self.global_step,
+                                                                               index=index_for_postprocessing,
                                                                                kernel_size=kernel,
                                                                                resize_ratio=resize_ratio
                                                                                ).detach()
@@ -254,9 +303,9 @@ class IRNpModel(BaseModel):
 
                 else:
                     attacked_image = attacked_forward
-                    attacked_real_jpeg_simulate = attacked_forward
+                    # attacked_real_jpeg_simulate = attacked_forward
                     # UPDATE THE GROUND-TRUTH TO EASE TRAINING
-                    GT_modified_input = modified_input
+                    GT_modified_input = GT_input
                     error_l1, real_and_simulate = 40, 40
                     logs['ERROR'], logs['SIMU'] = error_l1, real_and_simulate
 
@@ -284,8 +333,8 @@ class IRNpModel(BaseModel):
                 l_backward = self.l1_loss(reversed_image, GT_modified_input)
                 l_backward_local = self.l1_loss(reversed_image * masks, GT_modified_input * masks)
 
-                l_back_canny = self.l1_loss(reversed_canny, modified_canny)
-                l_back_canny_local = self.l1_loss(reversed_canny * masks, modified_canny * masks)
+                l_back_canny = self.l1_loss(reversed_canny, GT_canny)
+                l_back_canny_local = self.l1_loss(reversed_canny * masks, GT_canny * masks)
                 l_percept_bk_ssim = - self.ssim_loss(reversed_image, GT_modified_input)
                 reversed_image = self.clamp_with_grad(reversed_image)
                 reversed_canny = self.clamp_with_grad(reversed_canny)
@@ -354,9 +403,9 @@ class IRNpModel(BaseModel):
                 # l_backward_local_ideal = (self.l1_loss(reversed_image_ideal * masks, modified_input * masks))
                 l_backward_sum = 0
                 l_backward_sum += 0.5*l_backward
-                l_backward_sum += 0.5*l_backward_local
+                l_backward_sum += 1.5*l_backward_local
                 l_backward_sum += 1.0*l_back_canny
-                # l_backward_sum += 0.1 * l_percept_bk_ssim
+                # l_backward_sum += 0.01 * l_percept_bk_ssim
 
                 # ### dis_loss
                 # # if self.global_step % self.opt["GAN_update_period"] == self.opt["GAN_update_period"] - 1:
@@ -447,20 +496,22 @@ class IRNpModel(BaseModel):
                         self.postprocess(masks_real),
                         self.postprocess(tampered_attacked_image),
                         self.postprocess(reversed_image),
-                        self.postprocess(modified_input),
-                        self.postprocess(10 * torch.abs(modified_input - reversed_image)),
+                        self.postprocess(GT_modified_input),
+                        self.postprocess(10 * torch.abs(GT_modified_input - reversed_image)),
                         self.postprocess(reversed_canny),
-                        self.postprocess(10 * torch.abs(modified_canny - reversed_canny)),
+                        self.postprocess(GT_canny),
+                        self.postprocess(10 * torch.abs(reversed_canny - GT_canny)),
                         img_per_row=1
                     )
 
                     name = self.out_space_storage + '/errors/' + str(self.global_step).zfill(5) + "_ " + str(
-                        self.gpu_id) + "_ " + str(self.rank) \
+                        3) + "_ " + str(self.rank) \
                            + ".png"
                     print('\nsaving sample ' + name)
                     images.save(name)
 
                     if loss_without_canny>1:
+                        print(f"log before final explosion: {logs}")
                         raise StopIteration(f"Oh! the gradient has exploded.{loss_without_canny}")
 
                 loss.backward()
@@ -508,21 +559,18 @@ class IRNpModel(BaseModel):
                     self.postprocess(torch.sigmoid(gen_attacked_train)),
                     self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(gen_attacked_train))),
                     self.postprocess(masks_real),
-                    # self.postprocess(torch.sigmoid(gen_non_attacked)),
-                    # self.postprocess(torch.sigmoid(gen_not_protected)),
-                    # self.postprocess(torch.sigmoid(gen_attacked_train_1)),
-                    # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(gen_attacked_train_1))),
                     self.postprocess(tampered_attacked_image),
                     self.postprocess(reversed_image),
-                    self.postprocess(modified_input),
-                    self.postprocess(10 * torch.abs(modified_input - reversed_image)),
+                    self.postprocess(GT_modified_input),
+                    self.postprocess(10 * torch.abs(GT_modified_input - reversed_image)),
                     self.postprocess(reversed_canny),
-                    self.postprocess(10 * torch.abs(modified_canny - reversed_canny)),
+                    self.postprocess(GT_canny),
+                    self.postprocess(10 * torch.abs(reversed_canny - GT_canny)),
                     img_per_row=1
                 )
 
-                name = self.out_space_storage + '/images/'+self.task_name+'_'+str(self.gpu_id)+'/'\
-                       +str(self.global_step).zfill(5) + "_ "+str(self.gpu_id) + "_ "+str(self.rank) \
+                name = self.out_space_storage + '/images/'+self.task_name+'_'+str(3)+'/'\
+                       +str(self.global_step).zfill(5) + "_ "+str(3) + "_ "+str(self.rank) \
                        +("" if not anomalies else "_anomaly")+ ".png"
                 print('\nsaving sample ' + name)
                 images.save(name)
@@ -575,7 +623,7 @@ class IRNpModel(BaseModel):
         if index is None:
             index = self.global_step
         index = index % self.amount_of_tampering
-        if index not in self.opt['simulated_copymove_indices']:
+        if index not in self.opt['simulated_copymove_indices'] and index not in self.opt['simulated_copysplicing_indices']:
             modified_input = (modified_input * (1 - masks) + self.previous_images * masks).clone().detach()
             modified_canny = (modified_canny * (1 - masks_GT) + self.previous_canny * masks_GT).clone().detach()
 
@@ -965,8 +1013,8 @@ class IRNpModel(BaseModel):
                     img_per_row=1
                 )
 
-                name = self.out_space_storage + '/jpeg_images/' + self.task_name + '_' + str(self.gpu_id) + '/' \
-                       + str(self.global_step).zfill(5) + "_ " + str(self.gpu_id) + "_ " + str(self.rank) \
+                name = self.out_space_storage + '/jpeg_images/' + self.task_name + '_' + str(3) + '/' \
+                       + str(self.global_step).zfill(5) + "_ " + str(3) + "_ " + str(self.rank) \
                        + ("" if not anomalies else "_anomaly") + ".png"
                 print('\nsaving sample ' + name)
                 images.save(name)
@@ -987,17 +1035,283 @@ class IRNpModel(BaseModel):
         return logs, debug_logs
 
 
-    def generate_immunized_images_only(self,data_origin=None,data_immunize=None,data_tampered=None,data_tampersource=None,data_mask=None):
+    def generate_immunized_images_only(self,step):
+        self.netG.eval()
+        # print(self.canny_image.shape)
+        forward_stuff = self.netG(x=torch.cat((self.real_H_val, self.canny_image_val), dim=1))
+        self.immunize = forward_stuff[:, :3, :, :]
+        self.immunize = self.clamp_with_grad(self.immunize)
+        name = f'/data/20220106_IMUGE/immunized_images_buffer'
+        for image_no in range(self.immunize.shape[0]):
+            camera_ready = self.immunize[image_no].unsqueeze(0)
+            torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                         f"{name}/{str(self.global_step)}_new.png", nrow=1, padding=0,
+                                         normalize=False)
+
+            camera_ready = self.real_H_val[image_no].unsqueeze(0)
+            torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                         f"{name}/{str(self.global_step)}_ori.png", nrow=1, padding=0,
+                                         normalize=False)
+            print(f"Saved:{name}/{str(self.global_step)}_{image_no}.png")
+
+        self.global_step = self.global_step + 1
+        psnr_forward = self.psnr(self.postprocess(self.real_H_val), self.postprocess(self.immunize)).item()
+        logs={}
+        logs['lr'] = 0
+        logs['file_generated'] = psnr_forward
+
+        return logs, None, True
+
+    def localize_and_recover_only(self, data_origin=None,data_immunize=None,data_tampered=None,data_tampersource=None,data_mask=None):
         self.netG.eval()
         self.localizer.eval()
+        # print(self.canny_image.shape)
+        forward_stuff = self.netG(x=torch.cat((self.real_H_val, self.canny_image_val), dim=1))
+        self.immunize = forward_stuff[:, :3, :, :]
+        self.immunize = self.clamp_with_grad(self.immunize)
+        name = f'/data/20220106_IMUGE/immunized_images_buffer'
+        for image_no in range(self.immunize.shape[0]):
+            camera_ready = self.immunize[image_no].unsqueeze(0)
+            torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                         f"{name}/{str(self.global_step)}_new.png", nrow=1, padding=0,
+                                         normalize=False)
+            print(f"Saved:{name}/{str(self.global_step)}_{image_no}.png")
 
+        self.global_step = self.global_step + 1
+        psnr_forward = self.psnr(self.postprocess(self.real_H_val), self.postprocess(self.immunize)).item()
+        logs = {}
+        logs['lr'] = 0
+        logs['file_generated'] = psnr_forward
 
+        return logs, None, True
+
+    # def evaluate(self,data_origin=None,data_immunize=None,data_tampered=None,data_tampersource=None,data_mask=None):
+    #     self.netG.eval()
+    #     self.localizer.eval()
+    #
+    #     eval_size = self.width_height
+    #
+    #     load_image_query = {
+    #         "load_immunize": False,
+    #         "load_tampered": False,
+    #         "load_attack": False,
+    #     }
+    #
+    #     with torch.no_grad():
+    #         psnr_forward_sum, psnr_backward_sum = [0,0,0,0,0],  [0,0,0,0,0]
+    #         ssim_forward_sum, ssim_backward_sum =  [0,0,0,0,0],  [0,0,0,0,0]
+    #         F1_sum =  [0,0,0,0,0]
+    #         valid_images = [0,0,0,0,0]
+    #         logs, debug_logs = [], []
+    #         origin_dict = self.get_paths_from_images(data_origin)
+    #         immunize_dict = self.get_paths_from_images(data_immunize)
+    #         tamper_dict = self.get_paths_from_images(data_tampered)
+    #         tampersource_dict = self.get_paths_from_images(data_tampersource)
+    #         mask_dict = self.get_paths_from_images(data_mask)
+    #
+    #         for img_path in tampersource_dict:
+    #             ### p q r represent path, dirpath and filename
+    #             ### original image
+    #             if not (img_path in origin_dict and img_path in mask_dict):
+    #                 ## required material not found, skip
+    #                 continue
+    #
+    #             ori_path = origin_dict[img_path] if "1019" not in data_tampered else origin_dict[img_path.split("_")[0]+"_ori.png"]
+    #             self.real_H, self.canny_image = self.load_image(ori_path, require_canny=True)
+    #             print("Ori: {} {}".format(ori_path, self.real_H.shape))
+    #
+    #             ### mask image
+    #             mask_path = mask_dict[img_path]
+    #             self.mask = torch.where(self.load_image(mask_path, grayscale=True)>0.5,1.0,0.0)
+    #             self.mask = self.mask.repeat(1,3,1,1)
+    #
+    #             ### tamper source
+    #             if tampersource_dict is not None:
+    #                 another_path = tampersource_dict[img_path]
+    #                 self.another_image = self.load_image(another_path)
+    #                 ### clean up signal ###
+    #                 self.another_image = self.gaussian_blur.forward_with_specific_kernel(self.another_image, kernel=3)
+    #
+    #
+    #             ### skip images with too large tamper masks
+    #             masked_rate = torch.mean(self.mask)
+    #             # redo_gen_mask = masked_rate>0.5
+    #
+    #             catogory = min(4,int(masked_rate*20))
+    #             valid_images[catogory] += 1
+    #             # is_copy_move = False
+    #
+    #             ### immunized image
+    #             if load_image_query["load_immunize"]:
+    #                 immu_path = immunize_dict[img_path]
+    #                 self.immunize = self.load_image(immu_path)
+    #             else:
+    #                 ##### clean up signal ########
+    #                 modified_input = self.gaussian_blur.forward_with_specific_kernel(self.real_H,kernel=3)
+    #                 locs, cropped, modified_input = self.cropping_mask_generation(
+    #                     forward_image=modified_input, min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
+    #
+    #                 # print(self.canny_image.shape)
+    #                 # forward_stuff = self.netG(x=torch.cat((modified_input, self.canny_image), dim=1))
+    #                 # self.immunize, forward_null = forward_stuff[:, :3, :, :], forward_stuff[:, 3:, :, :]
+    #                 # self.immunize = self.clamp_with_grad(self.immunize)
+    #                 # self.immunize = self.immunize * self.mask + modified_input * (1-self.mask)
+    #
+    #                 self.immunize = modified_input
+    #
+    #                 # self.immunize = self.Quantization(self.immunize)
+    #                 # forward_null = self.clamp_with_grad(forward_null)
+    #
+    #             ####### Tamper ###############
+    #             if load_image_query["load_tampered"]: #self.attacked_image is None:
+    #                 ### tampered image
+    #                 attack_path = attack_path[img_path]
+    #                 self.diffused_image = self.load_image(attack_path)
+    #             else:
+    #                 self.diffused_image = self.immunize * (1-self.mask) + self.another_image * self.mask
+    #                 self.diffused_image = self.clamp_with_grad(self.diffused_image)
+    #
+    #             ####### CV2 (real-world image postprocessing) ###############
+    #             index = self.opt['test']['index']
+    #             quality_idx = self.opt['test']['quality_idx'] #self.get_quality_idx_by_iteration(index=index)
+    #             kernel = random.choice([3, 5, 7])  # 3,5,7
+    #             resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
+    #                             int(self.random_float(0.7, 1.5) * self.width_height))
+    #             self.attacked_image = self.real_world_attacking_on_ndarray(grid=self.diffused_image[0],
+    #                                                                        qf_after_blur=quality_idx*5,
+    #                                                                        index=index, kernel=kernel, resize_ratio=resize_ratio)
+    #             psnr_diff = self.psnr(self.postprocess(self.attacked_image), self.postprocess(self.diffused_image)).item()
+    #             print(f"psnr diff: {psnr_diff}")
+    #
+    #             self.reverse_GT = self.real_world_attacking_on_ndarray(grid=self.real_H[0],
+    #                                                                        qf_after_blur=quality_idx*5,
+    #                                                                        index=index, kernel=kernel, resize_ratio=resize_ratio)
+    #
+    #             ###### mask prediction #########
+    #             self.predicted_mask = torch.sigmoid(self.localizer(self.attacked_image))
+    #             self.predicted_mask_binary = torch.where(self.predicted_mask > 0.5, 1.0, 0.0)
+    #             F1, TP = self.F1score(self.predicted_mask_binary, torch.where(self.mask[:,:1]>0.5,1.0,0.0), thresh=0.5)
+    #             F1_sum[catogory] += F1
+    #             self.predicted_mask_binary = self.Erode_Dilate(self.predicted_mask_binary)
+    #             # masks_GT = self.predicted_mask_binary
+    #             self.predicted_mask_binary = self.predicted_mask_binary.repeat(1, 3, 1, 1)
+    #
+    #             ####### image recovery #########
+    #             self.rectified_image = self.attacked_image * (1 - self.predicted_mask_binary)
+    #             self.rectified_image = self.clamp_with_grad(self.rectified_image)
+    #             canny_input = torch.zeros_like(self.canny_image).cuda()
+    #             reversed_stuff, reverse_feature = self.netG(
+    #                 torch.cat((self.rectified_image, canny_input), dim=1), rev=True)
+    #             reversed_ch1, reversed_ch2 = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
+    #             reversed_ch1 = self.clamp_with_grad(reversed_ch1)
+    #             reversed_ch2 = self.clamp_with_grad(reversed_ch2)
+    #             self.reversed_image = reversed_ch1
+    #             self.reversed_canny = reversed_ch2
+    #
+    #             ####### clean up #########
+    #             psnr_forward = self.psnr(self.postprocess(self.real_H), self.postprocess(self.immunize)).item()
+    #             psnr_backward = self.psnr(self.postprocess(self.reverse_GT),
+    #                                       self.postprocess(self.reversed_image)).item()
+    #             l_percept_fw_ssim = - self.ssim_loss(self.immunize, self.real_H)
+    #             l_percept_bk_ssim = - self.ssim_loss(self.reversed_image, self.reverse_GT)
+    #             ssim_forward = (-l_percept_fw_ssim).item()
+    #             ssim_backward = (-l_percept_bk_ssim).item()
+    #             psnr_forward_sum[catogory] += psnr_forward
+    #             psnr_backward_sum[catogory] += psnr_backward
+    #             ssim_forward_sum[catogory] += ssim_forward
+    #             ssim_backward_sum[catogory] += ssim_backward
+    #             print("PF {:2f} PB {:2f} ".format(psnr_forward,psnr_backward))
+    #             print("SF {:3f} SB {:3f} ".format(ssim_forward, ssim_backward))
+    #             print("PFSum {:2f} SFSum {:2f} ".format(np.sum(psnr_forward_sum)/np.sum(valid_images),
+    #                                                     np.sum(ssim_forward_sum)/np.sum(valid_images)))
+    #             print("PB {:3f} {:3f} {:3f} {:3f} {:3f}".format(
+    #                 psnr_backward_sum[0]/(valid_images[0]+1e-3), psnr_backward_sum[1]/(valid_images[1]+1e-3),
+    #                 psnr_backward_sum[2]/(valid_images[2]+1e-3),
+    #                 psnr_backward_sum[3]/(valid_images[3]+1e-3), psnr_backward_sum[4]/(valid_images[4]+1e-3)))
+    #             print("SB {:3f} {:3f} {:3f} {:3f} {:3f}".format(
+    #                 ssim_backward_sum[0] / (valid_images[0]+1e-3), ssim_backward_sum[1] / (valid_images[1]+1e-3),
+    #                 ssim_backward_sum[2] / (valid_images[2]+1e-3),
+    #                 ssim_backward_sum[3] / (valid_images[3]+1e-3), ssim_backward_sum[4] / (valid_images[4]+1e-3)))
+    #             print("F1 {:3f} {:3f} {:3f} {:3f} {:3f}".format(
+    #                 F1_sum[0] / (valid_images[0]+1e-3), F1_sum[1] / (valid_images[1]+1e-3),
+    #                 F1_sum[2] / (valid_images[2]+1e-3),
+    #                 F1_sum[3] / (valid_images[3]+1e-3), F1_sum[4] / (valid_images[4]+1e-3)))
+    #             print("Valid {:3f} {:3f} {:3f} {:3f} {:3f}".format(valid_images[0],valid_images[1],valid_images[2],
+    #                                                                valid_images[3],valid_images[4]))
+    #
+    #             ######### Save independent images #############
+    #             save_images = True
+    #             if save_images:
+    #                 # eval_kind = self.opt['eval_kind'] #'copy-move/results/RESIZE'
+    #                 # eval_attack = self.opt['eval_attack']
+    #                 # main_folder = os.path.join(self.out_space_storage,'results', self.opt['dataset_name'], eval_kind)
+    #                 # sub_folder = os.path.join(main_folder,eval_attack)
+    #                 # if not os.path.exists(main_folder): os.mkdir(main_folder)
+    #                 # if not os.path.exists(sub_folder): os .mkdir(sub_folder)
+    #                 # if not os.path.exists(sub_folder+ '/recovered_image'): os.mkdir(sub_folder+ '/recovered_image')
+    #                 # if not os.path.exists(sub_folder + '/predicted_masks'): os.mkdir(sub_folder + '/predicted_masks')
+    #                 sub_folder = self.opt['path']['data_storage']
+    #
+    #                 name = sub_folder + '/recovered_image/' + img_path
+    #                 for image_no in range(self.reversed_image.shape[0]):
+    #                     camera_ready = self.reversed_image[image_no].unsqueeze(0)
+    #                     torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                                  name, nrow=1, padding=0,
+    #                                                  normalize=False)
+    #                 print("Saved:{}".format(name))
+    #
+    #                 name = sub_folder + '/immunized_images/' + img_path
+    #                 for image_no in range(self.immunize.shape[0]):
+    #                     camera_ready = self.immunize[image_no].unsqueeze(0)
+    #                     torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                                  name, nrow=1, padding=0,
+    #                                                  normalize=False)
+    #                 print("Saved:{}".format(name))
+    #
+    #                 name = sub_folder + '/input/' + img_path
+    #                 for image_no in range(self.real_H.shape[0]):
+    #                     camera_ready = self.real_H[image_no].unsqueeze(0)
+    #                     torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                                  name, nrow=1, padding=0,
+    #                                                  normalize=False)
+    #                 print("Saved:{}".format(name))
+    #
+    #                 name = sub_folder + '/forged/' + img_path
+    #                 for image_no in range(self.attacked_image.shape[0]):
+    #                     camera_ready = self.attacked_image[image_no].unsqueeze(0)
+    #                     torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                                  name, nrow=1, padding=0,
+    #                                                  normalize=False)
+    #                 print("Saved:{}".format(name))
+    #
+    #                 name = sub_folder + '/mask_GT/' + img_path
+    #                 for image_no in range(self.mask.shape[0]):
+    #                     camera_ready = self.mask[image_no].unsqueeze(0)
+    #                     torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                                  name, nrow=1, padding=0,
+    #                                                  normalize=False)
+    #                 print("Saved:{}".format(name))
+    #
+    #                 name = sub_folder + '/predicted_masks/' + img_path
+    #
+    #                 for image_no in range(self.predicted_mask.shape[0]):
+    #                     camera_ready = self.predicted_mask[image_no].unsqueeze(0)
+    #                     torchvision.utils.save_image((camera_ready * 255).round() / 255,
+    #                                                  name, nrow=1, padding=0,
+    #                                                  normalize=False)
+    #                 print("Saved:{}".format(name))
 
     def evaluate(self,data_origin=None,data_immunize=None,data_tampered=None,data_tampersource=None,data_mask=None):
         self.netG.eval()
         self.localizer.eval()
 
-        eval_size = 512
+        eval_size = self.width_height
+
+        load_image_query = {
+            "load_immunize": False,
+            "load_tampered": False,
+            "load_attack": False,
+        }
 
         with torch.no_grad():
             psnr_forward_sum, psnr_backward_sum = [0,0,0,0,0],  [0,0,0,0,0]
@@ -1005,108 +1319,93 @@ class IRNpModel(BaseModel):
             F1_sum =  [0,0,0,0,0]
             valid_images = [0,0,0,0,0]
             logs, debug_logs = [], []
-            image_list_origin = None if data_origin is None else self.get_paths_from_images(data_origin)
-            image_list_immunize = None if data_immunize is None else self.get_paths_from_images(data_immunize)
-            image_list_tamper = None if data_tampered is None else self.get_paths_from_images(data_tampered)
-            image_list_tampersource = None if data_tampersource is None else self.get_paths_from_images(data_tampersource)
-            image_list_mask = None if data_mask is None else self.get_paths_from_images(data_mask)
+            origin_dict = self.get_paths_from_images(data_origin)
+            immunize_dict = self.get_paths_from_images(data_immunize)
+            tamper_dict = self.get_paths_from_images(data_tampered)
+            tampersource_dict = self.get_paths_from_images(data_tampersource)
+            mask_dict = self.get_paths_from_images(data_mask)
 
-            for idx in range(len(image_list_origin)):
+            for img_path in tampersource_dict:
+                ### p q r represent path, dirpath and filename
+                ### original image
+                if not (img_path in origin_dict and img_path in mask_dict):
+                    ## required material not found, skip
+                    continue
 
-                p, q, r = image_list_origin[idx]
-                ori_path = os.path.join(p, q, r)
-                img_GT = self.load_image(ori_path)
-                print("Ori: {} {}".format(ori_path, img_GT.shape))
-                self.real_H = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
-                self.real_H = self.clamp_with_grad(self.real_H)
-                img_gray = rgb2gray(img_GT)
-                sigma = 2  # random.randint(1, 4)
-                cannied = canny(img_gray, sigma=sigma, mask=None).astype(np.float)
-                self.canny_image = self.image_to_tensor(cannied).cuda().unsqueeze(0)
+                ori_path = origin_dict[img_path] if "10" not in data_tampered else origin_dict[img_path.split("_")[0]+"_ori.png"]
+                self.real_H, self.canny_image = self.load_image(ori_path, require_canny=True)
+                print("Ori: {} {}".format(ori_path, self.real_H.shape))
 
-                p, q, r = image_list_immunize[idx]
-                immu_path = os.path.join(p, q, r)
-                img_GT = self.load_image(immu_path)
-                print("Imu: {} {}".format(immu_path, img_GT.shape))
-                self.immunize = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
-                self.immunize = self.clamp_with_grad(self.immunize)
-                p, q, r = image_list_tamper[idx]
-                attack_path = os.path.join(p, q, r)
-                img_GT = self.load_image(attack_path)
-                print("Atk: {} {}".format(attack_path, img_GT.shape))
-                self.attacked_image = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
-                self.attacked_image = self.clamp_with_grad(self.attacked_image)
-                p, q, r = image_list_tampersource[idx]
-                another_path = os.path.join(p, q, r)
-                img_GT = self.load_image(another_path)
-                print("Another: {} {}".format(another_path, img_GT.shape))
-                self.another_image = self.img_random_crop(img_GT, eval_size, eval_size).cuda().unsqueeze(0)
-                self.another_image = self.clamp_with_grad(self.another_image)
-                p, q, r = image_list_mask[idx]
-                mask_path = os.path.join(p, q, r)
-                img_GT = self.load_image(mask_path, grayscale=True)
-                print("Mask: {} {}".format(mask_path, img_GT.shape))
-                self.mask = self.img_random_crop(img_GT, eval_size, eval_size, grayscale=True).cuda().unsqueeze(0)
-                self.mask = self.clamp_with_grad(self.mask)
+                ### mask image
+                mask_path = mask_dict[img_path]
+                self.mask = torch.where(self.load_image(mask_path, grayscale=True)>0.5,1.0,0.0)
                 self.mask = self.mask.repeat(1,3,1,1)
+
+                ### tamper source
+                if tampersource_dict is not None:
+                    another_path = tampersource_dict[img_path]
+                    self.another_image = self.load_image(another_path)
 
                 ### skip images with too large tamper masks
                 masked_rate = torch.mean(self.mask)
                 redo_gen_mask = masked_rate>0.5
-                    # print("Masked rate exceed maximum: {}".format(masked_rate))
-                    # continue
 
                 catogory = min(4,int(masked_rate*20))
                 valid_images[catogory] += 1
                 is_copy_move = False
-                if True: #self.immunize is None:
+
+                ### immunized image
+                if load_image_query["load_immunize"]:
+                    immu_path = immunize_dict[img_path]
+                    self.immunize = self.load_image(immu_path)
+                else:
                     ##### re-generates immunized images ########
                     modified_input = self.real_H
                     # print(self.canny_image.shape)
                     forward_stuff = self.netG(x=torch.cat((modified_input, self.canny_image), dim=1))
                     self.immunize, forward_null = forward_stuff[:, :3, :, :], forward_stuff[:, 3:, :, :]
                     self.immunize = self.clamp_with_grad(self.immunize)
-                    self.immunize = self.Quantization(self.immunize)
+                    # self.immunize = self.Quantization(self.immunize)
                     forward_null = self.clamp_with_grad(forward_null)
 
                 ####### Tamper ###############
-                if True: #self.attacked_image is None:
+                if load_image_query["load_tampered"]: #self.attacked_image is None:
+                    ### tampered image
+                    attack_path = attack_path[img_path]
+                    self.diffused_image = self.load_image(attack_path)
+                else:
+                    self.diffused_image = self.immunize * (1-self.mask) + self.another_image * self.mask
+                    self.diffused_image = self.clamp_with_grad(self.diffused_image)
 
-                    self.attacked_image = self.immunize * (1-self.mask) + self.another_image * self.mask
-                    self.attacked_image = self.clamp_with_grad(self.attacked_image)
-
-                index = np.random.randint(0,5)
+                ####### CV2 (real-world image postprocessing) ###############
+                index = self.opt['test']['index']
+                quality_idx = self.opt['test']['quality_idx'] #self.get_quality_idx_by_iteration(index=index)
+                kernel = random.choice([3, 5, 7])  # 3,5,7
                 resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
                                 int(self.random_float(0.7, 1.5) * self.width_height))
-                self.attacked_image = self.real_world_attacking_on_ndarray(grid=self.attacked_image[0],
-                                                                           qf_after_blur=100 if index<3 else 70,
-                                                                           index=index, kernel=5, resize_ratio=resize_ratio)
+                self.attacked_image = self.real_world_attacking_on_ndarray(grid=self.diffused_image[0],
+                                                                           qf_after_blur=quality_idx*5,
+                                                                           index=index, kernel=kernel, resize_ratio=resize_ratio)
+                psnr_diff = self.psnr(self.postprocess(self.attacked_image), self.postprocess(self.diffused_image)).item()
+                print(f"psnr diff: {psnr_diff}")
+
                 self.reverse_GT = self.real_world_attacking_on_ndarray(grid=self.real_H[0],
-                                                                           qf_after_blur=100 if index < 3 else 70,
-                                                                           index=index, kernel=5, resize_ratio=resize_ratio)
+                                                                           qf_after_blur=quality_idx*5,
+                                                                           index=index, kernel=kernel, resize_ratio=resize_ratio)
 
-                # self.attacked_image = self.clamp_with_grad(self.attacked_image)
-                # self.attacked_image = self.Quantization(self.attacked_image)
-
-                self.diffused_image = self.attacked_image.clone().detach()
-                self.predicted_mask = torch.sigmoid(self.localizer(self.diffused_image))
-
-
-                self.predicted_mask = torch.where(self.predicted_mask > 0.5, 1.0, 0.0)
-                self.predicted_mask = self.Erode_Dilate(self.predicted_mask)
-
-                F1, TP = self.F1score(self.predicted_mask, self.mask, thresh=0.5)
+                ###### mask prediction #########
+                self.predicted_mask = torch.sigmoid(self.localizer(self.attacked_image))
+                self.predicted_mask_binary = torch.where(self.predicted_mask > 0.5, 1.0, 0.0)
+                F1, TP = self.F1score(self.predicted_mask_binary, torch.where(self.mask[:,:1]>0.5,1.0,0.0), thresh=0.5)
                 F1_sum[catogory] += F1
+                self.predicted_mask_binary = self.Erode_Dilate(self.predicted_mask_binary)
+                # masks_GT = self.predicted_mask_binary
+                self.predicted_mask_binary = self.predicted_mask_binary.repeat(1, 3, 1, 1)
 
-                masks_GT = self.predicted_mask
-                self.predicted_mask = self.predicted_mask.repeat(1, 3, 1, 1)
-
-                self.rectified_image = self.attacked_image * (1 - self.predicted_mask)
+                ####### image recovery #########
+                self.rectified_image = self.attacked_image * (1 - self.predicted_mask_binary)
                 self.rectified_image = self.clamp_with_grad(self.rectified_image)
-
-
-                canny_input = masks_GT #(torch.zeros_like(self.canny_image).cuda())
-
+                canny_input = torch.zeros_like(self.canny_image).cuda()
                 reversed_stuff, reverse_feature = self.netG(
                     torch.cat((self.rectified_image, canny_input), dim=1), rev=True)
                 reversed_ch1, reversed_ch2 = reversed_stuff[:, :3, :, :], reversed_stuff[:, 3:, :, :]
@@ -1115,6 +1414,7 @@ class IRNpModel(BaseModel):
                 self.reversed_image = reversed_ch1
                 self.reversed_canny = reversed_ch2
 
+                ####### clean up #########
                 psnr_forward = self.psnr(self.postprocess(self.real_H), self.postprocess(self.immunize)).item()
                 psnr_backward = self.psnr(self.postprocess(self.reverse_GT),
                                           self.postprocess(self.reversed_image)).item()
@@ -1145,19 +1445,20 @@ class IRNpModel(BaseModel):
                 print("Valid {:3f} {:3f} {:3f} {:3f} {:3f}".format(valid_images[0],valid_images[1],valid_images[2],
                                                                    valid_images[3],valid_images[4]))
 
-                # ####### Save independent images #############
+                ######### Save independent images #############
                 save_images = True
                 if save_images:
-                    eval_kind = self.opt['eval_kind'] #'copy-move/results/RESIZE'
-                    eval_attack = self.opt['eval_attack']
-                    main_folder = os.path.join(self.out_space_storage,'results', self.opt['dataset_name'], eval_kind)
-                    sub_folder = os.path.join(main_folder,eval_attack)
-                    if not os.path.exists(main_folder): os.mkdir(main_folder)
-                    if not os.path.exists(sub_folder): os .mkdir(sub_folder)
-                    if not os.path.exists(sub_folder+ '/recovered_image'): os.mkdir(sub_folder+ '/recovered_image')
-                    if not os.path.exists(sub_folder + '/predicted_masks'): os.mkdir(sub_folder + '/predicted_masks')
+                    # eval_kind = self.opt['eval_kind'] #'copy-move/results/RESIZE'
+                    # eval_attack = self.opt['eval_attack']
+                    # main_folder = os.path.join(self.out_space_storage,'results', self.opt['dataset_name'], eval_kind)
+                    # sub_folder = os.path.join(main_folder,eval_attack)
+                    # if not os.path.exists(main_folder): os.mkdir(main_folder)
+                    # if not os.path.exists(sub_folder): os .mkdir(sub_folder)
+                    # if not os.path.exists(sub_folder+ '/recovered_image'): os.mkdir(sub_folder+ '/recovered_image')
+                    # if not os.path.exists(sub_folder + '/predicted_masks'): os.mkdir(sub_folder + '/predicted_masks')
+                    sub_folder = self.opt['path']['data_storage']
 
-                    name = sub_folder + '/recovered_image/' + r
+                    name = sub_folder + '/recovered_image/' + img_path
                     for image_no in range(self.reversed_image.shape[0]):
                         camera_ready = self.reversed_image[image_no].unsqueeze(0)
                         torchvision.utils.save_image((camera_ready * 255).round() / 255,
@@ -1165,7 +1466,39 @@ class IRNpModel(BaseModel):
                                                      normalize=False)
                     print("Saved:{}".format(name))
 
-                    name = sub_folder + '/predicted_masks/' + r
+                    name = sub_folder + '/immunized_images/' + img_path
+                    for image_no in range(self.immunize.shape[0]):
+                        camera_ready = self.immunize[image_no].unsqueeze(0)
+                        torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                                     name, nrow=1, padding=0,
+                                                     normalize=False)
+                    print("Saved:{}".format(name))
+
+                    name = sub_folder + '/input/' + img_path
+                    for image_no in range(self.real_H.shape[0]):
+                        camera_ready = self.real_H[image_no].unsqueeze(0)
+                        torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                                     name, nrow=1, padding=0,
+                                                     normalize=False)
+                    print("Saved:{}".format(name))
+
+                    name = sub_folder + '/forged/' + img_path
+                    for image_no in range(self.attacked_image.shape[0]):
+                        camera_ready = self.attacked_image[image_no].unsqueeze(0)
+                        torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                                     name, nrow=1, padding=0,
+                                                     normalize=False)
+                    print("Saved:{}".format(name))
+
+                    name = sub_folder + '/mask_GT/' + img_path
+                    for image_no in range(self.mask.shape[0]):
+                        camera_ready = self.mask[image_no].unsqueeze(0)
+                        torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                                     name, nrow=1, padding=0,
+                                                     normalize=False)
+                    print("Saved:{}".format(name))
+
+                    name = sub_folder + '/predicted_masks/' + img_path
 
                     for image_no in range(self.predicted_mask.shape[0]):
                         camera_ready = self.predicted_mask[image_no].unsqueeze(0)
@@ -1174,86 +1507,6 @@ class IRNpModel(BaseModel):
                                                      normalize=False)
                     print("Saved:{}".format(name))
 
-    def is_image_file(self, filename):
-        return any(filename.endswith(extension) for extension in self.IMG_EXTENSIONS)
-
-    def get_paths_from_images(self, path):
-        '''get image path list from image folder'''
-        assert os.path.isdir(path), '{:s} is not a valid directory'.format(path)
-        images = []
-        for dirpath, _, fnames in sorted(os.walk(path)):
-            for fname in sorted(fnames):
-                if self.is_image_file(fname):
-                    # img_path = os.path.join(dirpath, fname)
-                    images.append((path, dirpath[len(path) + 1:], fname))
-        assert images, '{:s} has no valid image file'.format(path)
-        return images
-
-    def print_individual_image(self, cropped_GT, name):
-        for image_no in range(cropped_GT.shape[0]):
-            camera_ready = cropped_GT[image_no].unsqueeze(0)
-            torchvision.utils.save_image((camera_ready * 255).round() / 255,
-                                         name, nrow=1, padding=0, normalize=False)
-
-    def load_image(self, path, readimg=False, Height=512, Width=512,grayscale=False):
-        import data.util as util
-        GT_path = path
-
-        img_GT = util.read_img(GT_path)
-
-        # change color space if necessary
-        # img_GT = util.channel_convert(img_GT.shape[2], 'RGB', [img_GT])[0]
-        if grayscale:
-            img_GT = rgb2gray(img_GT)
-
-        img_GT = cv2.resize(copy.deepcopy(img_GT), (Width, Height), interpolation=cv2.INTER_LINEAR)
-        return img_GT
-
-    def img_random_crop(self, img_GT, Height=512, Width=512, grayscale=False):
-        # # randomly crop
-        # H, W = img_GT.shape[0], img_GT.shape[1]
-        # rnd_h = random.randint(0, max(0, H - Height))
-        # rnd_w = random.randint(0, max(0, W - Width))
-        #
-        # img_GT = img_GT[rnd_h:rnd_h + Height, rnd_w:rnd_w + Width, :]
-        #
-        # orig_height, orig_width, _ = img_GT.shape
-        # H, W = img_GT.shape[0], img_GT.shape[1]
-
-        # BGR to RGB, HWC to CHW, numpy to tensor
-        if not grayscale:
-            img_GT = img_GT[:, :, [2, 1, 0]]
-            img_GT = torch.from_numpy(
-            np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
-        else:
-            img_GT = self.image_to_tensor(img_GT)
-
-        return img_GT.cuda()
-
-    def tensor_to_image(self, tensor):
-
-        tensor = tensor * 255.0
-        image = tensor.permute(1, 2, 0).detach().cpu().numpy()
-        # image = tensor.permute(0,2,3,1).detach().cpu().numpy()
-        return np.clip(image, 0, 255).astype(np.uint8)
-
-    def tensor_to_image_batch(self, tensor):
-
-        tensor = tensor * 255.0
-        image = tensor.permute(0, 2, 3, 1).detach().cpu().numpy()
-        # image = tensor.permute(0,2,3,1).detach().cpu().numpy()
-        return np.clip(image, 0, 255).astype(np.uint8)
-
-    def postprocess(self, img):
-        # [0, 1] => [0, 255]
-        img = img * 255.0
-        img = img.permute(0, 2, 3, 1)
-        return img.int()
-
-    def image_to_tensor(self, img):
-        img = Image.fromarray(img)
-        img_t = F.to_tensor(np.asarray(img)).float()
-        return img_t
 
     def reload(self,pretrain, network_list=['netG','localizer']):
         if 'netG' in network_list:
