@@ -133,10 +133,13 @@ class Raise(Dataset):
 
         bayer_pattern = self.get_bayer_pattern(flip_val, bayer)
 
-        if self.stage != 'train':
+        if self.stage == 'test':
             input_raw_img, target_rgb_img = center_crop(self.patch_size, raw_img, rgb)
-        else:
+        elif self.stage == 'train':
             input_raw_img, target_rgb_img = random_crop(self.patch_size, raw_img, rgb)
+        else:
+            input_raw_img = raw_img
+            target_rgb_img = rgb
 
         input_raw_img = self.norm_raw(input_raw_img, black_level, white_level)
         target_rgb_img = target_rgb_img / 255
@@ -161,9 +164,17 @@ class Raise(Dataset):
 
 
 if __name__ == '__main__':
+    # with open('/groupshare/raise/test.txt', 'r') as f:
+    #     data = [i.strip() for i in f.readlines()]
+    # with open('/groupshare/raise_crop/crop_test.txt', 'w') as f:
+    #     for d in data:
+    #         for i in range(10):
+    #             f.write((d+'_'+str(i)+'\n'))
+    # exit(0)
     print('test here')
     print('wanna to test RAISE dataset')
-    data_root = '/groupshare/raise'
-    cur_dataset = Raise(data_root)
+    data_root = '/groupshare/raise_crop'
+    stage = 'crop_test' # crop_train crop_test
+    cur_dataset = Raise(data_root, stage=stage)
     for i in range(len(cur_dataset)):
         item = cur_dataset[i]
