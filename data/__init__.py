@@ -53,14 +53,20 @@ def create_dataset(*, opt,args,rank,seed):
         from data.LQ_dataset import LQDataset as D
         train_set = D(opt, dataset_opt, load_mask=False)
     elif "ISP" in opt['model'] and args.mode != 1:
-        print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset_total
-        with open("./data/camera.txt", 'r') as t:
-            camera_name = [i.strip() for i in t.readlines()]
-        dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
-        # camera_name = ['Canon_EOS_5D','NIKON_D700']
-        print(f'FiveK dataset size')
-        train_set = FiveKDataset_total(dataset_root, camera_name, stage='train', patch_size=GT_size)
+        # print("dataset with ISP")
+        # from data.fivek_dataset import FiveKDataset_total
+        # with open("./data/camera.txt", 'r') as t:
+        #     camera_name = [i.strip() for i in t.readlines()]
+        # dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
+        # # camera_name = ['Canon_EOS_5D','NIKON_D700']
+        # print(f'FiveK dataset size')
+        # train_set = FiveKDataset_total(dataset_root, camera_name, stage='train', patch_size=GT_size)
+
+        from data.RAISE import Raise
+        print('wanna to test RAISE dataset')
+        data_root = '/groupshare/raise_crop'
+        stage = 'crop_train'  # crop_train crop_test
+        train_set = Raise(data_root, stage=stage)
 
         # dataset_root_1 = [ '/ssd/invISP_skip/']
         # camera_name_1 = [ 'NIKON_D700']
@@ -131,14 +137,20 @@ def create_dataset(*, opt,args,rank,seed):
         from data.LQ_dataset import LQDataset as D
         val_set = D(opt, dataset_opt, load_mask=False)
     elif "ISP" in opt['model'] and args.mode != 1:
-        print("dataset with ISP")
-        from data.fivek_dataset import FiveKDataset_total
-        with open("./data/camera.txt", 'r') as t:
-            camera_name = [i.strip() for i in t.readlines()]
-        dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
-        # camera_name = ['Canon_EOS_5D','NIKON_D700']
-        print(f'FiveK dataset size:{GT_size}')
-        val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=GT_size)
+        # print("dataset with ISP")
+        # from data.fivek_dataset import FiveKDataset_total
+        # with open("./data/camera.txt", 'r') as t:
+        #     camera_name = [i.strip() for i in t.readlines()]
+        # dataset_root = ['/ssd/FiveK_Dataset/'] * len(camera_name)
+        # # camera_name = ['Canon_EOS_5D','NIKON_D700']
+        # print(f'FiveK dataset size:{GT_size}')
+        # val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=GT_size)
+
+        from data.RAISE import Raise
+        print('wanna to test RAISE dataset')
+        data_root = '/groupshare/raise_crop'
+        stage = 'crop_test'  # crop_train crop_test
+        val_set = Raise(data_root, stage=stage)
 
         # from data.sidd import SIDD
         # val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)

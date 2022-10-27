@@ -107,17 +107,33 @@ class HalfFourierBlock(nn.Module):
             out_channels = in_channels
         ### local branch, input in_channels//2, output in_channels//2
         kernels_per_layer = math.ceil(out_channels / in_channels)
-        self.conv_local = depthwise_separable_conv(nin=in_channels//2,nout=out_channels//2, kernels_per_layer=kernels_per_layer,
-                                                   kernel_size=3, stride=1, padding=1)
-        self.ln_local = nn.BatchNorm2d(out_channels//2)
+        self.conv_local = nn.Sequential(
+            depthwise_separable_conv(nin=in_channels//2,nout=out_channels//2, kernels_per_layer=kernels_per_layer,
+                                                   kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(out_channels // 2),
+            nn.GELU(),
+            depthwise_separable_conv(nin=out_channels // 2, nout=out_channels // 2, kernels_per_layer=1,
+                                     kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(out_channels // 2),
+            nn.GELU(),
+        )
+        # self.ln_local = nn.BatchNorm2d(out_channels//2)
 
         ### fourier branch, input in_channels//2, output in_channels//2
-        self.conv_layer = depthwise_separable_conv(nin=in_channels + (2 if spectral_pos_encoding else 0),
+        self.conv_layer = nn.Sequential(
+            depthwise_separable_conv(nin=in_channels + (2 if spectral_pos_encoding else 0),
                                           nout=out_channels, kernels_per_layer=kernels_per_layer,
-                                          kernel_size=3, stride=1, padding=1)
-        self.ln = nn.BatchNorm2d(out_channels)
+                                          kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+            depthwise_separable_conv(nin=out_channels, nout=out_channels, kernels_per_layer=1,
+                                     kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.GELU(),
+        )
+        # self.ln = nn.BatchNorm2d(out_channels)
 
-        self.simple_gate = nn.GELU() # SimpleGate()
+        # self.simple_gate = nn.GELU() # SimpleGate()
 
         self.spectral_pos_encoding = spectral_pos_encoding
 
@@ -144,8 +160,6 @@ class HalfFourierBlock(nn.Module):
             ffted = torch.cat((coords_vert, coords_hor, ffted), dim=1)
 
         ffted = self.conv_layer(ffted)  # (batch, c*2, h, w/2+1)
-        ffted = self.simple_gate(ffted)
-        ffted = self.ln(ffted)
 
         ffted = ffted.view((batch, -1, 2,) + ffted.size()[2:]).permute(
             0, 1, 3, 4, 2).contiguous()  # (batch,c, t, h, w/2+1, 2)
@@ -156,13 +170,13 @@ class HalfFourierBlock(nn.Module):
 
         ### local path ###
         identity_conv = self.conv_local(identity_path)
-        identity_conv = self.simple_gate(identity_conv)
-        identity_conv = self.ln_local(identity_conv)
 
         ### 1x1 conv to fuse features ###
         hwa_out = torch.cat([output, identity_conv], dim=1)
         # hwa_out = self.sca_layer(out)
         hwa_out = self.conv_final(hwa_out)
+
+        ### residual learning
         return input + hwa_out
 
 
@@ -298,7 +312,9 @@ class elastic_layer(nn.Module):
                     skff_out = self.skff_blocks[i_scale](skff_input)
 
                     skff_out = self.conv_final(torch.cat([x_hwas_identity, skff_out],dim=1))
-                    x_skff.append(skff_out)
+
+                    ### residual learning
+                    x_skff.append(x_feats[i_scale] + skff_out)
 
             return x_skff, None
 

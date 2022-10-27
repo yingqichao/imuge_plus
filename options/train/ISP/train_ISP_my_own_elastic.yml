@@ -6,10 +6,11 @@ use_tb_logger: true
 model: ISP # CVPR
 distortion: sr
 scale: 4
+gpu_ids: [0,1]
 
 step_acumulate: 1
-train_isp_networks: false
-train_full_pipeline: true
+train_isp_networks: true
+train_full_pipeline: false
 use_gamma_correction: false
 conduct_cropping: false
 consider_robost: true
@@ -29,13 +30,14 @@ raw_classes: 5
 dtcwt_layers: 16
 model_save_period: 1000
 
-load_discriminator_models: 11499
-load_RAW_models: 11499 # 10999
-load_ISP_models: 20999
+load_discriminator_models: 0 #11499
+load_RAW_models: 0 #11499 # 10999
+load_ISP_models: 1999 #20999
 ### directory
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
 task_name_KD_JPEG_model: my_own_elastic
 task_name_customized_model: ISP_alone
+task_name_ISP_model: my_own_elastic
 
 #### datasets
 phase: train
@@ -63,12 +65,12 @@ datasets:
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
 
     use_shuffle: true
-    n_workers: 3 # per GPU
+    n_workers: 4 # per GPU
     ######## CVPR #########
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 2 # 4
+    batch_size: 8 # 4
     GT_size: 512 # 608
     #########################
     use_flip: true
@@ -90,7 +92,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 2e-5   # 2e-5
+  lr_scratch: !!float 1e-4   # 2e-5
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

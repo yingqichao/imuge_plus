@@ -127,8 +127,13 @@ class Modified_invISP(BaseModel):
         elif self.args.mode in [2] and "elastic" in self.task_name:
             ### mode=2: regular training (our network design), including ISP, RAW2RAW and localization (train)
             self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
-            self.save_network_list = ["KD_JPEG", "discriminator_mask"]
-            self.training_network_list = ["KD_JPEG", "discriminator_mask"]
+            self.save_network_list, self.training_network_list = [], []
+            if self.opt["train_isp_networks"]:
+                self.save_network_list += self.default_ISP_networks
+                self.training_network_list += self.default_ISP_networks
+            if self.opt["train_full_pipeline"]:
+                self.save_network_list += ["KD_JPEG", "discriminator_mask"]
+                self.training_network_list += ["KD_JPEG", "discriminator_mask"]
         elif self.args.mode in [3]:
             ### regular training for ablation (RGB protection)
             self.network_list = ["KD_JPEG", "discriminator_mask"]
@@ -1073,6 +1078,9 @@ class Modified_invISP(BaseModel):
 
 
         ######## Finally ####################
+        for scheduler in self.schedulers:
+            scheduler.step()
+
         if self.global_step % (self.opt['model_save_period']) == (self.opt['model_save_period']-1) or self.global_step == 9:
             if self.rank == 0:
                 print('Saving models and training states.')
@@ -1695,7 +1703,9 @@ class Modified_invISP(BaseModel):
                                                           device_ids=[torch.cuda.current_device()],
                                                           find_unused_parameters=True)
 
-        self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
+        self.netG = my_own_elastic(nin=3, nout=3, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
+                                                     use_norm_conv=False).cuda()
+        # self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
         self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                             find_unused_parameters=True)
         # print('ISP Network OK')
