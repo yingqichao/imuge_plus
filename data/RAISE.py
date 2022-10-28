@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 import numpy as np
 import cv2
 import random
+import pickle
 
 
 def center_crop(patch_size, input_raw, target_rgb):
@@ -63,10 +64,10 @@ class Raise(Dataset):
     def __init__(self, data_root, stage='test', patch_size=512):
         self.data_root = data_root
         self.stage = stage
-        data_list = self.load()
-        self.data_list = data_list
-        self.len_data = len(data_list)
+        self.data_list, self.metadata_list = self.load()
+        self.len_data = len(self.data_list)
         self.patch_size = patch_size
+        np.seterr(divide='ignore', invalid='ignore')
 
     def load(self):
         file_txt = os.path.join(self.data_root, f'{self.stage}.txt')
@@ -89,8 +90,10 @@ class Raise(Dataset):
         # with open(test_file, "w") as f_test:
         #     for test_item in test_list:
         #         f_test.write(test_item.split('/')[-1][:-4] + '\n')
-
-        return data_list
+        file_pickle = os.path.join(self.data_root, 'metadata.pickle')
+        with open(file_pickle, 'rb') as f:
+            metadata_list = pickle.load(f)
+        return data_list, metadata_list
 
     def get_bayer_pattern(self, flip_val, bayer):
         if flip_val == 5:

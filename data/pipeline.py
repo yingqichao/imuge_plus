@@ -7,6 +7,7 @@ from .pipeline_utils import get_visible_raw_image, get_metadata, normalize, whit
 import rawpy
 from .test_isp import postprocess, get_metadata as meta_parse
 
+
 def unflip(raw_img, flip):
     if flip == 3:
         raw_img = np.rot90(raw_img, k=2)
@@ -17,6 +18,7 @@ def unflip(raw_img, flip):
     else:
         pass
     return raw_img
+
 
 # np.rot90(img, k):将矩阵逆时针旋转90*k度以后返回，k取负数时表示顺时针旋转
 def flip(raw_img, flip):
@@ -36,10 +38,13 @@ raw_image: raw2raw network output, torch.tensor
 metadata: load from pickle, the key is "metadata"
 return: rgb image, numpy variable
 """
+
+
 # todo: normalize returned rgb image with np format
 def pipeline_tensor2image(*, raw_image, metadata, input_stage='normal', output_stage='gamma'):
     params = {
-        'input_stage': input_stage,  # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
+        'input_stage': input_stage,
+        # options: 'raw', 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
         'output_stage': output_stage,  # options: 'normal', 'white_balance', 'demosaic', 'xyz', 'srgb', 'gamma', 'tone'
         'save_as': 'png',  # options: 'jpg', 'png', 'tif', etc.
         'demosaic_type': 'ddfapd',
@@ -70,12 +75,13 @@ def pipeline_tensor2image(*, raw_image, metadata, input_stage='normal', output_s
 """
 another traditional isp pipeline for test
 """
-def isp_tensor2image(*, raw_image, metadata, file_name, camera_name, input_stage='normalize', output_stage='gamma'):
+def isp_tensor2image(*, raw_image, metadata, file_name, camera_name, input_stage='normalize',
+                     output_stage='tone_mapping'):
     # first: transfer the torch into numpy variable
     if type(file_name) == str:
         # 传入的template参数s
         default_root = '/ssd/FiveK_Dataset/'
-        dng_path = os.path.join(default_root, camera_name, 'DNG', file_name+'.dng')
+        dng_path = os.path.join(default_root, camera_name, 'DNG', file_name + '.dng')
         template = rawpy.imread(dng_path)
         metadata = meta_parse(template)
     raw_image = raw_image.detach().cpu().numpy()
@@ -104,11 +110,13 @@ raw_image: raw2raw network output, torch.tensor [C H W] C = 1
 template: the result of rawpy load template.dng
 return: rgb image, numpy variable
 """
+
+
 def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
     if type(template) == str:
         # 传入的template参数s
         default_root = '/ssd/FiveK_Dataset/'
-        dng_path = os.path.join(default_root, camera_name, 'DNG', template+'.dng')
+        dng_path = os.path.join(default_root, camera_name, 'DNG', template + '.dng')
         template = rawpy.imread(dng_path)
     flip_val = template.sizes.flip
     white_level = template.white_level
@@ -135,7 +143,9 @@ def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
     im = unflip(im, flip_val)
     return flip(im[:patch_size, :patch_size, :], flip_val)
 
-def run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_1384.dng', params=None, metadata=None, fix_orient=True):
+
+def run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_1384.dng', params=None, metadata=None,
+                    fix_orient=True):
     params_ = params.copy()
     if type(image_or_path) == str:
         image_path = image_or_path
@@ -308,6 +318,7 @@ def run_pipeline(image_path, params):
 
     output_image = None
     return output_image
+
 
 if __name__ == '__main__':
     run_pipeline_v2(image_or_path='/ssd/invISP/Canon_EOS_5D/DNG/a0004-jmac_MG_1384.dng')
