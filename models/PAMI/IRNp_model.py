@@ -200,7 +200,6 @@ class IRNpModel(BaseModel):
 
             with torch.enable_grad():
                 ## settings for attack
-                quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
                 kernel = random.choice([3, 5, 7])  # 3,5,7
                 resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
                                 int(self.random_float(0.7, 1.5) * self.width_height))
@@ -215,6 +214,8 @@ class IRNpModel(BaseModel):
                     logs["cropped"] = False
                     percent_range = None
                     index_for_postprocessing = self.global_step
+
+                quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
 
                 ## define the mask and augment
                 rate_mask, masks, masks_GT = 0, None, None
