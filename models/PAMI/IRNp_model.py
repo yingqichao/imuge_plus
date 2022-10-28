@@ -528,12 +528,6 @@ class IRNpModel(BaseModel):
             ### update and track history losses
             self.update_history_losses(index=self.global_step,PSNR=psnr_backward,loss=l_backward_local.item(),
                                        loss_CE=CE.item(),PSNR_attack=error_l1)
-            if self.global_step%200==199 or self.global_step<=10:
-                print(f"history loss: {self.history_attack_loss}")
-                print(f"history PSNR: {self.history_attack_PSNR}")
-                print(f"history CE: {self.history_attack_CE}")
-                print(f"history times: {self.history_attack_times}")
-                print(f"history attack: {self.history_attack_data}")
 
 
 

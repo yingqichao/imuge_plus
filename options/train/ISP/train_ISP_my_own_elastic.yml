@@ -6,33 +6,20 @@ use_tb_logger: true
 model: ISP # CVPR
 distortion: sr
 scale: 4
-gpu_ids: [0,1]
+gpu_ids: [1,2]
 
-step_acumulate: 1
-train_isp_networks: true
-train_full_pipeline: false
-use_gamma_correction: false
-conduct_cropping: false
-consider_robost: true
-include_isp_inference: true
-conduct_augmentation: true
-train_inpainting_surrogate_model: false
-lower_false_positive: false
+skip_attack_probability: 0.85
+skip_aug_probability: 0.85
 
-psnr_thresh: 40
-CE_hyper_param: 0.15
-ssim_hyper_param: 0.01
-perceptual_hyper_param: 0.004
-RAW_L1_hyper_param: 4
-L1_hyper_param: 1
-style_hyper_param: 1
-raw_classes: 5
-dtcwt_layers: 16
-model_save_period: 1000
+
+train_isp_networks: false
+train_full_pipeline: true
+
+
 
 load_discriminator_models: 0 #11499
 load_RAW_models: 0 #11499 # 10999
-load_ISP_models: 1999 #20999
+load_ISP_models: 24999 #20999
 ### directory
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
 task_name_KD_JPEG_model: my_own_elastic
@@ -70,7 +57,7 @@ datasets:
 #    batch_size: 2   # 4
 #    GT_size: 256
     ######## Imuge #########
-    batch_size: 8 # 4
+    batch_size: 4 # 4
     GT_size: 512 # 608
     #########################
     use_flip: true

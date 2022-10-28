@@ -797,13 +797,6 @@ class Modified_invISP(BaseModel):
 
 
                 with torch.enable_grad():
-                    ####################    Generation of protected RAW    #########################################
-
-                    #### condition for RAW2RAW ####
-                    # label_array = np.random.choice(range(self.opt['raw_classes']),batch_size)
-                    # label_control = torch.tensor(label_array).long().cuda()
-                    # label_input = torch.tensor(label_array).float().cuda().unsqueeze(1)
-                    # label_input = label_input / self.opt['raw_classes']
 
                     ### RAW PROTECTION ###
                     if self.task_name == "my_own_elastic":
@@ -811,11 +804,10 @@ class Modified_invISP(BaseModel):
 
                     else:
                         modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
-                    # raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
 
                     modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
                     RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
-                    # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
+
                     modified_raw = self.clamp_with_grad(modified_raw)
 
                     RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
@@ -874,17 +866,10 @@ class Modified_invISP(BaseModel):
                     skip_the_second = np.random.rand() > 0.8
                     alpha_0 = 1.0 if skip_the_second else np.random.rand()
                     alpha_1 = 1 - alpha_0
-                    # alpha_0 = np.random.rand()*0.66
-                    # alpha_1 = np.random.rand()*0.66
-                    # alpha_1 = min(alpha_1,1-alpha_0)
-                    # alpha_1 = max(0, alpha_1)
-                    # alpha_2 = 1 - alpha_0 - alpha_1
 
                     modified_input = alpha_0*modified_input_0
-                    # modified_input += alpha_2*modified_input_2
                     modified_input += alpha_1*modified_input_1
                     tamper_source = alpha_0*tamper_source_0
-                    # tamper_source += alpha_2*tamper_source_2
                     tamper_source += alpha_1*tamper_source_1
                     tamper_source = tamper_source.detach()
 
@@ -899,14 +884,11 @@ class Modified_invISP(BaseModel):
                     logs['PSNR_DIFF'] = PSNR_DIFF
                     logs['ISP_PSNR_NOW'] = ISP_PSNR
 
-                    collected_protected_image = modified_input_netG_detach if collected_protected_image is None else \
-                        torch.cat([collected_protected_image, modified_input.detach()], dim=0)
-
+                    collected_protected_image = tamper_source
 
                     #######################   attack layer   #######################################################
-                    ### mantranet: localizer mvssnet: netG resfcn: discriminator
                     attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                        modified_input=modified_input, gt_rgb=gt_rgb
+                        modified_input=modified_input, gt_rgb=gt_rgb, logs=logs
                     )
 
                     # ERROR = attacked_image-attacked_forward
@@ -923,18 +905,9 @@ class Modified_invISP(BaseModel):
                     # logs['CE_mantra'] = CE_mantra.item()
                     ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
 
-                    ############################   cropping   ######################################################
-                    ### cropped: original-sized cropped image, scaled_cropped: resized cropped image, masks, masks_GT
-
-                    if self.opt['conduct_cropping'] and np.random.rand() > 0.66:
-                        # print("crop...")
-                        locs, cropped, attacked_image = self.cropping_mask_generation(
-                            forward_image=attacked_image, min_rate=0.7, max_rate=1.0)
-                        h_start, h_end, w_start, w_end = locs
-                        _, _, masks_GT = self.cropping_mask_generation(forward_image=masks_GT, locs=locs)
 
                     ### get mean and std of mask_GT
-                    std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
+                    # std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
 
                     ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                     if "discriminator_mask" in self.training_network_list:
@@ -1010,6 +983,10 @@ class Modified_invISP(BaseModel):
                         self.optimizer_generator.zero_grad()
                         self.optimizer_qf.zero_grad()
 
+                ### update and track history losses
+                self.update_history_losses(index=self.global_step, PSNR=PSNR_DIFF,
+                                           loss=loss.item(),
+                                           loss_CE=CE_loss.item(), PSNR_attack=error_l1)
 
                 #########################    printing the images   #################################################
                 anomalies = False  # CE_recall.item()>0.5
@@ -1622,7 +1599,8 @@ class Modified_invISP(BaseModel):
         elif index in self.opt['simulated_copysplicing_indices']: #self.using_simulated_inpainting:
             ### todo: copy-splicing
             attacked_forward, masks, masks_GT = self.copysplicing(forward_image=modified_input, masks=masks,
-                                                                  percent_range=percent_range)
+                                                                  percent_range=percent_range,
+                                                                  another_immunized=self.previous_protected)
         else:
             print(index)
             raise NotImplementedError("Tamper的方法没找到！请检查！")
@@ -1894,25 +1872,47 @@ class Modified_invISP(BaseModel):
 
         return modified_input_generator, ISP_loss
 
-    def standard_attack_layer(self, *, modified_input, gt_rgb, tamper_index=None):
+    def standard_attack_layer(self, *, modified_input, gt_rgb, tamper_index=None, logs=None):
         ##############    cropping   ###################################################################################
-      
-        # if self.opt['conduct_cropping']:
-        #     locs, cropped, scaled_cropped = self.cropping_mask_generation(
-        #         forward_image=modified_input,  min_rate=0.7, max_rate=1.0, logs=logs)
-        #     h_start, h_end, w_start, w_end = locs
-        #     _, _, tamper_source_cropped = self.cropping_mask_generation(forward_image=tamper_source, locs=locs, logs=logs)
-        # else:
-        #     scaled_cropped = modified_input
-        #     tamper_source_cropped = tamper_source
+
+        ## settings for attack
+        quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
+        kernel = random.choice([3, 5, 7])  # 3,5,7
+        resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
+                        int(self.random_float(0.7, 1.5) * self.width_height))
+
+        if self.global_step % 10 in self.opt['crop_indices']:
+            # not (self.global_step%self.amount_of_benign_attack in (self.opt['simulated_gblur_indices'] + self.opt['simulated_mblur_indices'])) and \
+            # not (self.global_step%self.amount_of_benign_attack in self.opt['simulated_strong_JPEG_indices'] and quality_idx<16):
+            logs["cropped"] = True
+            percent_range = [0, 0.25]
+            index_for_postprocessing = 7
+        else:
+            logs["cropped"] = False
+            percent_range = None
+            index_for_postprocessing = self.global_step
 
         ###############   TAMPERING   ##################################################################################
-        masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input, percent_range=None)
+        rate_mask, masks, masks_GT, modified_cropped = 0, None, None, modified_input
+        while rate_mask < 0.05 or rate_mask >= 0.33 or (logs["cropped"] and rate_mask >= 0.2):  # prevent too small or too big
+            masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
+                                                                  percent_range=percent_range, index=self.global_step)
+
+            if logs["cropped"]:
+                ### determine the crop location and mask
+                locs, _, masks = self.cropping_mask_generation(
+                    forward_image=masks, min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
+                masks = torch.where(masks > 0.5, 1.0, 0.0)
+                masks_GT = masks[:, :1]
+
+                _, _, modified_cropped = self.cropping_mask_generation(forward_image=modified_input, locs=locs)
+
+            rate_mask = torch.mean(masks_GT)
 
         # attacked_forward = tamper_source_cropped
         attacked_forward, masks, masks_GT = self.tampering_RAW(
             masks=masks, masks_GT=masks_GT,
-            modified_input=modified_input, percent_range=percent_range, index=tamper_index
+            modified_input=modified_cropped, percent_range=percent_range, index=tamper_index
         )
 
         ###############   white-balance, gamma, tone mapping, etc.  ####################################################
@@ -1924,19 +1924,23 @@ class Modified_invISP(BaseModel):
         # white_balance_again = torch.cat((white_balance_again_red,white_balance_again_green,white_balance_again_blue),dim=1).unsqueeze(2).unsqueeze(3)
         # modified_wb = white_balance_again * modified_input
         # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
-        skip_augment = np.random.rand() > 0.85
+        skip_augment = np.random.rand() > self.opt['skip_aug_probability']
         if not skip_augment and self.opt['conduct_augmentation']:
             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
         else:
             attacked_adjusted = attacked_forward
 
         ###########################    Benign attacks   ################################################################
-        skip_robust = np.random.rand() > 0.85
+        skip_robust = np.random.rand() > self.opt['skip_attack_probability']
         if not skip_robust and self.opt['consider_robost']:
             quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
 
             attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_adjusted,
-                                                 quality_idx=quality_idx)
+                                                                                 quality_idx=quality_idx,
+                                                                                 index=index_for_postprocessing,
+                                                                                 kernel_size=kernel,
+                                                                                 resize_ratio=resize_ratio
+                                                                                 )
         else:
             attacked_image = attacked_adjusted
 

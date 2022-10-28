@@ -29,12 +29,6 @@ def parse(*, opt_path,
     with open(base_opt_path, mode='r') as f:
         opt = yaml.load(f, Loader=Loader)
 
-    ## local option ##
-    with open(opt_path, mode='r') as f:
-        opt_new = yaml.load(f, Loader=Loader)
-
-    opt.update(opt_new)
-
     ## attack layer option ##
     if attack_opt_path is None:
         if 'ISP' in opt_path:
@@ -44,6 +38,12 @@ def parse(*, opt_path,
     with open(attack_opt_path, mode='r') as f:
         opt_attack = yaml.load(f, Loader=Loader)
     opt.update(opt_attack)
+
+    ## local local custom option ##
+    with open(opt_path, mode='r') as f:
+        opt_new = yaml.load(f, Loader=Loader)
+
+    opt.update(opt_new)
 
     ## add default values if not specified in cunstom yml
     if 'ISP' in opt_path:

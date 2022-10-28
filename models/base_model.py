@@ -276,6 +276,13 @@ class BaseModel():
         self.history_attack_data[self.index_to_attack[index]] = (prev_attack * prev_times + PSNR_attack) / (prev_times + 1)
         self.history_attack_times[self.index_to_attack[index]] = prev_times + 1
 
+        if self.global_step % 200 == 199 or self.global_step <= 10:
+            print(f"history loss: {self.history_attack_loss}")
+            print(f"history PSNR: {self.history_attack_PSNR}")
+            print(f"history CE: {self.history_attack_CE}")
+            print(f"history times: {self.history_attack_times}")
+            print(f"history attack: {self.history_attack_data}")
+
     def print_this_image(self, image, filename):
         '''
             the input should be sized [C,H,W], not [N,C,H,W]
@@ -460,16 +467,17 @@ class BaseModel():
 
         return attacked_forward, masks, masks_GT
 
-    def copysplicing(self, *, forward_image, masks, percent_range):
+    def copysplicing(self, *, forward_image, masks, percent_range, another_immunized=None):
         with torch.no_grad():
-            another_generated = self.netG(
-                torch.cat([self.previous_previous_images, self.previous_previous_canny], dim=1))
-            another_immunized = another_generated[:, :3, :, :]
-            another_immunized = self.clamp_with_grad(another_immunized)
+            if another_immunized is None:
+                another_generated = self.netG(
+                    torch.cat([self.previous_previous_images, self.previous_previous_canny], dim=1))
+                another_immunized = another_generated[:, :3, :, :]
+                another_immunized = self.clamp_with_grad(another_immunized)
             tamper_shifted, masks, masks_GT = self.get_shifted_image_for_copymove(forward_image=another_immunized,
                                                                                   percent_range=percent_range, masks=masks)
             attacked_forward = forward_image * (1 - masks) + another_immunized.clone().detach() * masks
-        del another_generated
+        # del another_generated
 
         return attacked_forward, masks, masks_GT
 
