@@ -71,11 +71,12 @@ raw0 = raw0['raw']
 cwb = cwb[:3]
 cwb = cwb / cwb.max()
 import colour_demosaicing
-de_raw = colour_demosaicing.demosaicing_CFA_Bayer_bilinear(raw0[:512, :512], 'RGGB')
-de_raw = ((de_raw / 16383) * 255).astype(np.uint8)
-imageio.imwrite('./test_deraw.png', de_raw)
 raw = (raw0 / 16383)[:512, :512]
-input_x = torch.tensor(raw, dtype=torch.float32).unsqueeze(0).unsqueeze(0).cuda()
+raw = raw.astype(np.float32)
+de_raw = colour_demosaicing.demosaicing_CFA_Bayer_bilinear(raw, 'RGGB')
+de_raw = (de_raw * 255).astype(np.uint8)
+imageio.imwrite('./test_deraw.png', de_raw)
+input_x = torch.tensor(raw).unsqueeze(0).unsqueeze(0).cuda()
 bilinear = Bayer_demosaic(512)
 ret = bilinear.bilinear_demosaic(input_x, bayers)
 ret = ret.squeeze(0).permute(1, 2, 0).cpu().numpy()
