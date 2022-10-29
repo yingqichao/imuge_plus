@@ -242,7 +242,7 @@ class Modified_invISP(BaseModel):
         ### todo: Scheduler
         self.schedulers = []
         for optimizer in self.optimizers:
-            self.schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=118287))
+            self.schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50000))
 
         ### todo: creating dirs
         self.create_folders_for_the_experiment()
@@ -836,7 +836,7 @@ class Modified_invISP(BaseModel):
                     tamper_source_0 = stored_list_0
                     ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source_0)
                     ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source_0)
-                    ISP_percept_0, ISP_style_0 = self.perceptual_loss(modified_input_0, tamper_source_0, with_gram=True)
+                    # ISP_percept_0, ISP_style_0 = self.perceptual_loss(modified_input_0, tamper_source_0, with_gram=True)
                     modified_input_0 = self.clamp_with_grad(modified_input_0)
 
                     modified_input_1 = isp_model_1(modified_raw)
@@ -845,7 +845,7 @@ class Modified_invISP(BaseModel):
                     tamper_source_1 = stored_list_1
                     ISP_L1_1 = self.l1_loss(input=modified_input_1, target=tamper_source_1)
                     ISP_SSIM_1 = - self.ssim_loss(modified_input_1, tamper_source_1)
-                    ISP_percept_1, ISP_style_1 = self.perceptual_loss(modified_input_1, tamper_source_1, with_gram=True)
+                    # ISP_percept_1, ISP_style_1 = self.perceptual_loss(modified_input_1, tamper_source_1, with_gram=True)
                     modified_input_1 = self.clamp_with_grad(modified_input_1)
 
                     # #### HWMNET AS SUBSEQUENT ISP####
@@ -892,7 +892,7 @@ class Modified_invISP(BaseModel):
                     )
 
                     # ERROR = attacked_image-attacked_forward
-                    error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_forward)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+                    error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_adjusted)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
                     logs['ERROR'] = error_l1
 
                     #####################   Image Manipulation Detection Network (Downstream task)   ###############
@@ -909,9 +909,12 @@ class Modified_invISP(BaseModel):
                     ### get mean and std of mask_GT
                     # std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
 
+                    ### get canny of attacked image
+                    attacked_cannied = self.get_canny(attacked_image, masks_GT)
+
                     ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                     if "discriminator_mask" in self.training_network_list:
-                        pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
+                        pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image.detach().contiguous(), attacked_cannied)
 
                         CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
                         l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
@@ -932,7 +935,7 @@ class Modified_invISP(BaseModel):
 
                     ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
                     if "KD_JPEG" in self.training_network_list:
-                        pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image)
+                        pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image, attacked_cannied)
 
                         CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
                         l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
@@ -950,21 +953,22 @@ class Modified_invISP(BaseModel):
                         loss = 0
                         loss_l1 = self.opt['L1_hyper_param'] * (ISP_L1_0+ISP_L1_1)/2
                         loss += loss_l1
-                        hyper_param_raw = self.opt['RAW_L1_hyper_param'] if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['RAW_L1_hyper_param']/5
+                        hyper_param_raw = self.opt['RAW_L1_hyper_param'] # if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['RAW_L1_hyper_param']/5
                         loss += hyper_param_raw * RAW_L1
                         loss_ssim = self.opt['ssim_hyper_param'] * (ISP_SSIM_0+ISP_SSIM_1)/2
                         loss += loss_ssim
-                        hyper_param_percept = self.opt['perceptual_hyper_param'] if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['perceptual_hyper_param'] / 4
-                        loss_percept = hyper_param_percept * (ISP_percept_0+ISP_percept_1)/2
-                        loss += loss_percept
-                        loss_style = self.opt['style_hyper_param'] * (ISP_style_0 +ISP_style_1) / 2
+                        # hyper_param_percept = self.opt['perceptual_hyper_param'] # if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['perceptual_hyper_param'] / 4
+                        # loss_percept = hyper_param_percept * (ISP_percept_0+ISP_percept_1)/2
+                        # loss += loss_percept
+                        # loss_style = self.opt['style_hyper_param'] * (ISP_style_0 +ISP_style_1) / 2
                         # loss += loss_style
-                        hyper_param = self.opt['CE_hyper_param'] if (ISP_PSNR>=self.opt['psnr_thresh']) else self.opt['CE_hyper_param']/10
+                        # hyper_param = self.opt['CE_hyper_param'] if (ISP_PSNR>=self.opt['psnr_thresh']) else self.opt['CE_hyper_param']/10
+                        hyper_param = self.exponential_weight_for_backward(value=ISP_PSNR, exp=1.5)
                         loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
 
                         logs['ISP_SSIM_NOW'] = -loss_ssim.item()
-                        logs['Percept'] = loss_percept.item()
-                        logs['Style'] = loss_style.item()
+                        # logs['Percept'] = loss_percept.item()
+                        # logs['Style'] = loss_style.item()
                         logs['Gray'] = loss_l1.item()
                         logs['loss'] = loss.item()
 
@@ -1020,19 +1024,12 @@ class Modified_invISP(BaseModel):
                         self.postprocess(attacked_image),
                         self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
                         ### tampering detection
+                        self.postprocess(attacked_cannied),
                         self.postprocess(masks_GT),
-                        # self.postprocess(torch.sigmoid(pred_mvss)),
-                        # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mvss))),
-                        # self.postprocess(torch.sigmoid(pred_mantra)),
-                        # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_mantra))),
+
                         self.postprocess(torch.sigmoid(pred_resfcn)),
                         self.postprocess(torch.sigmoid(post_resfcn)),
-                        # self.postprocess(refined_resfcn),
-                        # norm_pred, adaptive_pred, diff_pred
-                        # self.postprocess(norm_pred),
-                        # self.postprocess(adaptive_pred),
-                        # self.postprocess(diff_pred),
-                        # self.postprocess(10 * torch.abs(masks_GT - torch.sigmoid(pred_resfcn))),
+
                         img_per_row=1
                     )
 
@@ -1717,19 +1714,19 @@ class Modified_invISP(BaseModel):
         is_stronger = np.random.rand() > 0.5
         if index in self.opt['simulated_hue']:
             ## careful!
-            strength = np.random.rand() * (0.2 if is_stronger>0 else -0.2)
+            strength = np.random.rand() * (0.1 if is_stronger>0 else -0.1)
             modified_adjusted = F.adjust_hue(modified_input, hue_factor=0+strength)  # 0.5 ave
         elif index in self.opt['simulated_contrast']:
-            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
             modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1+strength)  # 1 ave
         # elif self.global_step%5==2:
         ## not applicable
         # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
         elif index in self.opt['simulated_saturation']:
-            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
             modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1+strength)
         elif index in self.opt['simulated_brightness']:
-            strength = np.random.rand() * (1.0 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
             modified_adjusted = F.adjust_brightness(modified_input,
                                                     brightness_factor=1+strength)  # 1 ave
         else:
@@ -2027,7 +2024,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.discriminator_mask, strict=True)
+                    self.load_network(load_path_G, self.discriminator_mask, strict=False)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 

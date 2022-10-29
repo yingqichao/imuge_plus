@@ -435,8 +435,20 @@ class my_own_elastic(nn.Module):
             # self.to_beta_1 = sequential(torch.nn.Linear(nch, 1), nn.Tanh())
             #
             # self.IN = nn.InstanceNorm2d(1, affine=False)
-            self.post_process_conv = nn.Sequential(
-                nn.Conv2d(4, 16, kernel_size=7, padding=3, dilation=1),
+            # self.post_process_conv = nn.Sequential(
+            #     nn.Conv2d(2, 16, kernel_size=7, padding=3, dilation=1),
+            #     nn.ELU(),
+            #     nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+            #     nn.ELU(),
+            #     nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+            #     nn.ELU(),
+            #     nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
+            #     nn.ELU(),
+            #     nn.Conv2d(16, 1, kernel_size=7, padding=3, dilation=1),
+            # )
+
+            self.post_process_conv_canny = nn.Sequential(
+                nn.Conv2d(2, 16, kernel_size=7, padding=3, dilation=1),
                 nn.ELU(),
                 nn.Conv2d(16, 16, kernel_size=7, padding=3, dilation=1),
                 nn.ELU(),
@@ -448,7 +460,7 @@ class my_own_elastic(nn.Module):
             )
 
 
-    def forward(self, X):
+    def forward(self, X, canny=None):
 
         ### decomposit X into hiearchical input ###
         # batch, channel, H, W = X.shape
@@ -494,7 +506,7 @@ class my_own_elastic(nn.Module):
         Y = self.ifm((Y_scale0m, Yhm))
 
         if self.use_norm_conv:
-            Y_post = self.post_process_conv(torch.cat([X,torch.sigmoid(Y.detach())],dim=1))
+            Y_post = self.post_process_conv_canny(torch.cat([canny,torch.sigmoid(Y.detach())],dim=1))
             return Y, Y_post
 
         return Y

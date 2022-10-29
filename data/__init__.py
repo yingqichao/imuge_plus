@@ -52,7 +52,7 @@ def create_dataset(*, opt,args,rank,seed):
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         train_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode != 1:
+    elif "ISP" in opt['model'] and args.mode in [0,2,4,5]:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total
         # with open("./data/camera.txt", 'r') as t:

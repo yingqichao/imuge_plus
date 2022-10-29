@@ -4,6 +4,7 @@ import os
 from collections import OrderedDict
 
 import numpy as np
+import torch
 from skimage.feature import canny
 import cv2
 import torch.distributed as dist
@@ -214,34 +215,34 @@ class BaseModel():
         wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
 
         if 'netG' in self.network_list:
-            lr = 'lr_scratch'
+            lr = 'lr_finetune'
             self.optimizer_G = self.create_optimizer(self.netG,
                                                      lr=self.train_opt[lr], weight_decay=wd_G)
             print(f"optimizer netG: {lr}")
 
         if 'discriminator_mask' in self.network_list:
-            lr = 'lr_scratch'
+            lr = 'lr_finetune'
             self.optimizer_discriminator_mask = self.create_optimizer(self.discriminator_mask,
                                                                       lr=self.train_opt[lr],weight_decay=wd_G)
             print(f"optimizer discriminator_mask: {lr}")
         if 'localizer' in self.network_list:
-            lr = 'lr_scratch'
+            lr = 'lr_finetune'
             self.optimizer_localizer = self.create_optimizer(self.localizer,
                                                              lr=self.train_opt[lr], weight_decay=wd_G)
             print(f"optimizer localizer: {lr}")
         if 'KD_JPEG' in self.network_list:
-            lr = 'lr_scratch'
+            lr = 'lr_finetune'
             self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
                                                            lr=self.train_opt[lr], weight_decay=wd_G)
         # if 'discriminator' in self.network_list:
         #     self.optimizer_discriminator = self.create_optimizer(self.discriminator,
         #                                                          lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
         if 'generator' in self.network_list:
-            lr = 'lr_scratch'
+            lr = 'lr_finetune'
             self.optimizer_generator = self.create_optimizer(self.generator,
                                                              lr=self.train_opt[lr], weight_decay=wd_G)
         if 'qf_predict_network' in self.network_list:
-            lr = 'lr_scratch'
+            lr = 'lr_finetune'
             self.optimizer_qf = self.create_optimizer(self.qf_predict_network,
                                                       lr=self.train_opt[lr], weight_decay=wd_G)
 
@@ -413,13 +414,13 @@ class BaseModel():
         lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
         ###### IMPORTANT NOTE: for ideal copy-mopv, here should be forward_image. If you want to ease the condition, can be changed to forward_iamge
         tamper = forward_image.clone().detach()
-        x_shift, y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
+        max_x_shift, max_y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None
         mask_shifted = masks
-        while retried <= 10 and not (valid > lower_bound_percent and (
-                abs(x_shift) > (height_width / 3) or abs(y_shift) > (height_width / 3))):
-            x_shift = int((height_width) * (np.random.rand() - 0.5))
-            y_shift = int((height_width) * (np.random.rand() - 0.5))
-
+        while retried <= 20 and valid < lower_bound_percent:
+            x_shift = int((height_width) * (0.2+0.4*np.random.rand())) * (1 if np.random.rand()>0.5 else -1)
+            y_shift = int((height_width) * (0.2+0.4*np.random.rand())) * (1 if np.random.rand()>0.5 else -1)
+            # if abs(x_shift) <= (height_width / 4) or abs(y_shift) <= (height_width / 4):
+            #     continue
             ### two times padding ###
             mask_buff = torch.zeros((masks.shape[0], masks.shape[1],
                                      masks.shape[2] + abs(2 * x_shift),
@@ -438,22 +439,20 @@ class BaseModel():
             if valid >= max_valid:
                 max_valid = valid
                 mask_shifted = mask_buff
-                x_shift, y_shift = x_shift, y_shift
+                max_x_shift, max_y_shift = x_shift, y_shift
 
         tamper_shifted = torch.zeros((batch_size, channels,
-                                      height_width + abs(2 * x_shift),
-                                      height_width + abs(2 * y_shift))).cuda()
+                                      height_width + abs(2 * max_x_shift),
+                                      height_width + abs(2 * max_y_shift))).cuda()
         tamper_shifted[:, :,
-        abs(x_shift) + x_shift: abs(x_shift) + x_shift + height_width,
-        abs(y_shift) + y_shift: abs(y_shift) + y_shift + height_width] = tamper
+        abs(max_x_shift) + max_x_shift: abs(max_x_shift) + max_x_shift + height_width,
+        abs(max_y_shift) + max_y_shift: abs(max_y_shift) + max_y_shift + height_width] = tamper
 
         tamper_shifted = tamper_shifted[:, :,
-                         abs(x_shift): abs(x_shift) + height_width,
-                         abs(y_shift): abs(y_shift) + height_width]
+                         abs(max_x_shift): abs(max_x_shift) + height_width,
+                         abs(max_y_shift): abs(max_y_shift) + height_width]
 
         masks = mask_shifted.clone().detach()
-        masks = self.clamp_with_grad(masks)
-        # valid = torch.mean(masks)
 
         masks_GT = masks[:, :1, :, :]
 
@@ -480,6 +479,18 @@ class BaseModel():
         # del another_generated
 
         return attacked_forward, masks, masks_GT
+
+    def get_canny(self, input, masks_GT):
+        cannied_list = torch.empty_like(masks_GT).cuda()
+        for i in range(input.shape[0]):
+            grid = input[i]
+            ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
+            ndarr = ndarr.astype(np.float32) / 255.
+            img_gray = rgb2gray(ndarr)
+            sigma = 2  # random.randint(1, 4)
+            cannied = canny(img_gray, sigma=sigma, mask=None).astype(np.float)
+            cannied_list[i] = torch.from_numpy(np.ascontiguousarray(cannied)).contiguous().float()
+        return cannied_list
 
 
     def benign_attacks(self, *, attacked_forward, quality_idx, kernel_size=None, resize_ratio=None, index=None):
