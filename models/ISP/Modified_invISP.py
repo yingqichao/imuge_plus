@@ -580,7 +580,10 @@ class Modified_invISP(BaseModel):
             else:
                 pred_resfcn = target_model(attacked_image.detach().contiguous())
         else:
-            pred_resfcn = target_model(attacked_image.detach().contiguous())
+
+            attacked_cannied = self.get_canny(attacked_image, masks_GT)
+
+            pred_resfcn = target_model(attacked_image.detach().contiguous(), canny=attacked_cannied)
             if isinstance(pred_resfcn, (tuple)):
                 # pred_resfcn,  _ = pred_resfcn
                 _, pred_resfcn = pred_resfcn
