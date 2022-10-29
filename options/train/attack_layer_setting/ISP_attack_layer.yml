@@ -4,7 +4,7 @@ simulated_copymove_indices: [0, 2, 4, 6, 8]
 simulated_inpainting_indices: []
 simulated_copysplicing_indices: [3, 7]
 
-crop_indices: [3,5,7,9]
+crop_indices: [3,5,7]
 
 step_acumulate: 1
 use_gamma_correction: false
@@ -37,8 +37,8 @@ simulated_resize_indices: [0,5]
 simulated_gblur_indices: [6]
 simulated_mblur_indices: [2]
 simulated_AWGN_indices: [1]
-simulated_strong_JPEG_indices: [3,4]
-simulated_weak_JPEG_indices: [7]
+simulated_strong_JPEG_indices: [3,4,7]
+simulated_weak_JPEG_indices: []
 
 simulated_hue: [0]
 simulated_contrast: [1,4]

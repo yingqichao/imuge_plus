@@ -480,14 +480,13 @@ class BaseModel():
 
         return attacked_forward, masks, masks_GT
 
-    def get_canny(self, input, masks_GT):
+    def get_canny(self, input, masks_GT, sigma=1):
         cannied_list = torch.empty_like(masks_GT).cuda()
         for i in range(input.shape[0]):
             grid = input[i]
             ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
             ndarr = ndarr.astype(np.float32) / 255.
             img_gray = rgb2gray(ndarr)
-            sigma = 2  # random.randint(1, 4)
             cannied = canny(img_gray, sigma=sigma, mask=None).astype(np.float)
             cannied_list[i] = torch.from_numpy(np.ascontiguousarray(cannied)).contiguous().float()
         return cannied_list
