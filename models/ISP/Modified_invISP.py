@@ -1442,22 +1442,22 @@ class Modified_invISP(BaseModel):
 
 
         ### attacks generate them all ###
-        # attack_lists = [
-        #     (None, None, None), (0, None, None), (1, None, None), (2, None, None),
-        #     (3, 18, None), (3, 14, None), (3, 10, None), (4, None, None),
-        #     (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
-        # ]
         attack_lists = [
-            (0, 20, 1),  (1, 20, 3), (3, 18, 0),
-            (None,None,None),(None,None,0),(None,None,1),
-            (0, 20, None), (0, 20, 2),
-            (1, 20, None), (1, 20, 0),
-            (2, 20, None), (2, 20, 1), (2, 20, 2),
-            (3, 10, None), (3, 10, 3), (3, 10, 0),
-            (3, 14, None), (3, 14, 2), (3, 14, 1),
-            (3, 18, None), (3, 18, 3),
-            (4, 20, None), (4, 20, 1), (4, 20, 2),
+            (None, None, None), (0, None, None), (1, None, None), (2, None, None),
+            (3, 18, None), (3, 14, None), (3, 10, None), (4, None, None),
+            (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
         ]
+        # attack_lists = [
+        #     (0, 20, 1),  (1, 20, 3), (3, 18, 0),
+        #     (None,None,None),(None,None,0),(None,None,1),
+        #     (0, 20, None), (0, 20, 2),
+        #     (1, 20, None), (1, 20, 0),
+        #     (2, 20, None), (2, 20, 1), (2, 20, 2),
+        #     (3, 10, None), (3, 10, 3), (3, 10, 0),
+        #     (3, 14, None), (3, 14, 2), (3, 14, 1),
+        #     (3, 18, None), (3, 18, 3),
+        #     (4, 20, None), (4, 20, 1), (4, 20, 2),
+        # ]
 
         do_attack, quality_idx, do_augment = attack_lists[self.opt['inference_benign_attack_begin_idx']]
         logs_pred, pred_resfcn, _ = self.get_predicted_mask(target_model=test_model,
