@@ -873,7 +873,7 @@ class Modified_invISP(BaseModel):
                         pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image.detach().contiguous(), attacked_cannied)
 
                         CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                        l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
+                        l1_resfcn = self.l2_loss(torch.sigmoid(post_resfcn), masks_GT)
 
                         CE_loss = CE_resfcn + l1_resfcn
                         logs['CE'] = CE_resfcn.item()
@@ -1072,8 +1072,8 @@ class Modified_invISP(BaseModel):
         ##################   doing mixup on the images   ###############################################
         ### note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
         ### thus, we are not let the ISP network approaching the ground-truth RGB.
-        skip_the_second = np.random.rand() > 0.8
-        alpha_0 = 1.0 if skip_the_second else np.random.rand()
+        # skip_the_second = np.random.rand() > 0.8
+        alpha_0 = np.random.rand()
         alpha_1 = 1 - alpha_0
 
         modified_input = alpha_0 * modified_input_0
@@ -1369,6 +1369,11 @@ class Modified_invISP(BaseModel):
         #     step = step % 130
         #     file_name = "%05d.png" % ((step * batch_size + i) % 758)
 
+        ### cropping
+        locs, _, non_tampered_image = self.cropping_mask_generation(
+            forward_image=non_tampered_image, min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
+        _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
+
         ### get tampering source and mask
         if self.opt['inference_load_real_world_tamper']:
             all_tamper_source = None
@@ -1432,6 +1437,7 @@ class Modified_invISP(BaseModel):
                 masks=masks, masks_GT=masks_GT,
                 modified_input=non_tampered_image, percent_range=percent_range,
                 index=self.opt['inference_tamper_index'],
+                gt_rgb=gt_rgb
             )
 
 
@@ -1623,7 +1629,7 @@ class Modified_invISP(BaseModel):
     ####################################################################################################
     # todo: define how to tamper the rendered RGB
     ####################################################################################################
-    def tampering_RAW(self, *, masks, masks_GT, modified_input, percent_range, index=None):
+    def tampering_RAW(self, *, masks, masks_GT, gt_rgb, modified_input, percent_range, index=None):
         batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         ####### Tamper ###############
         # attacked_forward = torch.zeros_like(modified_input)
@@ -1649,6 +1655,10 @@ class Modified_invISP(BaseModel):
             attacked_forward, masks, masks_GT = self.copysplicing(forward_image=modified_input, masks=masks,
                                                                   percent_range=percent_range,
                                                                   another_immunized=self.previous_protected)
+        elif index in self.opt['simulated_inpainting_indices']: #self.using_splicing():
+            ### todo: splicing
+            attacked_forward = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
+
         else:
             print(index)
             raise NotImplementedError("Tamper的方法没找到！请检查！")
@@ -1936,7 +1946,7 @@ class Modified_invISP(BaseModel):
             index_for_postprocessing = 7
         else:
             logs["cropped"] = False
-            percent_range = None
+            percent_range = [0, 0.3]
             index_for_postprocessing = self.global_step
 
         quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
@@ -1954,12 +1964,13 @@ class Modified_invISP(BaseModel):
                 masks_GT = masks[:, :1]
 
                 _, _, modified_cropped = self.cropping_mask_generation(forward_image=modified_input, locs=locs)
+                _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
 
             rate_mask = torch.mean(masks_GT)
 
         # attacked_forward = tamper_source_cropped
         attacked_forward, masks, masks_GT = self.tampering_RAW(
-            masks=masks, masks_GT=masks_GT,
+            masks=masks, masks_GT=masks_GT, gt_rgb=gt_rgb,
             modified_input=modified_cropped, percent_range=percent_range, index=tamper_index
         )
 

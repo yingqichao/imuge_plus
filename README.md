@@ -46,3 +46,6 @@
 #### 1024
 - the project has been restarted.
 
+#### 1030
+- including cropping in testing. See Line 1373-1375.
+

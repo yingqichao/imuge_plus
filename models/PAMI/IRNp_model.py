@@ -649,7 +649,7 @@ class IRNpModel(BaseModel):
 
         elif index in self.opt['simulated_inpainting_indices']:  # self.using_simulated_inpainting:
             ### todo: simulated inpainting
-            attacked_forward = self.inpainting(forward_image=forward_image, masks=masks, modified_canny=modified_canny)
+            attacked_forward = self.inpainting_for_PAMI(forward_image=forward_image, masks=masks, modified_canny=modified_canny)
 
         elif index in self.opt['simulated_copysplicing_indices']:  # self.using_simulated_inpainting:
             ### todo: copy-splicing
