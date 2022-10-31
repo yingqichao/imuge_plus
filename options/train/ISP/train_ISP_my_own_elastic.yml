@@ -15,10 +15,11 @@ skip_aug_probability: 0.85
 train_isp_networks: false
 train_full_pipeline: true
 
+which_model_for_detector: OSN # MPF
 
 # restormer: 77999
-load_discriminator_models: 7999 #11499
-load_RAW_models: 7999 #11499 # 10999
+load_discriminator_models: 0 #11499
+load_RAW_models: 9999 #11499 # 10999
 load_ISP_models: 43999 #20999 # new: 24999
 load_customized_models: 0
 ### directory

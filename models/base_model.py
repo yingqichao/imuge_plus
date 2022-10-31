@@ -414,7 +414,7 @@ class BaseModel():
 
     def get_shifted_image_for_copymove(self, *, forward_image, percent_range, masks):
         batch_size, channels, height_width = forward_image.shape[0], forward_image.shape[1], forward_image.shape[2]
-        lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
+        lower_bound_percent = max(0.1, percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand())
         ###### IMPORTANT NOTE: for ideal copy-mopv, here should be forward_image. If you want to ease the condition, can be changed to forward_iamge
         tamper = forward_image.clone().detach()
         max_x_shift, max_y_shift, valid, retried, max_valid, mask_buff = 0, 0, 0, 0, 0, None

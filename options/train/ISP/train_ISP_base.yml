@@ -1,3 +1,7 @@
+#### model path dirs
+ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+RAW2RAW_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+detector_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
 #### general settings
 

@@ -57,19 +57,29 @@ class Detector(nn.Module):
         Mo = self.det_net(Ii)
         return Mo
 
-
+from collections import OrderedDict
 class Model(nn.Module):
     def __init__(self, model_save_dir):
         super(Model, self).__init__()
         self.save_dir = model_save_dir
         self.networks = Detector()
-        self.gen = nn.DataParallel(self.networks).cuda()
+        # self.gen = nn.DataParallel(self.networks).cuda()
 
     def forward(self, Ii):
-        return self.gen(Ii)
+        return self.networks(Ii)
 
     def load(self):
-        self.gen.load_state_dict(torch.load(self.save_dir + '%s_weights.pth' % self.networks.name))
+        # self.networks.load_state_dict(torch.load(self.save_dir + '%s_weights.pth' % self.networks.name))
+        model_path = self.save_dir + '%s_weights.pth' % self.networks.name
+        ckp = torch.load(model_path, map_location='cpu')
+        load_net_clean = OrderedDict()  # remove unnecessary 'module.'
+        for k, v in ckp.items():
+            if k.startswith('module.'):
+                load_net_clean[k[7:]] = v
+            else:
+                load_net_clean[k] = v
+
+        self.networks.load_state_dict(load_net_clean, strict=True)
 
 
 def forensics_test(model):
@@ -273,9 +283,9 @@ def metric(premask, groundtruth):
 
 
 def get_model(save_pth_dir):
-    model = Model(save_pth_dir).cuda()
+    model = Model(save_pth_dir)
     model.load()
-    model.eval()
+    # model.eval()
     return model
 
 
