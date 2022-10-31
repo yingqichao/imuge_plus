@@ -169,16 +169,16 @@ class Modified_invISP(BaseModel):
             ### todo: invISP: generator
             self.define_ISP_network_training()
 
-            self.model_storage = f'/model/{self.opt["task_name_ISP_model"]}/'
-
             ### loading ISP
-            self.load_space_storage = f"{self.opt['name']}/complete_results"
-            self.load_storage = f'/model/{self.opt["task_name_ISP_model"]}/'
+            # self.load_space_storage = f"{self.opt['name']}/complete_results"
+            # self.load_storage = f'/model/{self.opt["task_name_ISP_model"]}/'
+            self.load_ISP_storage = self.opt['ISP_folder']
+
             self.model_path = str(self.opt['load_ISP_models'])  # last time: 10999
             load_models = self.opt['load_ISP_models'] > 0
             if load_models:
                 print(f"loading tampering/ISP models: {self.network_list}")
-                self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+                self.pretrain = self.load_ISP_storage + self.model_path
                 self.reload(self.pretrain, network_list=self.default_ISP_networks)
 
         if 'discriminator_mask' in self.network_list:
@@ -186,29 +186,22 @@ class Modified_invISP(BaseModel):
             self.define_tampering_localization_network()
 
             ### loading discriminator
-            self.load_space_storage = f"{self.opt['name']}/complete_results"
-            self.load_storage = f'/model/{self.opt["task_name_discriminator_model"]}/'
+            # self.load_space_storage = f"{self.opt['name']}/complete_results"
+            # self.load_storage = f'/model/{self.opt["task_name_discriminator_model"]}/'
+            self.load_detector_storage = self.opt['detector_folder']
+
             self.model_path = str(self.opt['load_discriminator_models'])  # last time: 10999
             load_models = self.opt['load_discriminator_models'] > 0
             if load_models:
                 print(f"loading models: {self.network_list}")
-                self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+                self.pretrain = self.load_detector_storage + self.model_path
                 self.reload(self.pretrain, network_list=self.default_detection_networks)
 
-            # self.discriminator = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
-            #                             style_control=False, use_dwt=False, use_norm_conv=True).cuda()
-            #     # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.opt['raw_classes']).cuda() #UNetDiscriminator(use_SRM=False).cuda()
-            # self.discriminator = DistributedDataParallel(self.discriminator,
-            #                                                   device_ids=[torch.cuda.current_device()],
-            #                                                   find_unused_parameters=True)
-
-            # self.scaler_G = torch.cuda.amp.GradScaler()
-            # self.scaler_generator = torch.cuda.amp.GradScaler()
-            # self.scaler_qf = torch.cuda.amp.GradScaler()
 
         if 'localizer' in self.network_list:
             ### todo: localizer is flexible, could be OSN/restormer/CAT-Net, etc.
             self.define_localizer()
+
             if self.args.mode in [5.0] or self.opt['test_restormer'] == 2:
                 ### loading localizer
                 self.load_space_storage = f"{self.opt['name']}/complete_results"
@@ -225,13 +218,15 @@ class Modified_invISP(BaseModel):
             self.define_RAW2RAW_network()
 
             ### loading RAW2RAW
-            self.load_space_storage = f"{self.opt['name']}/complete_results"
-            self.load_storage = f'/model/{self.opt["task_name_KD_JPEG_model"]}/'
+            # self.load_space_storage = f"{self.opt['name']}/complete_results"
+            # self.load_storage = f'/model/{self.opt["task_name_KD_JPEG_model"]}/'
+            self.load_protection_storage = self.opt['protection_folder']
+
             self.model_path = str(self.opt['load_RAW_models'])  # last time: 10999
             load_models = self.opt['load_RAW_models'] > 0
             if load_models:
                 print(f"loading models: {self.network_list}")
-                self.pretrain = self.load_space_storage + self.load_storage + self.model_path
+                self.pretrain = self.load_protection_storage + self.model_path
                 self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks)
 
             # self.scaler_kd_jpeg = torch.cuda.amp.GradScaler()
