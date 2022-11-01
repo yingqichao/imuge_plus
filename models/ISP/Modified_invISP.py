@@ -120,10 +120,12 @@ class Modified_invISP(BaseModel):
         self.kernel_RAW_k2 = self.kernel_RAW_k2.repeat(1, 1, expand_times, expand_times)
         self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, 1, expand_times, expand_times)
 
+        self.out_space_storage = f"{self.opt['name']}/complete_results"
 
         if prepare_networks_optimizers:
             ### todo: network definitions
             self.network_definitions()
+            print(f"network list: {self.network_list}")
 
             ### todo: Optimizers
             self.define_optimizers()
@@ -146,117 +148,7 @@ class Modified_invISP(BaseModel):
         #         print('Did not find state [{:s}] ...'.format(state_path))
 
     def network_definitions(self):
-
-        if self.args.mode in [0, 1]:
-            ### mode=0: generating protected images (val)
-            ### mode=1: tampering localization on generating protected images (val)
-
-            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
-            self.save_network_list = []
-            self.training_network_list = []
-
-        ## mode 2 implemented
-
-
-        ## mode 3 implemented
-
-        ## mode 4 implemented
-
-        elif self.args.mode in [5]:
-            ### train a ISP using restormer for validation (train)
-            self.network_list = ['localizer']
-            self.save_network_list = self.network_list
-            self.training_network_list = self.network_list
-        elif self.args.mode in [6]:
-            ### train a ISP using restormer for validation (train)
-            self.network_list = ['discriminator_mask']
-            self.save_network_list = self.network_list
-            self.training_network_list = self.network_list
-        else:
-            raise NotImplementedError("从1012开始，需要指定一下读取哪些模型")
-
-        print(f"network list: {self.network_list}")
-
-        self.out_space_storage = f"{self.opt['name']}/complete_results"
-
-        if 'generator' in self.network_list:
-            ### todo: ISP networks will be loaded
-            self.define_ISP_network_training()
-
-            ### loading ISP
-            self.load_ISP_storage = self.opt['ISP_folder']
-
-            self.model_path = str(self.opt['load_ISP_models'])  # last time: 10999
-            load_models = self.opt['load_ISP_models'] > 0
-            if load_models:
-                print(f"loading tampering/ISP models: {self.network_list}")
-                self.pretrain = self.load_ISP_storage + self.model_path
-                self.reload(self.pretrain, network_list=self.default_ISP_networks)
-
-        if 'discriminator_mask' in self.network_list:
-            ### todo: forgery detection network will be loaded
-            self.define_tampering_localization_network()
-
-            ### loading discriminator
-            self.load_detector_storage = self.opt['detector_folder']
-
-            self.model_path = str(self.opt['load_discriminator_models'])  # last time: 10999
-            load_models = self.opt['load_discriminator_models'] > 0
-            if load_models:
-                print(f"loading models: {self.network_list}")
-                self.pretrain = self.load_detector_storage + self.model_path
-                self.reload(self.pretrain, network_list=self.default_detection_networks)
-
-            if 'discriminator' in self.network_list:
-                self.load_detector_storage = self.opt['MVSS_folder']
-
-                self.model_path = str(self.opt['load_MVSS_models'])  # last time: 10999
-                load_models = self.opt['load_MVSS_models'] > 0
-                if load_models:
-                    print(f"loading models: {self.network_list}")
-                    self.pretrain = self.load_detector_storage + self.model_path
-                    self.reload(self.pretrain, network_list=["discriminator"])
-
-            if 'localizer' in self.network_list:
-                self.load_detector_storage = self.opt['OSN_folder']
-
-                self.model_path = str(self.opt['load_OSN_models'])  # last time: 10999
-                load_models = self.opt['load_OSN_models'] > 0
-                if load_models:
-                    print(f"loading models: {self.network_list}")
-                    self.pretrain = self.load_detector_storage + self.model_path
-                    self.reload(self.pretrain, network_list=["localizer"])
-
-        if 'localizer' in self.network_list and self.args.mode != 2:  # not training main pipeline
-            ### todo: localizer is flexible, could be OSN/restormer/CAT-Net, etc.
-            self.define_localizer()
-
-            if self.args.mode in [5.0] or self.opt['test_restormer'] == 2:
-                ### loading localizer
-                self.load_space_storage = f"{self.opt['name']}/complete_results"
-                self.load_storage = f'/model/{self.opt["task_name_customized_model"]}/'
-                self.model_path = str(self.opt['load_customized_models'])  # last time: 10999
-                load_models = self.opt['load_customized_models'] > 0
-                if load_models:
-                    print(f"loading models: {self.network_list}")
-                    self.pretrain = self.load_space_storage + self.load_storage + self.model_path
-                    self.reload(self.pretrain, network_list=self.default_customized_networks)
-
-        if 'KD_JPEG' in self.network_list:
-            ### todo: RAW2RAW network will be loaded
-            self.define_RAW2RAW_network()
-
-            ### loading RAW2RAW
-            # self.load_space_storage = f"{self.opt['name']}/complete_results"
-            # self.load_storage = f'/model/{self.opt["task_name_KD_JPEG_model"]}/'
-            self.load_protection_storage = self.opt['protection_folder']
-
-            self.model_path = str(self.opt['load_RAW_models'])  # last time: 10999
-            load_models = self.opt['load_RAW_models'] > 0
-            if load_models:
-                print(f"loading models: {self.network_list}")
-                self.pretrain = self.load_protection_storage + self.model_path
-                self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks)
+        pass
 
     def load_model_wrapper(self,*,folder_name,model_name,network_lists):
         load_detector_storage = self.opt[folder_name]
@@ -331,208 +223,12 @@ class Modified_invISP(BaseModel):
     # todo: MODE == 0
     # todo: get_protected_RAW_and_corresponding_images
     ####################################################################################################
-    @torch.no_grad()
     def get_protected_RAW_and_corresponding_images(self, step=None):
-        ##########################    inference single image   ########################
-        ### what is tamper_source? used for simulated inpainting, only activated if self.global_step%3==2
-
-        input_raw_one_dim = self.real_H_val
-        file_name = self.file_name_val
-        camera_name = self.camera_name_val
-        gt_rgb = self.label_val
-        ### tensor sized (B,3)
-        camera_white_balance = self.camera_white_balance_val
-        ### tensor sized (B,1) ranging from [0,3]
-        bayer_pattern = self.bayer_pattern_val
-
-        input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
-                                       white_balance=camera_white_balance)
-        batch_size, num_channels, height_width, _ = input_raw.shape
-
-        logs = {}
-        logs['lr'] = 0
-
-        self.KD_JPEG.eval()
-        self.netG.eval()
-        self.qf_predict_network.eval()
-        self.generator.eval()
-        ### RAW PROTECTION ###
-        modified_raw_one_dim = self.RAW_protection_by_my_own_elastic(input_raw_one_dim=input_raw_one_dim)
-        # raw_reversed, _ = self.KD_JPEG(modified_raw_one_dim, rev=True)
-
-        modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern,
-                                          white_balance=camera_white_balance)
-        RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
-        modified_raw = self.clamp_with_grad(modified_raw)
-
-        RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
-        logs['RAW_PSNR'] = RAW_PSNR
-        logs['RAW_L1'] = RAW_L1.item()
-
-
-        ###########################    RAW2RGB pipelines    ########################################
-        #### invISP AS SUBSEQUENT ISP####
-        modified_input_0 = self.generator(modified_raw)
-        if self.opt['use_gamma_correction']:
-            modified_input_0 = self.gamma_correction(modified_input_0)
-        modified_input_0 = self.clamp_with_grad(modified_input_0)
-
-        original_0 = self.generator(input_raw)
-        if self.opt['use_gamma_correction']:
-            original_0 = self.gamma_correction(original_0)
-        original_0 = self.clamp_with_grad(original_0)
-        RAW_PSNR = self.psnr(self.postprocess(original_0), self.postprocess(modified_input_0)).item()
-        logs['RGB_PSNR_0'] = RAW_PSNR
-
-        modified_input_1 = self.qf_predict_network(modified_raw)
-        if self.opt['use_gamma_correction']:
-            modified_input_1 = self.gamma_correction(modified_input_1)
-        modified_input_1 = self.clamp_with_grad(modified_input_1)
-
-        original_1 = self.qf_predict_network(input_raw)
-        if self.opt['use_gamma_correction']:
-            original_1 = self.gamma_correction(original_1)
-        original_1 = self.clamp_with_grad(original_1)
-        RAW_PSNR = self.psnr(self.postprocess(original_1), self.postprocess(modified_input_1)).item()
-        logs['RGB_PSNR_1'] = RAW_PSNR
-
-        modified_input_2 = self.netG(modified_raw)
-        if self.opt['use_gamma_correction']:
-            modified_input_2 = self.gamma_correction(modified_input_2)
-        modified_input_2 = self.clamp_with_grad(modified_input_2)
-
-        original_2 = self.qf_predict_network(input_raw)
-        if self.opt['use_gamma_correction']:
-            original_2 = self.gamma_correction(original_2)
-        original_2 = self.clamp_with_grad(original_2)
-        RAW_PSNR = self.psnr(self.postprocess(original_2), self.postprocess(modified_input_2)).item()
-        logs['RGB_PSNR_2'] = RAW_PSNR
-
-        name = f"{self.out_space_storage}/test_protected_images/{self.task_name}"
-        # print('\nsaving sample ' + name)
-        for image_no in range(batch_size):
-            if self.opt['inference_save_image']:
-                self.print_this_image(modified_raw[image_no], f"{name}/{str(step).zfill(5)}_protect_raw.png")
-                self.print_this_image(input_raw[image_no], f"{name}/{str(step).zfill(5)}_ori_raw.png")
-                # self.print_this_image((10*torch.abs(input_raw[image_no]-modified_raw[image_no])).unsqueeze(0),
-                #                       f"{name}/{str(step).zfill(5)}_diff_raw.png")
-                self.print_this_image(modified_input_0[image_no], f"{name}/{str(step).zfill(5)}_0.png")
-                self.print_this_image(original_0[image_no], f"{name}/{str(step).zfill(5)}_0_ori.png")
-                # self.print_this_image((10 * torch.abs(modified_input_0[image_no] - original_0[image_no])),
-                #                       f"{name}/{str(step).zfill(5)}_0_diff.png")
-                self.print_this_image(modified_input_1[image_no], f"{name}/{str(step).zfill(5)}_1.png")
-                self.print_this_image(original_1[image_no], f"{name}/{str(step).zfill(5)}_1_ori.png")
-                # self.print_this_image((10 * torch.abs(modified_input_1[image_no] - original_1[image_no])),
-                #                       f"{name}/{str(step).zfill(5)}_1_diff.png")
-                self.print_this_image(modified_input_2[image_no], f"{name}/{str(step).zfill(5)}_2.png")
-                self.print_this_image(original_2[image_no], f"{name}/{str(step).zfill(5)}_2_ori.png")
-                # self.print_this_image((10 * torch.abs(modified_input_2[image_no] - original_2[image_no])),
-                #                       f"{name}/{str(step).zfill(5)}_2_diff.png")
-                self.print_this_image(gt_rgb[image_no], f"{name}/{str(step).zfill(5)}_gt.png")
-                np.save(f"{name}/{str(step).zfill(5)}_gt", modified_raw.detach().cpu().numpy())
-
-                print("Saved:{}".format(f"{name}/{str(step).zfill(5)}"))
-
-            if self.opt['inference_do_subsequent_prediction']:
-                logs_pred_accu = {}
-                for idx_isp in range(3):
-                    source_image = eval(f"modified_input_{idx_isp}")[image_no:image_no + 1]
-                    ### get tampering source and mask
-                    if self.opt['inference_load_real_world_tamper']:
-                        file_name = f"{str(step).zfill(5)}_{idx_isp}_{str(self.rank)}.png"
-                        folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
-                        mask_file_name = f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
-                        mask_folder_name = f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
-                        # print(f"reading {folder_name+file_name}")
-                        img_GT = cv2.imread(folder_name + file_name, cv2.IMREAD_COLOR)
-                        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
-                        # print(f"reading {mask_folder_name + file_name}")
-                        mask_GT = cv2.imread(mask_folder_name + mask_file_name, cv2.IMREAD_GRAYSCALE)
-
-                        img_GT = img_GT.astype(np.float32) / 255.
-                        if img_GT.ndim == 2:
-                            img_GT = np.expand_dims(img_GT, axis=2)
-                        # some images have 4 channels
-                        if img_GT.shape[2] > 3:
-                            img_GT = img_GT[:, :, :3]
-                        mask_GT = mask_GT.astype(np.float32) / 255.
-
-                        orig_height, orig_width, _ = img_GT.shape
-                        H, W, _ = img_GT.shape
-
-                        mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float().unsqueeze(0).unsqueeze(
-                            0).cuda()
-
-                        # BGR to RGB, HWC to CHW, numpy to tensor
-                        if img_GT.shape[2] == 3:
-                            img_GT = img_GT[:, :, [2, 1, 0]]
-
-                        tamper_source = torch.from_numpy(
-                            np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float().unsqueeze(0).cuda()
-
-                        test_input = source_image * (1 - mask_GT) + tamper_source * mask_GT
-
-                    else:  ## using simulated tampering
-
-                        #### tampering source from the training set
-
-                        if self.previous_protected is not None:
-                            self.previous_protected = self.label[0:1]
-                        self.previous_images = self.label[0:1]
-
-                        masks, masks_GT, percent_range = self.mask_generation(modified_input=source_image,
-                                                               percent_range=None)
-
-                        test_input, masks, mask_GT = self.tampering_RAW(
-                            masks=masks, masks_GT=masks_GT,
-                            modified_input=source_image, percent_range=percent_range,
-                            index=self.opt['inference_tamper_index'],
-                        )
-
-                        self.previous_protected = source_image.clone().detach()
-
-                    ### attacks generate them all
-                    attack_lists = [
-                        (None, None, None), (0, None, None), (1, None, None), (2, None, None), (3, 18, None),
-                        (3, 14, None), (4, None, None),
-                        (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
-                    ]
-                    # attack_lists = [
-                    #     (None,None,None),(None,None,0),(None,None,1),
-                    #     (0, 20, None), (0, 20, 2), (0, 20, 1),
-                    #     (1, 20, None), (1, 20, 3), (1, 20, 0),
-                    #     (2, 20, None), (2, 20, 1), (2, 20, 2),
-                    #     (3, 10, None), (3, 10, 3), (3, 10, 0),
-                    #     (3, 14, None), (3, 14, 2), (3, 14, 1),
-                    #     (3, 18, None), (3, 18, 0), (3, 18, 3),
-                    #     (4, 20, None), (4, 20, 1), (4, 20, 2),
-                    # ]
-                    begin_idx = self.opt['inference_benign_attack_begin_idx']
-                    for idx_attacks in range(begin_idx, begin_idx + 1):  # len(attack_lists)
-                        do_attack, quality_idx, do_augment = attack_lists[idx_attacks]
-                        logs_pred, pred_resfcn, _ = self.get_predicted_mask(modified_input=test_input,
-                                                                            masks_GT=mask_GT, do_attack=do_attack,
-                                                                            quality_idx=quality_idx,
-                                                                            do_augment=do_augment,
-                                                                            step=step,
-                                                                            filename_append=str(idx_isp),
-                                                                            save_image=self.opt['inference_save_image']
-                                                                            )
-                        if len(logs_pred_accu) == 0:
-                            logs_pred_accu.update(logs_pred)
-                        else:
-                            for key in logs_pred:
-                                logs_pred_accu[key] += logs_pred[key]
-
-                for key in logs_pred_accu:
-                    logs_pred_accu[key] = logs_pred_accu[key] / 3 / 1
-                logs.update(logs_pred_accu)
-
-        return logs, (modified_raw, modified_input_0, modified_input_1, modified_input_2), True
+        pass
 
     ####################################################################################################
     # todo: MODE == 1
-    # todo: get_predicted_mask
+    # todo: get_predicted_mask (non virtual. used by mode 0 and mode 4)
     ####################################################################################################
     @torch.no_grad()
     def get_predicted_mask(self, target_model=None, modified_input=None, masks_GT=None, save_image=True,
@@ -714,158 +410,19 @@ class Modified_invISP(BaseModel):
     def get_performance_of_OSN(self, step):
         pass
 
-
     ####################################################################################################
     # todo: MODE == 5
     # todo: train_ISP_using_rstormer
     ####################################################################################################
     def train_ISP_using_rstormer(self, step=None):
-
-        #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
-        did_val = False
-        if step is not None:
-            self.global_step = step
-
-        logs, debug_logs = {}, []
-        # self.real_H = self.clamp_with_grad(self.real_H)
-        lr = self.get_current_learning_rate()
-        logs['lr'] = lr
-
-
-        ### camera_white_balance SIZE (B,3)
-        camera_white_balance = self.camera_white_balance
-        file_name = self.file_name
-        ### bayer_pattern sized (B,1) ranging from [0,3]
-        bayer_pattern = self.bayer_pattern
-
-        input_raw_one_dim = self.real_H
-        gt_rgb = self.label
-        input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
-                                       white_balance=camera_white_balance,
-                                       eval=not self.opt['train_isp_networks'])
-
-        batch_size, num_channels, height_width, _ = input_raw.shape
-        # input_raw = self.clamp_with_grad(input_raw)
-
-        with torch.enable_grad():
-
-            self.localizer.train()
-            ####################   Image ISP training   ##############################
-            ### we first train several nn-based ISP networks BEFORE TRAINING THE PIPELINE
-
-            ####### UNetDiscriminator ##############
-            modified_input_qf_predict, CYCLE_loss = self.ISP_image_generation_general(
-                network=self.localizer,
-                input_raw=input_raw.detach().contiguous(),
-                target=gt_rgb)
-
-            modified_input_qf_predict_detach = self.clamp_with_grad(modified_input_qf_predict.detach())
-            CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict_detach),
-                                   self.postprocess(gt_rgb)).item()
-            logs['CYCLE_PSNR'] = CYCLE_PSNR
-            logs['CYCLE_L1'] = CYCLE_loss.item()
-
-            (CYCLE_loss / self.opt['step_acumulate']).backward()
-
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)
-            self.optimizer_localizer.step()
-            self.optimizer_localizer.zero_grad()
-
-        if (self.global_step % 1000 == 3 or self.global_step <= 10):
-            images = stitch_images(
-                self.postprocess(input_raw),
-                self.postprocess(modified_input_qf_predict_detach),
-                self.postprocess(gt_rgb),
-                img_per_row=1
-            )
-
-            name = f"{self.out_space_storage}/isp_images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-                   f"_{str(self.rank)}.png"
-            print(f'Bayer: {bayer_pattern}. Saving sample {name}')
-            images.save(name)
-
-        ######## Finally ####################
-        if self.global_step % (self.opt['model_save_period']) == (
-                self.opt['model_save_period'] - 1) or self.global_step == 9:
-            if self.rank == 0:
-                print('Saving models and training states.')
-                self.save(self.global_step, folder='model', network_list=self.save_network_list)
-
-        self.global_step = self.global_step + 1
-
-        # print(logs)
-        # print(debug_logs)
-        return logs, debug_logs, did_val
+        pass
 
     ####################################################################################################
     # todo: MODE == 6
     # todo: train_resfcn
     ####################################################################################################
     def train_resfcn(self, step=None):
-        self.discriminator_mask.train()
-
-        logs, debug_logs = {}, []
-
-        self.real_H = self.clamp_with_grad(self.real_H)
-        batch_size, num_channels, height_width, _ = self.real_H.shape
-        lr = self.get_current_learning_rate()
-        logs['lr'] = lr
-
-
-        if not (self.previous_images is None or self.previous_previous_images is None):
-
-            with torch.enable_grad(): #cuda.amp.autocast():
-
-                attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                    modified_input=self.real_H, gt_rgb=self.real_H)
-
-                ############    Image Manipulation Detection Network (Downstream task)   ###############################
-              
-                pred_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
-                CE_resfcn = self.bce_with_logit_loss(pred_resfcn, masks_GT)
-
-                logs['CE'] = CE_resfcn.item()
-
-
-                self.optimizer_discriminator_mask.zero_grad()
-                CE_resfcn.backward()
-                if self.train_opt['gradient_clipping']:
-                    nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                self.optimizer_discriminator_mask.step()
-                self.optimizer_discriminator_mask.zero_grad()
-
-                if self.global_step % 1000 == 3 or self.global_step <= 10:
-                    images = stitch_images(
-                        self.postprocess(self.real_H),
-                        self.postprocess(attacked_image),
-                        self.postprocess(attacked_adjusted),
-                        self.postprocess(attacked_forward),
-                        self.postprocess(torch.sigmoid(pred_resfcn)),
-                        self.postprocess(masks_GT),
-                        img_per_row=1
-                    )
-
-                    name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-                           f"_0_ {str(self.rank)}.png"
-                    print('\nsaving sample ' + name)
-                    images.save(name)
-
-        ######## Finally ####################
-        if self.global_step % (self.opt['model_save_period']) == (self.opt['model_save_period'] - 1) or self.global_step == 9:
-            if self.rank == 0:
-                print('Saving models and training states.')
-                self.save(self.global_step, folder='model', network_list=self.network_list)
-        if self.real_H is not None:
-            if self.previous_images is not None:
-                self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.real_H
-            self.previous_protected = self.real_H
-        self.global_step = self.global_step + 1
-
-        # print(logs)
-        # print(debug_logs)
-        return logs, debug_logs, False
+        pass
 
     ####################################################################################################
     # todo: define how to tamper the rendered RGB
@@ -989,18 +546,14 @@ class Modified_invISP(BaseModel):
         self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                             find_unused_parameters=True)
 
-    def define_tampering_localization_network(self):
-        if self.args.mode==6:
-            from MVSS.models.mvssnet import get_mvss
-            from MVSS.models.resfcn import ResFCN
-            print("Building ResFCN...........please wait...")
-            self.discriminator_mask = ResFCN().cuda()
-            self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
-                                                              device_ids=[torch.cuda.current_device()],
-                                                              find_unused_parameters=True)
+    def define_resfcn_as_detector(self):
+        from MVSS.models.resfcn import ResFCN
+        print("Building ResFCN...........please wait...")
+        self.discriminator_mask = ResFCN().cuda()
+        self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
+                                                          device_ids=[torch.cuda.current_device()],
+                                                          find_unused_parameters=True)
 
-        else: #if 'MPF' in self.opt['which_model_for_detector']:
-            pass # mode 2 implemented
 
 
     ####################################################################################################

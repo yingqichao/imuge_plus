@@ -6,11 +6,11 @@ MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
 # restormer: 77999
-load_discriminator_models: 8999 #11499
-load_RAW_models: 8999 #11499 # 10999
+load_discriminator_models: 3999 #11499
+load_RAW_models: 3999 #11499 # 10999
 load_ISP_models: 43999 #20999 # new: 24999
-load_MVSS_models: 8999
-load_OSN_models: 8999
+load_MVSS_models: 3999
+load_OSN_models: 3999
 load_customized_models: 0
 
 #### general settings
@@ -87,7 +87,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 1e-4   # 2e-5
+  lr_scratch: !!float 2e-5   # 2e-5
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

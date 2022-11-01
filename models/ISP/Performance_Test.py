@@ -67,6 +67,8 @@ class Performance_Test(Modified_invISP):
         self.save_network_list = []
         self.training_network_list = []
 
+        self.define_localizer()
+
     def define_localizer(self):
 
         which_model = self.opt['using_which_model_for_test']
@@ -76,9 +78,15 @@ class Performance_Test(Modified_invISP):
             # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
             #                                     find_unused_parameters=True)
             self.localizer = get_model('/groupshare/ISP_results/models/').cuda()
+            self.localizer = DistributedDataParallel(self.localizer,
+                                                     device_ids=[torch.cuda.current_device()],
+                                                     find_unused_parameters=True)
         elif 'CAT' in which_model:
             from CATNet.model import get_model
             self.localizer = get_model().cuda()
+            self.localizer = DistributedDataParallel(self.localizer,
+                                                     device_ids=[torch.cuda.current_device()],
+                                                     find_unused_parameters=True)
         elif 'MVSS' in which_model:
             model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
             from MVSS.models.mvssnet import get_mvss
@@ -92,10 +100,16 @@ class Performance_Test(Modified_invISP):
             )
             ckp = torch.load(model_path, map_location='cpu')
             self.localizer.load_state_dict(ckp, strict=True)
-            self.localizer = nn.DataParallel(self.localizer).cuda()
+            self.localizer = self.localizer.cuda()
+            self.localizer = DistributedDataParallel(self.localizer,
+                                                     device_ids=[torch.cuda.current_device()],
+                                                     find_unused_parameters=True)
         elif 'Mantra' in which_model:
             model_path = './MantraNetv4.pt'
-            self.localizer = nn.DataParallel(pre_trained_model(model_path)).cuda()
+            self.localizer = pre_trained_model(model_path).cuda()
+            self.localizer = DistributedDataParallel(self.localizer,
+                                                     device_ids=[torch.cuda.current_device()],
+                                                     find_unused_parameters=True)
         elif 'Resfcn' in which_model:
             print('resfcn here')
             from MVSS.models.resfcn import ResFCN
@@ -103,6 +117,9 @@ class Performance_Test(Modified_invISP):
             checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
             discriminator_mask.load_state_dict(checkpoint, strict=True)
             self.localizer = discriminator_mask
+            self.localizer = DistributedDataParallel(self.localizer,
+                                                     device_ids=[torch.cuda.current_device()],
+                                                     find_unused_parameters=True)
         elif 'MPF' in which_model:
             print("using my_own_elastic as localizer.")
             self.localizer = self.define_my_own_elastic_as_detector()

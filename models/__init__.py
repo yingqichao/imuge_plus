@@ -13,14 +13,22 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
         model = M(opt, args)
     elif which_model == 'ICASSP_NOWAY':
         from models.CLRNet.IRNcrop_model import IRNcropModel as M
-    elif which_model == 'ICASSP_RHI':
-        from models.tianchi_model import IRNrhiModel as M
-        # from .IRNrhi_model import IRNrhiModel as M
     elif which_model == 'CLRNet':
         from models.CLRNet.IRNclrNew_model import IRNclrModel as M
         model = M(opt, args)
     elif which_model == 'ISP':
-        from models.ISP.Modified_invISP import Modified_invISP as M
+        if args.mode==2:
+            from models.ISP.ISP_Pipeline_Training import ISP_Pipeline_Training as M
+        elif args.mode==3:
+            from models.ISP.Ablation_RGB_Protection import Ablation_RGB_Protection as M
+        elif args.mode==4:
+            from models.ISP.Performance_Test import Performance_Test as M
+        elif args.mode==5:
+            from models.ISP.Train_One_Single_ISP import Train_One_Single_ISP as M
+        elif args.mode==6:
+            from models.ISP.Train_One_Single_Detector import Train_One_Single_Detector as M
+        ### original version
+        # from models.ISP.Modified_invISP import Modified_invISP as M
         model = M(opt, args, train_set)
     else:
         raise NotImplementedError('大神是不是搞错了？')

@@ -72,6 +72,8 @@ class ISP_Pipeline_Training(Modified_invISP):
 
         ### ISP networks
         self.define_ISP_network_training()
+        self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
+                                network_lists=self.default_ISP_networks)
         ### RAW2RAW network
         self.define_RAW2RAW_network()
         self.load_model_wrapper(folder_name='protection_folder',model_name='load_RAW_models',
