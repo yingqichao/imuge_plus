@@ -53,7 +53,7 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
             variables_list = ['RAW_L1', 'RAW_PSNR', 'loss', 'ERROR', 'CE', 'CEL1', 'F1', 'F1_1', 'RECALL', 'RECALL_1',
                               'RGB_PSNR_0', 'RGB_PSNR_1', 'RGB_PSNR_2']
         elif 'ISP' in which_model and args.mode == 4:
-            variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'RAW_PSNR', 'RGB_PSNR']
+            variables_list = ['ERROR', 'CE', 'F1', 'RECALL', 'RAW_PSNR', 'RGB_PSNR', 'AUC', 'IoU']
         elif 'ISP' in which_model and args.mode == 0:
             variables_list = ['RAW_L1', 'RAW_PSNR', 'loss', 'ERROR', 'CE', 'CEL1', 'F1', 'F1_1', 'RECALL', 'RECALL_1',
                               'RGB_PSNR_0', 'RGB_PSNR_1', 'RGB_PSNR_2']
