@@ -86,23 +86,28 @@ def load_config(mode=None):
         mode (int): 1: train, 2: test, 3: eval, reads from config file if not specified
     """
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--path', '--checkpoints', type=str, default='./checkpoints/places2', help='model checkpoints path (default: ./checkpoints)')
-    parser.add_argument('--model', type=int, choices=[1, 2, 3, 4], default=3, help='1: edge model, 2: inpaint model, 3: edge-inpaint model, 4: joint model')
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--path', '--checkpoints', type=str, default='./checkpoints/places2', help='model checkpoints path (default: ./checkpoints)')
+    # parser.add_argument('--model', type=int, choices=[1, 2, 3, 4], default=3, help='1: edge model, 2: inpaint model, 3: edge-inpaint model, 4: joint model')
+    #
+    # # test mode
+    # if mode == 2:
+    #     parser.add_argument('--input', type=str, default='', help='path to the input images directory or an input image')
+    #     parser.add_argument('--mask', type=str, default='', help='path to the masks directory or a mask file')
+    #     parser.add_argument('--edge', type=str, default='', help='path to the edges directory or an edge file')
+    #     parser.add_argument('--output', type=str, default='', help='path to the output directory')
+    #
+    # args = parser.parse_args()
+    args = {
+        'path': './checkpoints/places2',
+        'model': 3,
 
-    # test mode
-    if mode == 2:
-        parser.add_argument('--input', type=str, default='', help='path to the input images directory or an input image')
-        parser.add_argument('--mask', type=str, default='', help='path to the masks directory or a mask file')
-        parser.add_argument('--edge', type=str, default='', help='path to the edges directory or an edge file')
-        parser.add_argument('--output', type=str, default='', help='path to the output directory')
+    }
+    config_path = os.path.join(args['path'], 'config.yml')
 
-    args = parser.parse_args()
-    config_path = os.path.join(args.path, 'config.yml')
-
-    # create checkpoints path if does't exist
-    if not os.path.exists(args.path):
-        os.makedirs(args.path)
+    # # create checkpoints path if does't exist
+    # if not os.path.exists(weights_path):
+    #     os.makedirs(weights_path)
 
     # copy config template if does't exist
     if not os.path.exists(config_path):
@@ -114,31 +119,31 @@ def load_config(mode=None):
     # train mode
     if mode == 1:
         config.MODE = 1
-        if args.model:
-            config.MODEL = args.model
+        if args['model']:
+            config.MODEL = args['model']
 
     # test mode
     elif mode == 2:
         config.MODE = 2
-        config.MODEL = args.model if args.model is not None else 3
+        config.MODEL = args['model'] if args['model'] is not None else 3
         config.INPUT_SIZE = 512
-
-        if args.input is not None:
-            config.TEST_FLIST = args.input
-
-        if args.mask is not None:
-            config.TEST_MASK_FLIST = args.mask
-
-        if args.edge is not None:
-            config.TEST_EDGE_FLIST = args.edge
-
-        if args.output is not None:
-            config.RESULTS = args.output
+        #
+        # if args.input is not None:
+        #     config.TEST_FLIST = args.input
+        #
+        # if args.mask is not None:
+        #     config.TEST_MASK_FLIST = args.mask
+        #
+        # if args.edge is not None:
+        #     config.TEST_EDGE_FLIST = args.edge
+        #
+        # if args.output is not None:
+        #     config.RESULTS = args.output
 
     # eval mode
     elif mode == 3:
         config.MODE = 3
-        config.MODEL = args.model if args.model is not None else 3
+        config.MODEL = args['model'] if args['model'] is not None else 3
 
     return config
 
