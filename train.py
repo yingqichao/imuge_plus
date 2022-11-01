@@ -177,7 +177,7 @@ def main(args,opt):
                         info_str = f'valid_idx:{valid_idx} '
                         for i in range(len(variables_list)):
                             info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.4f} '
-                        with open('./test_result_5.txt', 'a') as f:
+                        with open('./test_result_2.txt', 'a') as f:
                             f.write(info_str+'\n')
                         f.close()
                         opt['inference_benign_attack_begin_idx'] = opt['inference_benign_attack_begin_idx'] + 1
@@ -215,9 +215,9 @@ def main(args,opt):
                     print(info_str)
                     start = time.time()
                     ## refresh the counter to see if the model behaves abnormaly.
-                    if valid_idx>=restart_step:
-                        running_list = [0.0] * len(variables_list)
-                        valid_idx = 0
+                    # if valid_idx>=restart_step:
+                    #     running_list = [0.0] * len(variables_list)
+                    #     valid_idx = 0
 
                 current_step += 1
                 # if rank <= 0:

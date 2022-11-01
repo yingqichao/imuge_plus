@@ -149,7 +149,8 @@ class Modified_invISP(BaseModel):
             self.training_network_list = self.network_list
         elif self.args.mode in [4]:
             ### OSN performance (val)
-            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
+            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks
+            # self.network_list += ['localizer']
                                 # + self.default_customized_networks
             if self.opt['activate_OSN'] or self.opt['test_restormer']==2:
                 self.network_list.append('localizer')
@@ -1364,6 +1365,14 @@ class Modified_invISP(BaseModel):
         ### IMPORTANT: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
 
         test_model = self.discriminator_mask if "localizer" not in self.opt['using_which_model_for_test'] else self.localizer
+        # if "MPF" in self.opt['which_model_for_detector']:
+        #     test_model = self.discriminator_mask
+        # elif "MVSS" in self.opt['which_model_for_detector']:
+        #     test_model = self.discriminator
+        # elif "OSN" in self.opt['which_model_for_detector']:
+        #     test_model = self.localizer
+        # else:
+        #     raise NotImplementedError("Detector名字不对，请检查！")
         test_model.eval()
 
         ### if the model requires image protection?
@@ -1372,7 +1381,7 @@ class Modified_invISP(BaseModel):
                                      file_name=file_name, camera_name=camera_name)
 
         ### generate non-tampered protected (or not) image
-        if "localizer" not in self.opt['using_which_model_for_test']:
+        if "localizer" not in self.opt['using_which_model_for_test'] or 'finetuned' in self.opt['using_which_model_for_test']:
             ## RAW protection ##
             if not self.opt["test_baseline"]:
                 self.KD_JPEG.eval()
@@ -1727,10 +1736,10 @@ class Modified_invISP(BaseModel):
                 # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
                 # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
                 #                                     find_unused_parameters=True)
-                self.localizer = get_model('/groupshare/ISP_results/models/')
+                self.localizer = get_model('/groupshare/ISP_results/models/').cuda()
             elif 'CAT' in which_model:
                 from CATNet.model import get_model
-                self.localizer = get_model()
+                self.localizer = get_model().cuda()
             elif 'MVSS' in which_model:
                 model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
                 from MVSS.models.mvssnet import get_mvss
@@ -1745,11 +1754,9 @@ class Modified_invISP(BaseModel):
                 ckp = torch.load(model_path, map_location='cpu')
                 self.localizer.load_state_dict(ckp, strict=True)
                 self.localizer = nn.DataParallel(self.localizer).cuda()
-                self.localizer.eval()
             elif 'Mantra' in which_model:
                 model_path = './MantraNetv4.pt'
                 self.localizer = nn.DataParallel(pre_trained_model(model_path)).cuda()
-                self.localizer.eval()
             elif 'Resfcn' in which_model:
                 print('resfcn here')
                 from MVSS.models.resfcn import ResFCN
@@ -1757,7 +1764,18 @@ class Modified_invISP(BaseModel):
                 checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
                 discriminator_mask.load_state_dict(checkpoint, strict=True)
                 self.localizer = discriminator_mask
-                self.localizer.eval()
+
+            if 'finetuned' in which_model:
+                self.load_localizer_storage = self.opt['localizer_folder']
+                self.model_path = str(self.opt['load_localizer_models'])
+                load_models = int(self.model_path) > 0
+
+                if load_models:
+                    print(f"loading models: {which_model} as detector for testing")
+                    self.pretrain = self.load_localizer_storage + self.model_path
+                    self.reload(self.pretrain, network_list=['localizer'])
+
+
 
     def define_RAW2RAW_network(self):
         if 'UNet' not in self.task_name:
