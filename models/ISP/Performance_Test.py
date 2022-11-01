@@ -67,6 +67,16 @@ class Performance_Test(Modified_invISP):
         self.save_network_list = []
         self.training_network_list = []
 
+        ### ISP networks
+        self.define_ISP_network_training()
+        self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
+                                network_lists=self.default_ISP_networks)
+        ### RAW2RAW network
+        self.define_RAW2RAW_network()
+        self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
+                                network_lists=self.default_RAW_to_RAW_networks)
+
+        ### detector
         self.define_localizer()
 
     def define_localizer(self):
