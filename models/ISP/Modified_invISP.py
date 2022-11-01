@@ -67,9 +67,17 @@ from utils import stitch_images
 # import contextual_loss.functional as F
 
 class Modified_invISP(BaseModel):
-    def __init__(self, opt, args, train_set=None, val_set=None):
+    def __init__(self, opt, args, train_set=None, val_set=None, prepare_networks_optimizers=True):
+        """
+            prepare_networks_optimizers: set True current, preserved for future uses that only invoke static methods without creating an instances.
+
+        """
         super(Modified_invISP, self).__init__(opt, args, train_set, val_set)
         ### todo: options
+        self.default_ISP_networks = ['generator', 'netG', 'qf_predict_network']
+        self.default_RAW_to_RAW_networks = ['KD_JPEG']
+        self.default_detection_networks_for_training = ['discriminator_mask','discriminator','localizer']
+        self.default_customized_networks = ['localizer']
 
         ### todo: constants
         self.amount_of_augmentation = len(
@@ -95,7 +103,6 @@ class Modified_invISP(BaseModel):
             6: 'train resfcn (train)',
         }
         print(f"network list:{self.network_list}")
-        # self.save_network_list = self.network_list
         print(f"Current mode: {self.args.mode}")
         print(f"Function: {self.mode_dict[self.args.mode]}")
 
@@ -114,11 +121,32 @@ class Modified_invISP(BaseModel):
         self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, 1, expand_times, expand_times)
 
 
-        ### todo: network definitions
-        self.default_ISP_networks = ['generator', 'netG', 'qf_predict_network']
-        self.default_RAW_to_RAW_networks = ['KD_JPEG']
-        self.default_detection_networks = ['discriminator_mask']
-        self.default_customized_networks = ['localizer']
+        if prepare_networks_optimizers:
+            ### todo: network definitions
+            self.network_definitions()
+
+            ### todo: Optimizers
+            self.define_optimizers()
+
+            ### todo: Scheduler
+            self.schedulers = []
+            for optimizer in self.optimizers:
+                self.schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50000))
+
+            ### todo: creating dirs
+            self.create_folders_for_the_experiment()
+
+        # ## load states, deprecated, because there can be too many models from different paths.
+        # state_path = self.load_space_storage + self.load_storage + '{}.state'.format(self.model_path)
+        # if load_state:
+        #     print('Loading training state')
+        #     if os.path.exists(state_path):
+        #         self.resume_training(state_path, self.network_list)
+        #     else:
+        #         print('Did not find state [{:s}] ...'.format(state_path))
+
+    def network_definitions(self):
+
         if self.args.mode in [0, 1]:
             ### mode=0: generating protected images (val)
             ### mode=1: tampering localization on generating protected images (val)
@@ -126,36 +154,14 @@ class Modified_invISP(BaseModel):
             self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
             self.save_network_list = []
             self.training_network_list = []
-        # elif self.args.mode in [2] and "UNet" in self.task_name:
-        #     ### mode=2: regular training (UNet), including ISP, RAW2RAW and localization (train)
-        #     self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
-        #     self.save_network_list = self.network_list
-        #     self.training_network_list = ["KD_JPEG", "discriminator_mask"]
-        elif self.args.mode in [2] and "elastic" in self.task_name:
-            ### mode=2: regular training (our network design), including ISP, RAW2RAW and localization (train)
-            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
-            self.network_list += ["discriminator", "localizer"]
-            self.save_network_list, self.training_network_list = [], []
-            if self.opt["train_isp_networks"]:
-                self.save_network_list += self.default_ISP_networks
-                self.training_network_list += self.default_ISP_networks
-            if self.opt["train_full_pipeline"]:
-                self.save_network_list += ["KD_JPEG", "discriminator_mask", "discriminator", "localizer"]
-                self.training_network_list += ["KD_JPEG", "discriminator_mask", "discriminator", "localizer"]
-        elif self.args.mode in [3]:
-            ### regular training for ablation (RGB protection)
-            self.network_list = ["KD_JPEG", "discriminator_mask"]
-            self.save_network_list = self.network_list
-            self.training_network_list = self.network_list
-        elif self.args.mode in [4]:
-            ### OSN performance (val)
-            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks
-            # self.network_list += ['localizer']
-                                # + self.default_customized_networks
-            if self.opt['activate_OSN'] or self.opt['test_restormer']==2:
-                self.network_list.append('localizer')
-            self.save_network_list = []
-            self.training_network_list = []
+
+        ## mode 2 implemented
+
+
+        ## mode 3 implemented
+
+        ## mode 4 implemented
+
         elif self.args.mode in [5]:
             ### train a ISP using restormer for validation (train)
             self.network_list = ['localizer']
@@ -175,12 +181,9 @@ class Modified_invISP(BaseModel):
 
         if 'generator' in self.network_list:
             ### todo: ISP networks will be loaded
-            ### todo: invISP: generator
             self.define_ISP_network_training()
 
             ### loading ISP
-            # self.load_space_storage = f"{self.opt['name']}/complete_results"
-            # self.load_storage = f'/model/{self.opt["task_name_ISP_model"]}/'
             self.load_ISP_storage = self.opt['ISP_folder']
 
             self.model_path = str(self.opt['load_ISP_models'])  # last time: 10999
@@ -195,8 +198,6 @@ class Modified_invISP(BaseModel):
             self.define_tampering_localization_network()
 
             ### loading discriminator
-            # self.load_space_storage = f"{self.opt['name']}/complete_results"
-            # self.load_storage = f'/model/{self.opt["task_name_discriminator_model"]}/'
             self.load_detector_storage = self.opt['detector_folder']
 
             self.model_path = str(self.opt['load_discriminator_models'])  # last time: 10999
@@ -226,8 +227,7 @@ class Modified_invISP(BaseModel):
                     self.pretrain = self.load_detector_storage + self.model_path
                     self.reload(self.pretrain, network_list=["localizer"])
 
-
-        if 'localizer' in self.network_list and self.args.mode !=2: # not training main pipeline
+        if 'localizer' in self.network_list and self.args.mode != 2:  # not training main pipeline
             ### todo: localizer is flexible, could be OSN/restormer/CAT-Net, etc.
             self.define_localizer()
 
@@ -258,28 +258,14 @@ class Modified_invISP(BaseModel):
                 self.pretrain = self.load_protection_storage + self.model_path
                 self.reload(self.pretrain, network_list=self.default_RAW_to_RAW_networks)
 
-            # self.scaler_kd_jpeg = torch.cuda.amp.GradScaler()
-
-        ### todo: Optimizers
-        self.define_optimizers()
-
-        ### todo: Scheduler
-        self.schedulers = []
-        for optimizer in self.optimizers:
-            self.schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50000))
-
-        ### todo: creating dirs
-        self.create_folders_for_the_experiment()
-
-        # ## load states, deprecated, because there can be too many models from different paths.
-        # state_path = self.load_space_storage + self.load_storage + '{}.state'.format(self.model_path)
-        # if load_state:
-        #     print('Loading training state')
-        #     if os.path.exists(state_path):
-        #         self.resume_training(state_path, self.network_list)
-        #     else:
-        #         print('Did not find state [{:s}] ...'.format(state_path))
-
+    def load_model_wrapper(self,*,folder_name,model_name,network_lists):
+        load_detector_storage = self.opt[folder_name]
+        model_path = str(self.opt[model_name])  # last time: 10999
+        load_models = self.opt[model_name] > 0
+        if load_models:
+            print(f"loading models: {network_lists}")
+            pretrain = load_detector_storage + model_path
+            self.reload(pretrain, network_list=network_lists)
 
     def feed_data_router(self, batch, mode):
         if mode in [0.0]:
@@ -677,468 +663,7 @@ class Modified_invISP(BaseModel):
     # todo: optimize_parameters_main
     ####################################################################################################
     def optimize_parameters_main(self, step=None):
-        ####################  Image Manipulation Detection Network (Downstream task)  ##################
-        ### mantranet: localizer mvssnet: netG resfcn: discriminator
-
-        #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
-        did_val = False
-        if step is not None:
-            self.global_step = step
-
-        logs, debug_logs = {}, []
-        # self.real_H = self.clamp_with_grad(self.real_H)
-        lr = self.get_current_learning_rate()
-        logs['lr'] = lr
-
-        #### THESE VARIABLES STORE THE RENDERED RGB FROM CLEAN RAW ######
-        stored_image_netG = None
-        stored_image_generator = None
-        stored_image_qf_predict = None
-        collected_protected_image = None
-        inpainted_image = None
-
-        if not (self.previous_images is None or self.previous_previous_images is None):
-            sum_batch_size = self.real_H.shape[0]
-
-            ### camera_white_balance SIZE (B,3)
-            camera_white_balance = self.camera_white_balance
-            file_name = self.file_name
-            ### bayer_pattern sized (B,1) ranging from [0,3]
-            bayer_pattern = self.bayer_pattern
-
-            input_raw_one_dim = self.real_H
-            gt_rgb = self.label
-            input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
-                                           white_balance=camera_white_balance, eval=not self.opt['train_isp_networks'])
-
-            batch_size, num_channels, height_width, _ = input_raw.shape
-            # input_raw = self.clamp_with_grad(input_raw)
-
-            if self.opt['include_isp_inference']:
-                with torch.enable_grad() if self.opt['train_isp_networks'] else torch.no_grad():
-                    ### HINT FOR WHICH IS WHICH
-                    ### generator: INV ISP
-                    ### netG: HWMNET (BEFORE MODIFICATION)
-                    ### qf_predict_network: UNETDISCRIMINATOR
-
-                    if self.opt['train_isp_networks']:
-                        self.generator.train()
-                        self.netG.train()
-                        self.qf_predict_network.train()
-                    else:
-                        self.generator.eval()
-                        self.netG.eval()
-                        self.qf_predict_network.eval()
-
-                    #######################    Image ISP training    ###############################################
-                    ### we first train several nn-based ISP networks BEFORE TRAINING THE PIPELINE
-
-                    ####### UNetDiscriminator ##############
-                    modified_input_qf_predict, CYCLE_loss = self.ISP_image_generation_general(network=self.qf_predict_network,
-                                                                                        input_raw=input_raw.detach().contiguous(),
-                                                                                        target=gt_rgb)
-
-                    modified_input_qf_predict_detach = self.clamp_with_grad(modified_input_qf_predict.detach())
-                    CYCLE_PSNR = self.psnr(self.postprocess(modified_input_qf_predict_detach),  self.postprocess(gt_rgb)).item()
-                    logs['CYCLE_PSNR'] = CYCLE_PSNR
-                    logs['CYCLE_L1'] = CYCLE_loss.item()
-                    # del modified_input_qf_predict
-                    # torch.cuda.empty_cache()
-                    stored_image_qf_predict = modified_input_qf_predict_detach if stored_image_qf_predict is None else \
-                        torch.cat([stored_image_qf_predict, modified_input_qf_predict_detach], dim=0)
-
-                    # self.optimizer_generator.zero_grad()
-                    if self.opt['train_isp_networks']:
-                        CYCLE_loss.backward()
-
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-                        self.optimizer_qf.step()
-                        self.optimizer_qf.zero_grad()
-
-
-                    #### HWMNET ####
-                    modified_input_netG, THIRD_loss = self.ISP_image_generation_general(network=self.netG,
-                                                                                           input_raw=input_raw.detach().contiguous(),
-                                                                                           target=gt_rgb)
-
-                    modified_input_netG_detach = self.clamp_with_grad(modified_input_netG.detach())
-                    PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG_detach),self.postprocess(gt_rgb)).item()
-                    logs['PIPE_PSNR'] = PIPE_PSNR
-                    logs['PIPE_L1'] = THIRD_loss.item()
-                    ## STORE THE RESULT FOR LATER USE
-                    stored_image_netG = modified_input_netG_detach if stored_image_netG is None else \
-                        torch.cat([stored_image_netG, modified_input_netG_detach], dim=0)
-
-                    if self.opt['train_isp_networks']:
-                        # self.optimizer_generator.zero_grad()
-                        THIRD_loss.backward()
-
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-                        self.optimizer_G.step()
-                        self.optimizer_G.zero_grad()
-
-                    #### InvISP #####
-                    modified_input_generator, ISP_loss = self.ISP_image_generation_general(network=self.generator,
-                                                                                           input_raw=input_raw.detach().contiguous(),
-                                                                                           target=gt_rgb)
-
-                    modified_input_generator_detach = modified_input_generator.detach()
-                    ISP_PSNR = self.psnr(self.postprocess(modified_input_generator_detach), self.postprocess(gt_rgb)).item()
-                    logs['ISP_PSNR'] = ISP_PSNR
-                    logs['ISP_L1'] = ISP_loss.item()
-                    stored_image_generator = modified_input_generator_detach if stored_image_generator is None else \
-                        torch.cat([stored_image_generator, modified_input_generator_detach], dim=0)
-
-                    if self.opt['train_isp_networks']:
-                        ### Grad Accumulation (which we have abandoned)
-                        # self.optimizer_generator.zero_grad()
-                        ISP_loss.backward()
-
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-                        self.optimizer_generator.step()
-                        self.optimizer_generator.zero_grad()
-
-                ### emptying cache to save memory ###
-                # torch.cuda.empty_cache()
-
-
-                if self.opt['train_isp_networks'] and (self.global_step % 200 == 3 or self.global_step <= 10):
-                    images = stitch_images(
-                        self.postprocess(input_raw),
-                        self.postprocess(modified_input_generator_detach),
-                        self.postprocess(modified_input_qf_predict_detach),
-                        self.postprocess(modified_input_netG_detach),
-                        self.postprocess(gt_rgb),
-                        img_per_row=1
-                    )
-
-                    name = f"{self.out_space_storage}/isp_images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-                           f"_{str(self.rank)}.png"
-                    print(f'Bayer: {bayer_pattern}. Saving sample {name}')
-                    images.save(name)
-
-            if self.opt['train_full_pipeline']:
-                ### HINT FOR WHICH IS WHICH
-                ### KD_JPEG: RAW2RAW, WHICH IS A MODIFIED HWMNET WITH STYLE CONDITION
-                ### discriminator_mask: HWMNET WITH SUBTASK
-                ### discriminator: MOVING AVERAGE OF discriminator_mask
-                self.KD_JPEG.train() if "KD_JPEG" in self.training_network_list else self.KD_JPEG.eval()
-                self.generator.eval()
-                self.netG.eval()
-                self.discriminator_mask.train() if "discriminator_mask" in self.training_network_list else self.discriminator_mask.eval()
-                self.discriminator.train()
-                self.qf_predict_network.eval()
-                self.localizer.train()
-
-
-                with torch.enable_grad():
-
-                    ### RAW PROTECTION ###
-                    if self.task_name == "my_own_elastic":
-                        modified_raw_one_dim = self.RAW_protection_by_my_own_elastic(input_raw_one_dim=input_raw_one_dim)
-
-                    else:
-                        modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
-
-                    modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
-                    RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
-
-                    modified_raw = self.clamp_with_grad(modified_raw)
-
-                    RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(input_raw)).item()
-                    logs['RAW_PSNR'] = RAW_PSNR
-                    logs['RAW_L1'] = RAW_L1.item()
-
-                    ########################    RAW2RGB pipelines   ################################################
-                    ### note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
-                    ### thus, we are not let the ISP network approaching the ground-truth RGB.
-
-                    ### model selection，shuffle the gts to enable color control
-
-                    modified_input, tamper_source, semi_images, semi_sources, semi_losses = self.ISP_mixing_during_training(
-                        modified_raw=modified_raw,
-                        stored_lists=(stored_image_generator, stored_image_qf_predict, stored_image_netG),
-                        modified_raw_one_dim=modified_raw_one_dim,
-                        input_raw_one_dim=input_raw_one_dim,
-                        file_name=file_name, gt_rgb=gt_rgb
-                    )
-                    modified_input_0, modified_input_1 = semi_images
-                    tamper_source_0, tamper_source_1 = semi_sources
-                    ISP_L1, ISP_SSIM = semi_losses
-
-
-                    PSNR_DIFF = self.psnr(self.postprocess(modified_input), self.postprocess(tamper_source)).item()
-                    ISP_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(gt_rgb)).item()
-                    logs['PSNR_DIFF'] = PSNR_DIFF
-                    logs['ISP_PSNR_NOW'] = ISP_PSNR
-
-                    collected_protected_image = tamper_source
-
-                    #######################   attack layer   #######################################################
-                    attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                        modified_input=modified_input, gt_rgb=gt_rgb, logs=logs
-                    )
-
-                    # ERROR = attacked_image-attacked_forward
-                    error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_adjusted)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-                    logs['ERROR'] = error_l1
-
-                    #####################   Image Manipulation Detection Network (Downstream task)   ###############
-                    ### mantranet: localizer mvssnet: netG resfcn: discriminator
-                    # _, pred_mvss = self.netG(attacked_image)
-                    # CE_MVSS = self.bce_with_logit_loss(pred_mvss, masks_GT)
-                    # logs['CE_MVSS'] = CE_MVSS.item()
-                    # pred_mantra = self.localizer(attacked_image)
-                    # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
-                    # logs['CE_mantra'] = CE_mantra.item()
-                    ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
-
-
-                    ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
-                    if "discriminator_mask" in self.training_network_list:
-
-                        CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(attacked_image=attacked_image.detach().contiguous(),
-                                               masks_GT=masks_GT, logs=logs)
-
-                        CE_loss = CE_resfcn + l1_resfcn
-                        logs['CE'] = CE_resfcn.item()
-                        logs['CE_ema'] = CE_resfcn.item()
-                        # logs['Mean'] = l1_mean.item()
-                        # logs['Std'] = l1_std.item()
-                        CE_loss.backward()
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                        self.optimizer_discriminator_mask.step()
-                        self.optimizer_discriminator_mask.zero_grad()
-
-
-                    ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
-                    if "KD_JPEG" in self.training_network_list:
-
-                        CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
-                            attacked_image=attacked_image,
-                            masks_GT=masks_GT, logs=logs)
-
-                        CE_loss = CE_resfcn
-                        logs['CE_ema'] = CE_resfcn.item()
-
-                        loss = 0
-                        loss_l1 = self.opt['L1_hyper_param'] * ISP_L1
-                        loss += loss_l1
-                        hyper_param_raw = self.opt['RAW_L1_hyper_param'] # if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['RAW_L1_hyper_param']/5
-                        loss += hyper_param_raw * RAW_L1
-                        loss_ssim = self.opt['ssim_hyper_param'] * ISP_SSIM
-                        loss += loss_ssim
-                        # hyper_param_percept = self.opt['perceptual_hyper_param'] # if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['perceptual_hyper_param'] / 4
-                        # loss_percept = hyper_param_percept * (ISP_percept_0+ISP_percept_1)/2
-                        # loss += loss_percept
-                        # loss_style = self.opt['style_hyper_param'] * (ISP_style_0 +ISP_style_1) / 2
-                        # loss += loss_style
-                        # hyper_param = self.opt['CE_hyper_param'] if (ISP_PSNR>=self.opt['psnr_thresh']) else self.opt['CE_hyper_param']/10
-                        hyper_param = self.exponential_weight_for_backward(value=ISP_PSNR, exp=2)
-                        loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
-
-                        logs['ISP_SSIM_NOW'] = -loss_ssim.item()
-                        # logs['Percept'] = loss_percept.item()
-                        # logs['Style'] = loss_style.item()
-                        logs['Gray'] = loss_l1.item()
-                        logs['loss'] = loss.item()
-
-
-                        ##### Grad Accumulation (not used any more)
-                        loss.backward()
-
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
-
-                        self.optimizer_KD_JPEG.step()
-
-                        self.optimizer_KD_JPEG.zero_grad()
-                        self.optimizer_G.zero_grad()
-                        self.optimizer_discriminator_mask.zero_grad()
-                        self.optimizer_generator.zero_grad()
-                        self.optimizer_qf.zero_grad()
-                        self.optimizer_localizer.zero_grad()
-                        self.optimizer_discriminator.zero_grad()
-
-                ### update and track history losses
-                self.update_history_losses(index=self.global_step, PSNR=PSNR_DIFF,
-                                           loss=loss.item(),
-                                           loss_CE=CE_loss.item(), PSNR_attack=error_l1)
-
-                #########################    printing the images   #################################################
-                anomalies = False  # CE_recall.item()>0.5
-                if anomalies or self.global_step % 200 == 3 or self.global_step <= 10:
-                    images = stitch_images(
-                        self.postprocess(input_raw),
-                        ### RAW2RAW
-                        self.postprocess(modified_raw),
-                        self.postprocess(10 * torch.abs(modified_raw - input_raw)),
-                        ### rendered images and protected images
-                        self.postprocess(modified_input_0),
-                        self.postprocess(tamper_source_0),
-                        self.postprocess(10 * torch.abs(modified_input_0 - tamper_source_0)),
-                        self.postprocess(modified_input_1),
-                        self.postprocess(tamper_source_1),
-                        self.postprocess(10 * torch.abs(modified_input_1 - tamper_source_1)),
-                        self.postprocess(modified_input),
-
-                        self.postprocess(gt_rgb),
-
-                        ### tampering and benign attack
-                        self.postprocess(attacked_forward),
-                        self.postprocess(attacked_adjusted),
-                        self.postprocess(attacked_image),
-                        self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
-                        ### tampering detection
-                        # self.postprocess(attacked_cannied),
-                        self.postprocess(masks_GT),
-
-                        self.postprocess(pred_resfcn),
-                        # self.postprocess(torch.sigmoid(post_resfcn)),
-
-                        img_per_row=1
-                    )
-
-                    name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-                               f"_{str(self.rank)}.png"
-                    print('\nsaving sample ' + name)
-                    images.save(name)
-
-                ### doing ema average
-                # if self.begin_using_momentum:
-                #     print("Moving average...")
-                #     self._momentum_update_key_encoder()
-
-                ### inference single image for testing
-                # if self.global_step % 199 == 3:
-                #     did_val = True
-                #     self.inference_single_image()#input_raw_one_dim=input_raw_one_dim, input_raw=input_raw, gt_rgb=gt_rgb,
-                #                                 # camera_white_balance=camera_white_balance, file_name=file_name,
-                #                                 # camera_name=camera_name, bayer_pattern=bayer_pattern)
-
-
-        ######## Finally ####################
-        for scheduler in self.schedulers:
-            scheduler.step()
-
-        if self.global_step % (self.opt['model_save_period']) == (self.opt['model_save_period']-1) or self.global_step == 9:
-            if self.rank == 0:
-                print('Saving models and training states.')
-                self.save(self.global_step, folder='model', network_list=self.save_network_list)
-        if self.real_H is not None:
-            ### update the tampering source
-            if self.previous_images is not None:
-                ### previous_previous_images is for tampering-based data augmentation
-                self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.label
-            ### update the tampering source with pattern
-            # if self.previous_protected is not None:
-            #     self.previous_previous_protected = self.previous_protected.clone().detach()
-            self.previous_protected = collected_protected_image
-
-        self.global_step = self.global_step + 1
-
-        # print(logs)
-        # print(debug_logs)
-        return logs, debug_logs, did_val
-
-    def detecting_forgery(self, *, attacked_image, masks_GT, logs):
-        if self.global_step % self.amount_of_detectors in self.opt['detector_using_MPF_indices']: #"MPF" in self.opt['which_model_for_detector']:
-            ### get canny of attacked image
-            attacked_cannied = self.get_canny(attacked_image, masks_GT)
-            predicted_masks = self.discriminator_mask(attacked_image, attacked_cannied)
-            pred_resfcn, post_resfcn = predicted_masks
-            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-            l1_resfcn = self.l2_loss(torch.sigmoid(post_resfcn), masks_GT)
-            logs['CEL1'] = l1_resfcn.item()
-            logs['l1_ema'] = l1_resfcn.item()
-            pred_resfcn = torch.sigmoid(pred_resfcn)
-        elif self.global_step % self.amount_of_detectors in self.opt['detector_using_MVSS_indices']: #"MVSS" in self.opt['which_model_for_detector']:
-            predicted_masks = self.discriminator(attacked_image)
-            _, pred_resfcn = predicted_masks
-            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-            l1_resfcn = 0
-            pred_resfcn = torch.sigmoid(pred_resfcn)
-        elif self.global_step % self.amount_of_detectors in self.opt['detector_using_OSN_indices']: # "OSN" in self.opt['which_model_for_detector']:
-            pred_resfcn = self.localizer(attacked_image)
-            CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
-            l1_resfcn = 0
-        else:
-            raise NotImplementedError("Detector名字不对，请检查！")
-
-        return CE_resfcn, l1_resfcn, pred_resfcn
-
-
-    def ISP_mixing_during_training(self, *, modified_raw, modified_raw_one_dim, input_raw_one_dim, stored_lists, file_name, gt_rgb):
-        stored_image_generator, stored_image_qf_predict, stored_image_netG = stored_lists
-        if self.global_step % 3 == 0:
-            isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
-            stored_list_0, stored_list_1 = stored_image_generator, stored_image_qf_predict
-        elif self.global_step % 3 == 1:
-            isp_model_0, isp_model_1 = self.netG, self.generator
-            stored_list_0, stored_list_1 = stored_image_netG, stored_image_generator
-        elif self.global_step % 3 == 2:
-            isp_model_0, isp_model_1 = "pipeline", self.qf_predict_network
-            stored_list_0, stored_list_1 = None, stored_image_qf_predict
-        # elif self.global_step % 6 == 3:
-        #     isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
-        #     stored_list_0, stored_list_1 = stored_image_netG, stored_image_qf_predict
-        # elif self.global_step % 6 == 4:
-        #     isp_model_0, isp_model_1 = "pipeline", self.netG
-        #     stored_list_0, stored_list_1 = None, stored_image_netG
-        # else: #if self.global_step % 6 == 5:
-        #     isp_model_0, isp_model_1 = self.netG, self.generator
-        #     stored_list_0, stored_list_1 = stored_image_netG, stored_image_generator
-
-
-        loss_terms = 0
-        ### first
-        if isinstance(isp_model_0, str):
-            modified_input_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=modified_raw_one_dim,
-                                                           file_name=file_name, gt_rgb=gt_rgb)
-            tamper_source_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim,
-                                                           file_name=file_name, gt_rgb=gt_rgb)
-            ISP_L1_0, ISP_SSIM_0 = 0,0
-        else:
-            tamper_source_0 = stored_list_0
-            modified_input_0, ISP_L1_0, ISP_SSIM_0 = self.differentiable_ISP_gathering(
-                model=isp_model_0,modified_raw=modified_raw,tamper_source=tamper_source_0)
-            loss_terms += 1
-
-        ### second
-        tamper_source_1 = stored_list_1
-        modified_input_1, ISP_L1_1, ISP_SSIM_1 = self.differentiable_ISP_gathering(
-            model=isp_model_1, modified_raw=modified_raw, tamper_source=tamper_source_1)
-        loss_terms += 1
-
-        ISP_L1, ISP_SSIM = (ISP_L1_0+ISP_L1_1)/loss_terms,  (ISP_SSIM_0+ISP_SSIM_1)/loss_terms
-
-        ##################   doing mixup on the images   ###############################################
-        ### note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
-        ### thus, we are not let the ISP network approaching the ground-truth RGB.
-        # skip_the_second = np.random.rand() > 0.8
-        alpha_0 = np.random.rand()
-        alpha_1 = 1 - alpha_0
-
-        modified_input = alpha_0 * modified_input_0
-        modified_input += alpha_1 * modified_input_1
-        tamper_source = alpha_0 * tamper_source_0
-        tamper_source += alpha_1 * tamper_source_1
-        tamper_source = tamper_source.detach()
-
-        # ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
-        # ISP_SSIM_sum = - self.ssim_loss(modified_input, tamper_source)
-
-        ### collect the protected images ###
-        modified_input = self.clamp_with_grad(modified_input)
-        tamper_source = self.clamp_with_grad(tamper_source)
-
-        ## return format: modified_input, tamper_source, semi_images, semi_sources, semi_losses
-        return modified_input, tamper_source, (modified_input_0, modified_input_1), (tamper_source_0, tamper_source_1), (ISP_L1, ISP_SSIM)
+        pass
 
     def differentiable_ISP_gathering(self, *, model, modified_raw, tamper_source):
         modified_input_0 = model(modified_raw)
@@ -1180,355 +705,15 @@ class Modified_invISP(BaseModel):
     # todo: optimize_parameters_ablation_on_RAW
     ####################################################################################################
     def optimize_parameters_ablation_on_RAW(self, step=None):
-        #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
-        did_val = False
-        if step is not None:
-            self.global_step = step
-
-        logs, debug_logs = {}, []
-        # self.real_H = self.clamp_with_grad(self.real_H)
-        lr = self.get_current_learning_rate()
-        logs['lr'] = lr
-
-        collected_protected_image = None
-        if not (self.previous_images is None or self.previous_previous_images is None):
-
-            self.KD_JPEG.train()
-            self.discriminator_mask.train()
-
-
-            gt_rgb = self.real_H
-
-            batch_size, num_channels, height_width, _ = gt_rgb.shape
-
-            with torch.enable_grad():
-                ##################    Generation of protected RAW   ###############################################
-
-                ### RGB PROTECTION ###
-                modified_input = self.baseline_generate_protected_rgb(gt_rgb=gt_rgb)
-
-                RAW_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
-                ISP_percept, ISP_style = self.perceptual_loss(modified_input, gt_rgb,
-                                                                  with_gram=True)
-
-                modified_input = self.clamp_with_grad(modified_input)
-
-                RAW_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(gt_rgb)).item()
-                logs['RAW_PSNR'] = RAW_PSNR
-                logs['RAW_L1'] = RAW_L1.item()
-                logs['Percept'] = ISP_percept.item()
-
-
-                collected_protected_image = modified_input.detach() if collected_protected_image is None else \
-                    torch.cat([collected_protected_image, modified_input.detach()], dim=0)
-
-                ############################    attack layer  ######################################################
-                attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                    modified_input=modified_input, gt_rgb=gt_rgb, tamper_index=3
-                )
-
-                # ERROR = attacked_image-attacked_forward
-                error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_forward)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-                logs['ERROR'] = error_l1
-
-                ###################    Image Manipulation Detection Network (Downstream task)   ####################
-
-                ### get mean and std of mask_GT
-                std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
-
-                ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
-
-                pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
-                CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
-
-                # CE_control = self.CE_loss(pred_control, label_control)
-                CE_loss = CE_resfcn + l1_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
-                logs['CE'] = CE_resfcn.item()
-                logs['CEL1'] = l1_resfcn.item()
-                # logs['l1_ema'] = l1_resfcn.item()
-                # logs['Mean'] = l1_mean.item()
-                # logs['Std'] = l1_std.item()
-                # logs['CE_control'] = CE_control.item()
-                CE_loss.backward()
-
-                if self.train_opt['gradient_clipping']:
-                    nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                self.optimizer_discriminator_mask.step()
-                self.optimizer_discriminator_mask.zero_grad()
-
-
-                ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
-
-                pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image)
-                CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
-
-                # CE_control = self.CE_loss(pred_control, label_control)
-                CE_loss = CE_resfcn + l1_resfcn  # + l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
-                logs['CE_ema'] = CE_resfcn.item()
-                logs['l1_ema'] = l1_resfcn.item()
-
-
-                loss = 0
-                loss += self.opt['L1_hyper_param'] * RAW_L1
-                hyper_param_percept = self.opt['perceptual_hyper_param'] if (RAW_PSNR < self.opt['psnr_thresh']) else self.opt['perceptual_hyper_param'] / 4
-                loss_percept = hyper_param_percept * ISP_percept
-                loss += loss_percept
-                hyper_param = self.opt['CE_hyper_param'] if (RAW_PSNR>=self.opt['psnr_thresh']) else self.opt['CE_hyper_param']/10
-                loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
-                logs['loss'] = loss.item()
-
-                ### Grad Accumulation
-                loss.backward()
-                # self.scaler_kd_jpeg.scale(loss).backward()
-
-                if self.train_opt['gradient_clipping']:
-                    nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
-
-                self.optimizer_KD_JPEG.step()
-                self.optimizer_KD_JPEG.zero_grad()
-                self.optimizer_discriminator_mask.zero_grad()
-
-
-            ##### printing the images  ######
-            anomalies = False  # CE_recall.item()>0.5
-            if anomalies or self.global_step % 200 == 3 or self.global_step <= 10:
-                images = stitch_images(
-
-                    self.postprocess(modified_input),
-
-                    self.postprocess(gt_rgb),
-
-                    self.postprocess(attacked_forward),
-                    self.postprocess(attacked_adjusted),
-                    self.postprocess(attacked_image),
-                    self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
-                    ### tampering detection
-                    self.postprocess(masks_GT),
-
-                    self.postprocess(torch.sigmoid(pred_resfcn)),
-                    img_per_row=1
-                )
-
-                name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-                           f"_{str(self.rank)}.png"
-                print('\nsaving sample ' + name)
-                images.save(name)
-
-        ######## Finally ####################
-        if self.global_step % 1000 == 999 or self.global_step == 9:
-            if self.rank == 0:
-                print('Saving models and training states.')
-                self.save(self.global_step, folder='model', network_list=self.save_network_list)
-        if self.real_H is not None:
-            ### update the tampering source
-            if self.previous_images is not None:
-                ### previous_previous_images is for tampering-based data augmentation
-                self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.real_H
-            ### update the tampering source with pattern
-            # if self.previous_protected is not None:
-            #     self.previous_previous_protected = self.previous_protected.clone().detach()
-            self.previous_protected = collected_protected_image
-
-        self.global_step = self.global_step + 1
-
-        # print(logs)
-        # print(debug_logs)
-        return logs, debug_logs, did_val
+        pass
 
     ####################################################################################################
     # todo: MODE == 4
     # todo: get_performance_of_OSN
     ####################################################################################################
-    @torch.no_grad()
     def get_performance_of_OSN(self, step):
-        gt_rgb = self.label_val
+        pass
 
-        input_raw_one_dim = self.real_H_val
-        file_name = self.file_name_val
-        camera_name = self.camera_name_val
-
-        ### tensor sized (B,3)
-        camera_white_balance = self.camera_white_balance_val
-        ### tensor sized (B,1) ranging from [0,3]
-        bayer_pattern = self.bayer_pattern_val
-        input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
-                                       white_balance=camera_white_balance)
-        batch_size, num_channels, height_width, _ = gt_rgb.shape
-
-        logs = {}
-        logs['lr'] = 0
-
-        ### loading model: discriminator_mask is our model, localizer is OSN
-        ### IMPORTANT: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
-
-        test_model = self.discriminator_mask if "localizer" not in self.opt['using_which_model_for_test'] else self.localizer
-        # if "MPF" in self.opt['which_model_for_detector']:
-        #     test_model = self.discriminator_mask
-        # elif "MVSS" in self.opt['which_model_for_detector']:
-        #     test_model = self.discriminator
-        # elif "OSN" in self.opt['which_model_for_detector']:
-        #     test_model = self.localizer
-        # else:
-        #     raise NotImplementedError("Detector名字不对，请检查！")
-        test_model.eval()
-
-        ### if the model requires image protection?
-        ### generate gt_rgb using ISP instead of directly loading
-        gt_rgb = self.render_image_using_ISP(input_raw=input_raw, input_raw_one_dim=input_raw_one_dim, gt_rgb=gt_rgb,
-                                     file_name=file_name, camera_name=camera_name)
-
-        ### generate non-tampered protected (or not) image
-        if "localizer" not in self.opt['using_which_model_for_test'] or 'finetuned' in self.opt['using_which_model_for_test']:
-            ## RAW protection ##
-            if not self.opt["test_baseline"]:
-                self.KD_JPEG.eval()
-                modified_raw_one_dim = self.RAW_protection_by_my_own_elastic(input_raw_one_dim=input_raw_one_dim)
-
-                ### model selection
-                modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern,
-                                                  white_balance=camera_white_balance)
-                RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
-                RAW_PSNR = self.psnr(self.postprocess(modified_raw), self.postprocess(
-                    input_raw)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-                logs['RAW_PSNR'] = RAW_PSNR
-                logs['RAW_L1'] = RAW_L1.item()
-                # RAW_L1_REV = self.l1_loss(input=raw_reversed, target=input_raw_one_dim)
-                input_raw = self.clamp_with_grad(modified_raw)
-                input_raw_one_dim = self.clamp_with_grad(modified_raw_one_dim)
-
-            ### ISP rendering: when not using test_baseline
-            if not self.opt["test_baseline"]:
-                non_tampered_image = self.render_image_using_ISP(input_raw=input_raw, input_raw_one_dim=input_raw_one_dim, gt_rgb=gt_rgb,
-                                     file_name=file_name, camera_name=camera_name)
-
-            ## RGB protection ##
-            else:
-                self.KD_JPEG.eval()
-                # print("rgb protection")
-                non_tampered_image = self.baseline_generate_protected_rgb(gt_rgb=gt_rgb)
-
-        ## test on OSN, skip image protection ###
-        else:
-            # print('test osn/cat/mvss/resfcn')
-            non_tampered_image = gt_rgb
-
-            # print("remember to remove this gaussian blur, we use it to beat CAT!!!")
-            # non_tampered_image = self.median_blur(non_tampered_image)
-
-        RGB_PSNR = self.psnr(self.postprocess(non_tampered_image), self.postprocess(gt_rgb)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-        logs['RGB_PSNR'] = RGB_PSNR
-
-        # for i in range(batch_size):
-        #     step = step % 130
-        #     file_name = "%05d.png" % ((step * batch_size + i) % 758)
-
-        ### cropping
-        locs, _, non_tampered_image = self.cropping_mask_generation(
-            forward_image=non_tampered_image, min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
-        _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
-
-        ### get tampering source and mask
-        if self.opt['inference_load_real_world_tamper']:
-            all_tamper_source = None
-            all_mask_GT = None
-            for i in range(batch_size):
-                # step = step % 23
-                file_name = "%05d.png" % ((step * batch_size + i) % 757 + 1)
-                folder_name = '/groupshare/ISP_results/test_results/forged/'  # f'/groupshare/ISP_results/xxhu_test/{self.task_name}/FORGERY_{idx_isp}/'
-                mask_file_name = file_name  # f"{str(step).zfill(5)}_0_{str(self.rank)}.png"
-                mask_folder_name = '/groupshare/ISP_results/test_results/mask/'  # f'/groupshare/ISP_results/xxhu_test/{self.task_name}/MASK/'
-                # print(f"reading {folder_name+file_name}")
-                img_GT = cv2.imread(folder_name + file_name, cv2.IMREAD_COLOR)
-                mask_GT = cv2.imread(mask_folder_name + mask_file_name, cv2.IMREAD_GRAYSCALE)
-
-                img_GT = img_GT.astype(np.float32) / 255.
-                if img_GT.ndim == 2:
-                    img_GT = np.expand_dims(img_GT, axis=2)
-                # some images have 4 channels
-                if img_GT.shape[2] > 3:
-                    img_GT = img_GT[:, :, :3]
-                mask_GT = mask_GT.astype(np.float32) / 255.
-
-                orig_height, orig_width, _ = img_GT.shape
-                H, W, _ = img_GT.shape
-
-                mask_GT = torch.from_numpy(np.ascontiguousarray(mask_GT)).float().unsqueeze(0).unsqueeze(0).cuda()
-
-                # BGR to RGB, HWC to CHW, numpy to tensor
-                if img_GT.shape[2] == 3:
-                    img_GT = img_GT[:, :, [2, 1, 0]]
-
-                tamper_source = torch.from_numpy(
-                    np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float().unsqueeze(
-                    0).cuda()
-
-                if all_mask_GT is None:
-                    all_mask_GT = mask_GT
-                    all_tamper_source = tamper_source
-                else:
-                    all_mask_GT = torch.cat((all_mask_GT, mask_GT), 0)
-                    all_tamper_source = torch.cat((all_tamper_source, tamper_source), 0)
-
-            tamper_source = all_tamper_source
-            mask_GT = all_mask_GT
-            #### tampered image ####
-            test_input = non_tampered_image * (1 - mask_GT) + tamper_source * mask_GT
-
-        else:
-            #### auto generated  ####
-            if self.previous_protected is not None:
-                self.previous_protected = self.label[0:1]
-            self.previous_images = self.label[0:1]
-
-            masks, masks_GT, percent_range = self.mask_generation(modified_input=gt_rgb,
-                                                   percent_range=None)
-
-            self.previous_protected = gt_rgb
-
-            #####  conduct tampering  ######
-            test_input, masks, mask_GT = self.tampering_RAW(
-                masks=masks, masks_GT=masks_GT,
-                modified_input=non_tampered_image, percent_range=percent_range,
-                index=self.opt['inference_tamper_index'],
-                gt_rgb=gt_rgb
-            )
-
-
-        ### attacks generate them all ###
-        attack_lists = [
-            (None, None, None), (0, None, None), (1, None, None), (2, None, None),
-            (3, 18, None), (3, 14, None), (3, 10, None), (4, None, None),
-            (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
-        ]
-        # attack_lists = [
-        #     (0, 20, 1),  (1, 20, 3), (3, 18, 0),
-        #     (None,None,None),(None,None,0),(None,None,1),
-        #     (0, 20, None), (0, 20, 2),
-        #     (1, 20, None), (1, 20, 0),
-        #     (2, 20, None), (2, 20, 1), (2, 20, 2),
-        #     (3, 10, None), (3, 10, 3), (3, 10, 0),
-        #     (3, 14, None), (3, 14, 2), (3, 14, 1),
-        #     (3, 18, None), (3, 18, 3),
-        #     (4, 20, None), (4, 20, 1), (4, 20, 2),
-        # ]
-
-        do_attack, quality_idx, do_augment = attack_lists[self.opt['inference_benign_attack_begin_idx']]
-        logs_pred, pred_resfcn, _ = self.get_predicted_mask(target_model=test_model,
-                                                            modified_input=test_input,
-                                                            masks_GT=mask_GT, do_attack=do_attack,
-                                                            quality_idx=quality_idx,
-                                                            do_augment=do_augment,
-                                                            step=step,
-                                                            filename_append="",
-                                                            save_image=self.opt['inference_save_image']
-                                                            )
-
-        logs.update(logs_pred)
-
-        return logs, (pred_resfcn), True
 
     ####################################################################################################
     # todo: MODE == 5
@@ -1724,68 +909,62 @@ class Modified_invISP(BaseModel):
 
         return attacked_forward, masks, masks_GT
 
-    def define_localizer(self):
-        if self.args.mode in [5.0] or self.opt['test_restormer'] == 2:
-            print("using restormer as testing ISP...")
-            from restormer.model_restormer import Restormer
-            self.localizer = Restormer(dim=16, ).cuda()
-        else:
-            which_model = self.opt['using_which_model_for_test']
-            if 'OSN' in which_model:
-                from ImageForensicsOSN.test import get_model
-                # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
-                # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
-                #                                     find_unused_parameters=True)
-                self.localizer = get_model('/groupshare/ISP_results/models/').cuda()
-            elif 'CAT' in which_model:
-                from CATNet.model import get_model
-                self.localizer = get_model().cuda()
-            elif 'MVSS' in which_model:
-                model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
-                from MVSS.models.mvssnet import get_mvss
-                self.localizer = get_mvss(
-                    backbone='resnet50',
-                    pretrained_base=True,
-                    nclass=1,
-                    sobel=True,
-                    constrain=True,
-                    n_input=3
-                )
-                ckp = torch.load(model_path, map_location='cpu')
-                self.localizer.load_state_dict(ckp, strict=True)
-                self.localizer = nn.DataParallel(self.localizer).cuda()
-            elif 'Mantra' in which_model:
-                model_path = './MantraNetv4.pt'
-                self.localizer = nn.DataParallel(pre_trained_model(model_path)).cuda()
-            elif 'Resfcn' in which_model:
-                print('resfcn here')
-                from MVSS.models.resfcn import ResFCN
-                discriminator_mask = ResFCN().cuda()
-                checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
-                discriminator_mask.load_state_dict(checkpoint, strict=True)
-                self.localizer = discriminator_mask
-
-            if 'finetuned' in which_model:
-                self.load_localizer_storage = self.opt['localizer_folder']
-                self.model_path = str(self.opt['load_localizer_models'])
-                load_models = int(self.model_path) > 0
-
-                if load_models:
-                    print(f"loading models: {which_model} as detector for testing")
-                    self.pretrain = self.load_localizer_storage + self.model_path
-                    self.reload(self.pretrain, network_list=['localizer'])
+    def define_restormer(self):
+        print("using restormer as testing ISP...")
+        from restormer.model_restormer import Restormer
+        self.localizer = Restormer(dim=16, ).cuda()
+        self.localizer = DistributedDataParallel(self.localizer,
+                                device_ids=[torch.cuda.current_device()],
+                                find_unused_parameters=True)
 
 
+    def define_my_own_elastic_as_detector(self):
+        model = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
+                                                 use_norm_conv=True).cuda()
+        model = DistributedDataParallel(model,
+                                                          device_ids=[torch.cuda.current_device()],
+                                                          find_unused_parameters=True)
+        return model
+
+    def define_MVSS_as_detector(self):
+        model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
+        from MVSS.models.mvssnet import get_mvss
+        model = get_mvss(
+            backbone='resnet50',
+            pretrained_base=True,
+            nclass=1,
+            sobel=True,
+            constrain=True,
+            n_input=3
+        ).cuda()
+        ckp = torch.load(model_path, map_location='cpu')
+        model.load_state_dict(ckp, strict=True)
+        model = DistributedDataParallel(model,
+                                                     device_ids=[torch.cuda.current_device()],
+                                                     find_unused_parameters=True)
+        return model
+
+    def define_OSN_as_detector(self):
+        from ImageForensicsOSN.test import get_model
+        # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
+        # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
+        #                                     find_unused_parameters=True)
+        model = get_model('/groupshare/ISP_results/models/').cuda()
+
+        model = DistributedDataParallel(model,
+                                                 device_ids=[torch.cuda.current_device()],
+                                                 find_unused_parameters=True)
+        return model
 
     def define_RAW2RAW_network(self):
-        if 'UNet' not in self.task_name:
-            print("using my_own_elastic as KD_JPEG.")
-            n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4 # 36/48 12
-            self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.opt['dtcwt_layers'],
-                                          use_norm_conv=False).cuda()
-        else:
-            self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
-                                  use_dwt=False).cuda()
+        # if 'UNet' not in self.task_name:
+        print("using my_own_elastic as KD_JPEG.")
+        n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4 # 36/48 12
+        self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.opt['dtcwt_layers'],
+                                      use_norm_conv=False).cuda()
+        # else:
+        #     self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
+        #                           use_dwt=False).cuda()
             # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
             # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
         # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
@@ -1809,7 +988,6 @@ class Modified_invISP(BaseModel):
         # self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
         self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
                                             find_unused_parameters=True)
-        # print('ISP Network OK')
 
     def define_tampering_localization_network(self):
         if self.args.mode==6:
@@ -1822,47 +1000,7 @@ class Modified_invISP(BaseModel):
                                                               find_unused_parameters=True)
 
         else: #if 'MPF' in self.opt['which_model_for_detector']:
-            ## using hybrid model
-            print("using my_own_elastic as discriminator_mask.")
-            self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
-                                                     use_norm_conv=True).cuda()
-        # elif 'MVSS' in self.opt['which_model_for_detector']:
-            print("using MVSS as discriminator.")
-            model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
-            from MVSS.models.mvssnet import get_mvss
-            self.discriminator = get_mvss(
-                backbone='resnet50',
-                pretrained_base=True,
-                nclass=1,
-                sobel=True,
-                constrain=True,
-                n_input=3
-            ).cuda()
-            ckp = torch.load(model_path, map_location='cpu')
-            self.discriminator.load_state_dict(ckp, strict=True)
-
-        # elif 'OSN' in self.opt['which_model_for_detector']:
-            print("using OSN as discriminator_mask.")
-            from ImageForensicsOSN.test import get_model
-            # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
-            # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
-            #                                     find_unused_parameters=True)
-            self.localizer = get_model('/groupshare/ISP_results/models/').cuda()
-
-
-        # else:
-        #     self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
-        #                                      style_control=False, use_dwt=False, use_norm_conv=True).cuda()
-            # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
-            self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
-                                                              device_ids=[torch.cuda.current_device()],
-                                                              find_unused_parameters=True)
-            self.discriminator = DistributedDataParallel(self.discriminator,
-                                                              device_ids=[torch.cuda.current_device()],
-                                                              find_unused_parameters=True)
-            self.localizer = DistributedDataParallel(self.localizer,
-                                                              device_ids=[torch.cuda.current_device()],
-                                                              find_unused_parameters=True)
+            pass # mode 2 implemented
 
 
     ####################################################################################################
