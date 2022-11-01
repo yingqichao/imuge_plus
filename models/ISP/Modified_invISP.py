@@ -2,6 +2,7 @@ import math
 import os
 
 import cv2
+import torch
 import torch.nn as nn
 # from cycleisp_models.cycleisp import Raw2Rgb
 # from MVSS.models.mvssnet import get_mvss
@@ -78,6 +79,12 @@ class Modified_invISP(BaseModel):
             self.opt['simulated_brightness']
         )
 
+        self.amount_of_detectors = len(
+            self.opt['detector_using_MPF_indices'] +
+            self.opt['detector_using_MVSS_indices'] +
+            self.opt['detector_using_OSN_indices']
+        )
+
         self.mode_dict = {
             0: 'generating protected images(val)',
             1: 'tampering localization on generating protected images(val)',
@@ -119,21 +126,22 @@ class Modified_invISP(BaseModel):
             self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
             self.save_network_list = []
             self.training_network_list = []
-        elif self.args.mode in [2] and "UNet" in self.task_name:
-            ### mode=2: regular training (UNet), including ISP, RAW2RAW and localization (train)
-            self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
-            self.save_network_list = self.network_list
-            self.training_network_list = ["KD_JPEG", "discriminator_mask"]
+        # elif self.args.mode in [2] and "UNet" in self.task_name:
+        #     ### mode=2: regular training (UNet), including ISP, RAW2RAW and localization (train)
+        #     self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
+        #     self.save_network_list = self.network_list
+        #     self.training_network_list = ["KD_JPEG", "discriminator_mask"]
         elif self.args.mode in [2] and "elastic" in self.task_name:
             ### mode=2: regular training (our network design), including ISP, RAW2RAW and localization (train)
             self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks
+            self.network_list += ["discriminator", "localizer"]
             self.save_network_list, self.training_network_list = [], []
             if self.opt["train_isp_networks"]:
                 self.save_network_list += self.default_ISP_networks
                 self.training_network_list += self.default_ISP_networks
             if self.opt["train_full_pipeline"]:
-                self.save_network_list += ["KD_JPEG", "discriminator_mask"]
-                self.training_network_list += ["KD_JPEG", "discriminator_mask"]
+                self.save_network_list += ["KD_JPEG", "discriminator_mask", "discriminator", "localizer"]
+                self.training_network_list += ["KD_JPEG", "discriminator_mask", "discriminator", "localizer"]
         elif self.args.mode in [3]:
             ### regular training for ablation (RGB protection)
             self.network_list = ["KD_JPEG", "discriminator_mask"]
@@ -197,8 +205,28 @@ class Modified_invISP(BaseModel):
                 self.pretrain = self.load_detector_storage + self.model_path
                 self.reload(self.pretrain, network_list=self.default_detection_networks)
 
+            if 'discriminator' in self.network_list:
+                self.load_detector_storage = self.opt['MVSS_folder']
 
-        if 'localizer' in self.network_list:
+                self.model_path = str(self.opt['load_MVSS_models'])  # last time: 10999
+                load_models = self.opt['load_MVSS_models'] > 0
+                if load_models:
+                    print(f"loading models: {self.network_list}")
+                    self.pretrain = self.load_detector_storage + self.model_path
+                    self.reload(self.pretrain, network_list=["discriminator"])
+
+            if 'localizer' in self.network_list:
+                self.load_detector_storage = self.opt['OSN_folder']
+
+                self.model_path = str(self.opt['load_OSN_models'])  # last time: 10999
+                load_models = self.opt['load_OSN_models'] > 0
+                if load_models:
+                    print(f"loading models: {self.network_list}")
+                    self.pretrain = self.load_detector_storage + self.model_path
+                    self.reload(self.pretrain, network_list=["localizer"])
+
+
+        if 'localizer' in self.network_list and self.args.mode !=2: # not training main pipeline
             ### todo: localizer is flexible, could be OSN/restormer/CAT-Net, etc.
             self.define_localizer()
 
@@ -709,7 +737,7 @@ class Modified_invISP(BaseModel):
 
                     # self.optimizer_generator.zero_grad()
                     if self.opt['train_isp_networks']:
-                        (CYCLE_loss / self.opt['step_acumulate']).backward()
+                        CYCLE_loss.backward()
 
                         if self.train_opt['gradient_clipping']:
                             nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
@@ -732,7 +760,7 @@ class Modified_invISP(BaseModel):
 
                     if self.opt['train_isp_networks']:
                         # self.optimizer_generator.zero_grad()
-                        (THIRD_loss/self.opt['step_acumulate']).backward()
+                        THIRD_loss.backward()
 
                         if self.train_opt['gradient_clipping']:
                             nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
@@ -754,7 +782,7 @@ class Modified_invISP(BaseModel):
                     if self.opt['train_isp_networks']:
                         ### Grad Accumulation (which we have abandoned)
                         # self.optimizer_generator.zero_grad()
-                        (ISP_loss/self.opt['step_acumulate']).backward()
+                        ISP_loss.backward()
 
                         if self.train_opt['gradient_clipping']:
                             nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
@@ -789,9 +817,9 @@ class Modified_invISP(BaseModel):
                 self.generator.eval()
                 self.netG.eval()
                 self.discriminator_mask.train() if "discriminator_mask" in self.training_network_list else self.discriminator_mask.eval()
-                # self.discriminator.eval()
+                self.discriminator.train()
                 self.qf_predict_network.eval()
-                # self.localizer.train()
+                self.localizer.train()
 
 
                 with torch.enable_grad():
@@ -868,7 +896,7 @@ class Modified_invISP(BaseModel):
                         logs['CE_ema'] = CE_resfcn.item()
                         # logs['Mean'] = l1_mean.item()
                         # logs['Std'] = l1_std.item()
-                        (CE_loss/self.opt['step_acumulate']).backward()
+                        CE_loss.backward()
                         if self.train_opt['gradient_clipping']:
                             nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
                         self.optimizer_discriminator_mask.step()
@@ -909,7 +937,7 @@ class Modified_invISP(BaseModel):
 
 
                         ##### Grad Accumulation (not used any more)
-                        (loss/self.opt['step_acumulate']).backward()
+                        loss.backward()
 
                         if self.train_opt['gradient_clipping']:
                             nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
@@ -921,6 +949,8 @@ class Modified_invISP(BaseModel):
                         self.optimizer_discriminator_mask.zero_grad()
                         self.optimizer_generator.zero_grad()
                         self.optimizer_qf.zero_grad()
+                        self.optimizer_localizer.zero_grad()
+                        self.optimizer_discriminator.zero_grad()
 
                 ### update and track history losses
                 self.update_history_losses(index=self.global_step, PSNR=PSNR_DIFF,
@@ -955,7 +985,7 @@ class Modified_invISP(BaseModel):
                         # self.postprocess(attacked_cannied),
                         self.postprocess(masks_GT),
 
-                        self.postprocess(torch.sigmoid(pred_resfcn)),
+                        self.postprocess(pred_resfcn),
                         # self.postprocess(torch.sigmoid(post_resfcn)),
 
                         img_per_row=1
@@ -1005,7 +1035,7 @@ class Modified_invISP(BaseModel):
         return logs, debug_logs, did_val
 
     def detecting_forgery(self, *, attacked_image, masks_GT, logs):
-        if "MPF" in self.opt['which_model_for_detector']:
+        if self.global_step % self.amount_of_detectors in self.opt['detector_using_MPF_indices']: #"MPF" in self.opt['which_model_for_detector']:
             ### get canny of attacked image
             attacked_cannied = self.get_canny(attacked_image, masks_GT)
             predicted_masks = self.discriminator_mask(attacked_image, attacked_cannied)
@@ -1014,13 +1044,15 @@ class Modified_invISP(BaseModel):
             l1_resfcn = self.l2_loss(torch.sigmoid(post_resfcn), masks_GT)
             logs['CEL1'] = l1_resfcn.item()
             logs['l1_ema'] = l1_resfcn.item()
-        elif "MVSS" in self.opt['which_model_for_detector']:
-            predicted_masks = self.discriminator_mask(attacked_image.detach().contiguous())
+            pred_resfcn = torch.sigmoid(pred_resfcn)
+        elif self.global_step % self.amount_of_detectors in self.opt['detector_using_MVSS_indices']: #"MVSS" in self.opt['which_model_for_detector']:
+            predicted_masks = self.discriminator(attacked_image)
             _, pred_resfcn = predicted_masks
             CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
             l1_resfcn = 0
-        elif "OSN" in self.opt['which_model_for_detector']:
-            pred_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
+            pred_resfcn = torch.sigmoid(pred_resfcn)
+        elif self.global_step % self.amount_of_detectors in self.opt['detector_using_OSN_indices']: # "OSN" in self.opt['which_model_for_detector']:
+            pred_resfcn = self.localizer(attacked_image)
             CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
             l1_resfcn = 0
         else:
@@ -1206,7 +1238,7 @@ class Modified_invISP(BaseModel):
                 # logs['Mean'] = l1_mean.item()
                 # logs['Std'] = l1_std.item()
                 # logs['CE_control'] = CE_control.item()
-                (CE_loss/self.opt['step_acumulate']).backward()
+                CE_loss.backward()
 
                 if self.train_opt['gradient_clipping']:
                     nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
@@ -1236,7 +1268,7 @@ class Modified_invISP(BaseModel):
                 logs['loss'] = loss.item()
 
                 ### Grad Accumulation
-                (loss/self.opt['step_acumulate']).backward()
+                loss.backward()
                 # self.scaler_kd_jpeg.scale(loss).backward()
 
                 if self.train_opt['gradient_clipping']:
@@ -1756,15 +1788,20 @@ class Modified_invISP(BaseModel):
             from MVSS.models.resfcn import ResFCN
             print("Building ResFCN...........please wait...")
             self.discriminator_mask = ResFCN().cuda()
-        elif 'MPF' in self.opt['which_model_for_detector']:
+            self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
+                                                              device_ids=[torch.cuda.current_device()],
+                                                              find_unused_parameters=True)
+
+        else: #if 'MPF' in self.opt['which_model_for_detector']:
+            ## using hybrid model
             print("using my_own_elastic as discriminator_mask.")
             self.discriminator_mask = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
                                                      use_norm_conv=True).cuda()
-        elif 'MVSS' in self.opt['which_model_for_detector']:
-            print("using MVSS as discriminator_mask.")
+        # elif 'MVSS' in self.opt['which_model_for_detector']:
+            print("using MVSS as discriminator.")
             model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
             from MVSS.models.mvssnet import get_mvss
-            self.discriminator_mask = get_mvss(
+            self.discriminator = get_mvss(
                 backbone='resnet50',
                 pretrained_base=True,
                 nclass=1,
@@ -1773,23 +1810,30 @@ class Modified_invISP(BaseModel):
                 n_input=3
             ).cuda()
             ckp = torch.load(model_path, map_location='cpu')
-            self.discriminator_mask.load_state_dict(ckp, strict=True)
+            self.discriminator.load_state_dict(ckp, strict=True)
 
-        elif 'OSN' in self.opt['which_model_for_detector']:
+        # elif 'OSN' in self.opt['which_model_for_detector']:
+            print("using OSN as discriminator_mask.")
             from ImageForensicsOSN.test import get_model
             # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
             # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
             #                                     find_unused_parameters=True)
-            self.discriminator_mask = get_model('/groupshare/ISP_results/models/').cuda()
+            self.localizer = get_model('/groupshare/ISP_results/models/').cuda()
 
 
-        else:
-            self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
-                                             style_control=False, use_dwt=False, use_norm_conv=True).cuda()
+        # else:
+        #     self.discriminator_mask = HWMNet(in_chn=3, out_chn=1, wf=32, depth=4, subtask=0,
+        #                                      style_control=False, use_dwt=False, use_norm_conv=True).cuda()
             # UNetDiscriminator(in_channels=3, out_channels=1, residual_blocks=2, use_SRM=False, subtask=self.raw_classes).cuda() #UNetDiscriminator(use_SRM=False).cuda() #
-        self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
-                                                          device_ids=[torch.cuda.current_device()],
-                                                          find_unused_parameters=True)
+            self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
+                                                              device_ids=[torch.cuda.current_device()],
+                                                              find_unused_parameters=True)
+            self.discriminator = DistributedDataParallel(self.discriminator,
+                                                              device_ids=[torch.cuda.current_device()],
+                                                              find_unused_parameters=True)
+            self.localizer = DistributedDataParallel(self.localizer,
+                                                              device_ids=[torch.cuda.current_device()],
+                                                              find_unused_parameters=True)
 
 
     ####################################################################################################
@@ -2117,20 +2161,14 @@ class Modified_invISP(BaseModel):
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
-        # if 'discriminator' in network_list:
-        #     load_path_G = pretrain + "_discriminator.pth"
-        #     if load_path_G is not None:
-        #         print('Loading model for class [{:s}] ...'.format(load_path_G))
-        #         if os.path.exists(load_path_G):
-        #             self.load_network(load_path_G, self.discriminator, strict=True)
-        #         else:
-        #             print('Did not find momentum model for class [{:s}] ... we load the discriminator_mask instead'.format(load_path_G))
-        #             load_path_G = pretrain + "_discriminator_mask.pth"
-        #             print('Loading model for class [{:s}] ...'.format(load_path_G))
-        #             if os.path.exists(load_path_G):
-        #                 self.load_network(load_path_G, self.discriminator_mask, strict=True)
-        #             else:
-        #                 print('Did not find model for class [{:s}] ...'.format(load_path_G))
+        if 'discriminator' in network_list:
+            load_path_G = pretrain + "_discriminator.pth"
+            if load_path_G is not None:
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
+                if os.path.exists(load_path_G):
+                    self.load_network(load_path_G, self.discriminator, strict=False)
+                else:
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
         if 'qf_predict_network' in network_list:
             load_path_G = pretrain + "_qf_predict.pth"
@@ -2172,9 +2210,9 @@ class Modified_invISP(BaseModel):
         if 'discriminator_mask' in network_list:
             self.save_network(self.discriminator_mask, 'discriminator_mask', iter_label if self.rank == 0 else 0,
                               model_path=self.out_space_storage + f'/{folder}/{self.task_name}/')
-        # if 'discriminator' in network_list:
-        #     self.save_network(self.discriminator, 'discriminator', iter_label if self.rank == 0 else 0,
-        #                       model_path=self.out_space_storage + f'/{folder}/{self.task_name}/')
+        if 'discriminator' in network_list:
+            self.save_network(self.discriminator, 'discriminator', iter_label if self.rank == 0 else 0,
+                              model_path=self.out_space_storage + f'/{folder}/{self.task_name}/')
         if 'qf_predict_network' in network_list:
             self.save_network(self.qf_predict_network, 'qf_predict', iter_label if self.rank == 0 else 0,
                               model_path=self.out_space_storage + f'/{folder}/{self.task_name}/')

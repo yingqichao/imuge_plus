@@ -234,9 +234,10 @@ class BaseModel():
             lr = 'lr_scratch'
             self.optimizer_KD_JPEG = self.create_optimizer(self.KD_JPEG,
                                                            lr=self.train_opt[lr], weight_decay=wd_G)
-        # if 'discriminator' in self.network_list:
-        #     self.optimizer_discriminator = self.create_optimizer(self.discriminator,
-        #                                                          lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+        if 'discriminator' in self.network_list:
+            self.optimizer_discriminator = self.create_optimizer(self.discriminator,
+                                                                 lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
+
         if 'generator' in self.network_list:
             lr = 'lr_scratch'
             self.optimizer_generator = self.create_optimizer(self.generator,

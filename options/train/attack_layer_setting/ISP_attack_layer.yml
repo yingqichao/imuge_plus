@@ -1,8 +1,12 @@
 #### indices
-simulated_splicing_indices: []
-simulated_copymove_indices: [0, 2, 4, 6, 8]
+simulated_splicing_indices: [3, 6, 8]
+simulated_copymove_indices: [0, 2, 4]
 simulated_inpainting_indices: [1, 5]
-simulated_copysplicing_indices: [3, 7]
+simulated_copysplicing_indices: [7]
+
+detector_using_MPF_indices: [2,5,8]
+detector_using_MVSS_indices: [0,3,6,9]
+detector_using_OSN_indices: [1,4,7,10]
 
 crop_indices: [3,5,7,9]
 
@@ -15,7 +19,7 @@ conduct_augmentation: true
 train_inpainting_surrogate_model: false
 lower_false_positive: false
 
-psnr_thresh: 42
+psnr_thresh: 43
 CE_hyper_param: 0.2
 Loss_back_psnr_higher: 0.2
 ssim_hyper_param: 0.01
