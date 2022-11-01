@@ -92,6 +92,9 @@ class ISP_Pipeline_Training(Modified_invISP):
         self.load_model_wrapper(folder_name='OSN_folder', model_name='load_OSN_models',
                                 network_lists=['localizer'])
 
+        ## inpainting model
+        self.define_inpainting_edgeconnect()
+
 
     def optimize_parameters_main(self, step=None):
         ####################  Image Manipulation Detection Network (Downstream task)  ##################
@@ -466,7 +469,7 @@ class ISP_Pipeline_Training(Modified_invISP):
     def detecting_forgery(self, *, attacked_image, masks_GT, logs):
         if self.global_step % self.amount_of_detectors in self.opt['detector_using_MPF_indices']: #"MPF" in self.opt['which_model_for_detector']:
             ### get canny of attacked image
-            attacked_cannied = self.get_canny(attacked_image, masks_GT)
+            attacked_cannied, _ = self.get_canny(attacked_image, masks_GT)
             predicted_masks = self.discriminator_mask(attacked_image, attacked_cannied)
             pred_resfcn, post_resfcn = predicted_masks
             CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)

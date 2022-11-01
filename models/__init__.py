@@ -27,6 +27,8 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
             from models.ISP.Train_One_Single_ISP import Train_One_Single_ISP as M
         elif args.mode==6:
             from models.ISP.Train_One_Single_Detector import Train_One_Single_Detector as M
+        else:
+            raise NotImplementedError('大神ISP的模式是不是搞错了？')
         ### original version
         # from models.ISP.Modified_invISP import Modified_invISP as M
         model = M(opt, args, train_set)

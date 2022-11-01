@@ -288,7 +288,7 @@ class Modified_invISP(BaseModel):
                 pred_resfcn = target_model(attacked_image.detach().contiguous())
         else:
             if "MPF" in self.opt['which_model_for_detector']:
-                attacked_cannied = self.get_canny(attacked_image, masks_GT)
+                attacked_cannied, _ = self.get_canny(attacked_image, masks_GT)
 
                 pred_resfcn = target_model(attacked_image.detach().contiguous(), canny=attacked_cannied)
                 if isinstance(pred_resfcn, (tuple)):
@@ -454,9 +454,12 @@ class Modified_invISP(BaseModel):
                                                                   percent_range=percent_range,
                                                                   another_immunized=self.previous_protected)
         elif index in self.opt['simulated_inpainting_indices']: #self.using_splicing():
-            ### todo: splicing
-            attacked_forward = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
-
+            ### todo: inpainting
+            # attacked_forward = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
+            modified_crop_out = modified_input*(1-masks)
+            image_gray, image_canny = self.get_canny(input=modified_crop_out,masks_GT=masks_GT)
+            attacked_forward = self.inpainting_edgeconnect(forward_image=modified_input,image_gray=image_gray,image_canny=image_canny,
+                                                           masks=masks)
         else:
             print(index)
             raise NotImplementedError("Tamper的方法没找到！请检查！")
@@ -553,6 +556,11 @@ class Modified_invISP(BaseModel):
         self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
                                                           device_ids=[torch.cuda.current_device()],
                                                           find_unused_parameters=True)
+
+    def define_inpainting_edgeconnect(self):
+        from edgeconnect.main import get_model
+        print("Building edgeconnect...........please wait...")
+        self.edgeconnect_model = get_model()
 
 
 

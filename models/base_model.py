@@ -397,6 +397,12 @@ class BaseModel():
     def inpainting_for_RAW(self, *, forward_image, masks, gt_rgb):
         return  forward_image * (1 - masks) + gt_rgb * masks
 
+    def inpainting_edgeconnect(self, *, forward_image, image_gray, image_canny, masks):
+        items = (forward_image, image_gray, image_canny, masks)
+        result = self.edgeconnect_model.test(items)
+
+        return forward_image * (1 - masks) + result * masks
+
     def inpainting_for_PAMI(self, *, forward_image, masks, modified_canny):
         with torch.no_grad():
             reversed_stuff, reverse_feature = self.netG(
@@ -486,14 +492,16 @@ class BaseModel():
 
     def get_canny(self, input, masks_GT, sigma=1):
         cannied_list = torch.empty_like(masks_GT).cuda()
+        gray_list = torch.empty_like(masks_GT).cuda()
         for i in range(input.shape[0]):
             grid = input[i]
             ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
             ndarr = ndarr.astype(np.float32) / 255.
             img_gray = rgb2gray(ndarr)
             cannied = canny(img_gray, sigma=sigma, mask=None).astype(np.float)
+            gray_list[i] = torch.from_numpy(np.ascontiguousarray(img_gray)).contiguous().float()
             cannied_list[i] = torch.from_numpy(np.ascontiguousarray(cannied)).contiguous().float()
-        return cannied_list
+        return cannied_list, gray_list
 
 
     def benign_attacks(self, *, attacked_forward, quality_idx, kernel_size=None, resize_ratio=None, index=None):

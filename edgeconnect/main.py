@@ -7,8 +7,8 @@ import numpy as np
 import torch
 import argparse
 from shutil import copyfile
-from src.config import Config
-from src.edge_connect import EdgeConnect, EdgeConnectTest
+from edgeconnect.src.config import Config
+from edgeconnect.src.edge_connect import EdgeConnect, EdgeConnectTest
 from skimage.feature import canny
 from PIL import Image
 import torchvision.transforms.functional as F
@@ -16,7 +16,7 @@ import torchvision.transforms.functional as F
 
 def get_model():
     config = load_config(mode=2)
-    os.environ['CUDA_VISIBLE_DEVICES'] = '0, '
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '0, '
     model = EdgeConnectTest(config)
     model.load()
     return model
