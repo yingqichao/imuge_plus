@@ -576,7 +576,7 @@ class Modified_invISP(BaseModel):
             if quality_idx is None:
                 quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
 
-            attacked_image = self.benign_attacks(attacked_forward=attacked_forward,
+            attacked_image, _, _ = self.benign_attacks(attacked_forward=attacked_forward,
                                                  quality_idx=quality_idx, index=do_attack)
         else:
             attacked_image = attacked_forward
@@ -597,7 +597,8 @@ class Modified_invISP(BaseModel):
             elif 'MVSS' in self.opt['using_which_model_for_test']:
                 _, pred_resfcn = target_model(attacked_image.detach().contiguous())
                 pred_resfcn = torch.sigmoid(pred_resfcn)
-            elif 'Resfcn' or 'Mantra' in self.opt['using_which_model_for_test']:
+            elif 'Resfcn' in self.opt['using_which_model_for_test'] \
+                    or 'Mantra' in self.opt['using_which_model_for_test']:
                 pred_resfcn = target_model(attacked_image.detach().contiguous())
                 pred_resfcn = torch.sigmoid(pred_resfcn)
             else:
@@ -1981,6 +1982,53 @@ class Modified_invISP(BaseModel):
         elif self.opt['test_restormer'] == 2:
             self.localizer.eval()
             non_tampered_image = self.localizer(input_raw)
+
+        elif self.opt['test_restormer'] == 3:
+            self.generator.eval()
+            self.qf_predict_network.eval()
+            self.netG.eval()
+            if self.global_step % 6 == 0:
+                isp_model_0, isp_model_1 = "pipeline", self.generator
+            elif self.global_step % 6 == 1:
+                isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
+            elif self.global_step % 6 == 2:
+                isp_model_0, isp_model_1 = "pipeline", self.qf_predict_network
+            elif self.global_step % 6 == 3:
+                isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
+            elif self.global_step % 6 == 4:
+                isp_model_0, isp_model_1 = "pipeline", self.netG
+            else:  # if self.global_step % 6 == 5:
+                isp_model_0, isp_model_1 = self.netG, self.generator
+
+
+            ### first
+            if isinstance(isp_model_0, str):
+                modified_input_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim,
+                                                          file_name=file_name, gt_rgb=gt_rgb)
+            else:
+                modified_input_0 = isp_model_0(input_raw)
+            modified_input_0 = self.clamp_with_grad(modified_input_0)
+
+            # ### second
+            # modified_input_1 = isp_model_1(input_raw)
+            # modified_input_1 = self.clamp_with_grad(modified_input_1)
+            #
+            # ##################   doing mixup on the images   ###############################################
+            # ### note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
+            # ### thus, we are not let the ISP network approaching the ground-truth RGB.
+            # skip_the_second = np.random.rand() > 0.8
+            # alpha_0 = 1.0 if skip_the_second else np.random.rand()
+            # alpha_1 = 1 - alpha_0
+
+            # modified_input = alpha_0 * modified_input_0
+            # modified_input += alpha_1 * modified_input_1
+
+            # ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
+            # ISP_SSIM_sum = - self.ssim_loss(modified_input, tamper_source)
+
+            ### collect the protected images ###
+            modified_input = self.clamp_with_grad(modified_input_0)
+            non_tampered_image = modified_input
 
         else:
             # print('here')
