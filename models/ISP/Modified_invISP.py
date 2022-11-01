@@ -604,14 +604,24 @@ class Modified_invISP(BaseModel):
             else:
                 pred_resfcn = target_model(attacked_image.detach().contiguous())
         else:
+            if "MPF" in self.opt['which_model_for_detector']:
+                attacked_cannied = self.get_canny(attacked_image, masks_GT)
 
-            attacked_cannied = self.get_canny(attacked_image, masks_GT)
+                pred_resfcn = target_model(attacked_image.detach().contiguous(), canny=attacked_cannied)
+                if isinstance(pred_resfcn, (tuple)):
+                    # pred_resfcn,  _ = pred_resfcn
+                    _, pred_resfcn = pred_resfcn
+                pred_resfcn = torch.sigmoid(pred_resfcn)
 
-            pred_resfcn = target_model(attacked_image.detach().contiguous(), canny=attacked_cannied)
-            if isinstance(pred_resfcn, (tuple)):
-                # pred_resfcn,  _ = pred_resfcn
-                _, pred_resfcn = pred_resfcn
-            pred_resfcn = torch.sigmoid(pred_resfcn)
+            elif "MVSS" in self.opt['which_model_for_detector']:
+                _, pred_resfcn = target_model(attacked_image.detach().contiguous())
+                pred_resfcn = torch.sigmoid(pred_resfcn)
+            elif "OSN" in self.opt['which_model_for_detector']:
+                pred_resfcn = target_model(attacked_image.detach().contiguous())
+            else:
+                raise NotImplementedError("Detector名字不对，请检查！")
+
+
 
         # refined_resfcn, std_pred, mean_pred = post_pack
         # CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
