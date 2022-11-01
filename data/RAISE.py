@@ -73,6 +73,11 @@ class Raise(Dataset):
         file_txt = os.path.join(self.data_root, f'{self.stage}.txt')
         with open(file_txt, "r") as f:
             data_list = [i.strip() for i in f.readlines()]
+
+        if self.stage == 'crop_test':
+            random.shuffle(data_list)
+            len_data = len(data_list)
+            data_list = data_list[:int(len_data*0.1)]
         # for i in range(len(rgb_files)):
         #     rgb_path = rgb_files[i]
         #     npz_path = npz_files[i]
