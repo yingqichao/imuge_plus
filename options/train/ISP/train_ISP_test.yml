@@ -62,6 +62,8 @@ inference_do_subsequent_prediction: false
 inference_tamper_index: 2
 inference_save_image: false
 
+restart_step: 100000
+
 #### datasets
 phase: train
 only_gen_immunized: 0.0

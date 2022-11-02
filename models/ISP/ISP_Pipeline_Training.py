@@ -61,36 +61,42 @@ class ISP_Pipeline_Training(Modified_invISP):
 
     def network_definitions(self):
         ### mode=2: regular training (our network design), including ISP, RAW2RAW and localization (train)
-        self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + self.default_detection_networks_for_training
+        self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks + ['discriminator_mask']
         self.save_network_list, self.training_network_list = [], []
         if self.opt["train_isp_networks"]:
             self.save_network_list += self.default_ISP_networks
             self.training_network_list += self.default_ISP_networks
-        if self.opt["train_full_pipeline"]:
-            self.save_network_list += self.default_RAW_to_RAW_networks + self.default_detection_networks_for_training
-            self.training_network_list += self.default_RAW_to_RAW_networks + self.default_detection_networks_for_training
+        if self.opt["train_RAW2RAW"]:
+            self.save_network_list += self.default_RAW_to_RAW_networks
+            self.training_network_list += self.default_RAW_to_RAW_networks
+        if self.opt["train_detector"]:
+            self.save_network_list += ['discriminator_mask']
+            self.training_network_list += ['discriminator_mask']
 
         ### ISP networks
         self.define_ISP_network_training()
         self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
-                                network_lists=self.default_ISP_networks)
+                                network_lists=self.default_ISP_networks, strict=False)
         ### RAW2RAW network
         self.define_RAW2RAW_network()
         self.load_model_wrapper(folder_name='protection_folder',model_name='load_RAW_models',
                                 network_lists=self.default_RAW_to_RAW_networks)
         ### detector networks: using hybrid model
-        print("using my_own_elastic as discriminator_mask.")
-        self.discriminator_mask = self.define_my_own_elastic_as_detector()
+        print("using CATNET as discriminator_mask.")
+        # self.discriminator_mask = UNetDiscriminator(in_channels=3, out_channels=1, use_SRM=False).cuda()
+        # self.discriminator_mask = DistributedDataParallel(self.discriminator_mask, device_ids=[torch.cuda.current_device()],
+        #                                        find_unused_parameters=True)
+        self.discriminator_mask = self.define_CATNET() #self.define_my_own_elastic_as_detector()
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])
-        print("using MVSS as discriminator.")
-        self.discriminator = self.define_MVSS_as_detector()
-        self.load_model_wrapper(folder_name='MVSS_folder', model_name='load_MVSS_models',
-                                network_lists=['discriminator'])
-        print("using OSN as discriminator_mask.")
-        self.localizer = self.define_OSN_as_detector()
-        self.load_model_wrapper(folder_name='OSN_folder', model_name='load_OSN_models',
-                                network_lists=['localizer'])
+        # print("using MVSS as discriminator.")
+        # self.discriminator = self.define_MVSS_as_detector()
+        # self.load_model_wrapper(folder_name='MVSS_folder', model_name='load_MVSS_models',
+        #                         network_lists=['discriminator'])
+        # print("using OSN as discriminator_mask.")
+        # self.localizer = self.define_OSN_as_detector()
+        # self.load_model_wrapper(folder_name='OSN_folder', model_name='load_OSN_models',
+        #                         network_lists=['localizer'])
 
         ## inpainting model
         self.define_inpainting_edgeconnect()
@@ -177,27 +183,27 @@ class ISP_Pipeline_Training(Modified_invISP):
                         self.optimizer_qf.zero_grad()
 
 
-                    #### HWMNET ####
-                    modified_input_netG, THIRD_loss = self.ISP_image_generation_general(network=self.netG,
-                                                                                           input_raw=input_raw.detach().contiguous(),
-                                                                                           target=gt_rgb)
-
-                    modified_input_netG_detach = self.clamp_with_grad(modified_input_netG.detach())
-                    PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG_detach),self.postprocess(gt_rgb)).item()
-                    logs['PIPE_PSNR'] = PIPE_PSNR
-                    logs['PIPE_L1'] = THIRD_loss.item()
-                    ## STORE THE RESULT FOR LATER USE
-                    stored_image_netG = modified_input_netG_detach if stored_image_netG is None else \
-                        torch.cat([stored_image_netG, modified_input_netG_detach], dim=0)
-
-                    if self.opt['train_isp_networks']:
-                        # self.optimizer_generator.zero_grad()
-                        THIRD_loss.backward()
-
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-                        self.optimizer_G.step()
-                        self.optimizer_G.zero_grad()
+                    # #### HWMNET ####
+                    # modified_input_netG, THIRD_loss = self.ISP_image_generation_general(network=self.netG,
+                    #                                                                        input_raw=input_raw.detach().contiguous(),
+                    #                                                                        target=gt_rgb)
+                    #
+                    # modified_input_netG_detach = self.clamp_with_grad(modified_input_netG.detach())
+                    # PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG_detach),self.postprocess(gt_rgb)).item()
+                    # logs['PIPE_PSNR'] = PIPE_PSNR
+                    # logs['PIPE_L1'] = THIRD_loss.item()
+                    # ## STORE THE RESULT FOR LATER USE
+                    # stored_image_netG = modified_input_netG_detach if stored_image_netG is None else \
+                    #     torch.cat([stored_image_netG, modified_input_netG_detach], dim=0)
+                    #
+                    # if self.opt['train_isp_networks']:
+                    #     # self.optimizer_generator.zero_grad()
+                    #     THIRD_loss.backward()
+                    #
+                    #     if self.train_opt['gradient_clipping']:
+                    #         nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
+                    #     self.optimizer_G.step()
+                    #     self.optimizer_G.zero_grad()
 
                     #### InvISP #####
                     modified_input_generator, ISP_loss = self.ISP_image_generation_general(network=self.generator,
@@ -230,7 +236,7 @@ class ISP_Pipeline_Training(Modified_invISP):
                         self.postprocess(input_raw),
                         self.postprocess(modified_input_generator_detach),
                         self.postprocess(modified_input_qf_predict_detach),
-                        self.postprocess(modified_input_netG_detach),
+                        # self.postprocess(modified_input_netG_detach),
                         self.postprocess(gt_rgb),
                         img_per_row=1
                     )
@@ -248,10 +254,10 @@ class ISP_Pipeline_Training(Modified_invISP):
                 self.KD_JPEG.train() if "KD_JPEG" in self.training_network_list else self.KD_JPEG.eval()
                 self.generator.eval()
                 self.netG.eval()
-                self.discriminator_mask.train() if "discriminator_mask" in self.training_network_list else self.discriminator_mask.eval()
-                self.discriminator.train()
                 self.qf_predict_network.eval()
-                self.localizer.train()
+                self.discriminator_mask.train() if "discriminator_mask" in self.training_network_list else self.discriminator_mask.eval()
+                # self.discriminator.train() if "discriminator" in self.training_network_list else self.discriminator.eval()
+                # self.localizer.train() if "localizer" in self.training_network_list else self.localizer.eval()
 
 
                 with torch.enable_grad():
@@ -381,8 +387,8 @@ class ISP_Pipeline_Training(Modified_invISP):
                         self.optimizer_discriminator_mask.zero_grad()
                         self.optimizer_generator.zero_grad()
                         self.optimizer_qf.zero_grad()
-                        self.optimizer_localizer.zero_grad()
-                        self.optimizer_discriminator.zero_grad()
+                        # self.optimizer_localizer.zero_grad()
+                        # self.optimizer_discriminator.zero_grad()
 
                 ### update and track history losses
                 self.update_history_losses(index=self.global_step, PSNR=PSNR_DIFF,
@@ -467,43 +473,50 @@ class ISP_Pipeline_Training(Modified_invISP):
         return logs, debug_logs, did_val
 
     def detecting_forgery(self, *, attacked_image, masks_GT, logs):
-        if self.global_step % self.amount_of_detectors in self.opt['detector_using_MPF_indices']: #"MPF" in self.opt['which_model_for_detector']:
-            ### get canny of attacked image
-            attacked_cannied, _ = self.get_canny(attacked_image, masks_GT)
-            predicted_masks = self.discriminator_mask(attacked_image, attacked_cannied)
-            pred_resfcn, post_resfcn = predicted_masks
-            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-            l1_resfcn = self.l2_loss(torch.sigmoid(post_resfcn), masks_GT)
-            logs['CEL1'] = l1_resfcn.item()
-            logs['l1_ema'] = l1_resfcn.item()
-            pred_resfcn = torch.sigmoid(pred_resfcn)
-        elif self.global_step % self.amount_of_detectors in self.opt['detector_using_MVSS_indices']: #"MVSS" in self.opt['which_model_for_detector']:
-            predicted_masks = self.discriminator(attacked_image)
-            _, pred_resfcn = predicted_masks
-            CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-            l1_resfcn = 0
-            pred_resfcn = torch.sigmoid(pred_resfcn)
-        elif self.global_step % self.amount_of_detectors in self.opt['detector_using_OSN_indices']: # "OSN" in self.opt['which_model_for_detector']:
-            pred_resfcn = self.localizer(attacked_image)
-            CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
-            l1_resfcn = 0
-        else:
-            raise NotImplementedError("Detector名字不对，请检查！")
+        pred_resfcn = self.discriminator_mask(attacked_image, None)
+        pred_resfcn = Functional.interpolate(pred_resfcn, size=(512, 512), mode='bilinear')
+        pred_resfcn = Functional.softmax(pred_resfcn, dim=1)
+        _, pred_resfcn = torch.split(pred_resfcn, 1, dim=1)
+        CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
+        l1_resfcn = 0
+
+        # if self.global_step % self.amount_of_detectors in self.opt['detector_using_MPF_indices']: #"MPF" in self.opt['which_model_for_detector']:
+        #     ### get canny of attacked image
+        #     attacked_cannied, _ = self.get_canny(attacked_image, masks_GT)
+        #     predicted_masks = self.discriminator_mask(attacked_image, attacked_cannied)
+        #     pred_resfcn, post_resfcn = predicted_masks
+        #     CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
+        #     l1_resfcn = self.l2_loss(torch.sigmoid(post_resfcn), masks_GT)
+        #     logs['CEL1'] = l1_resfcn.item()
+        #     logs['l1_ema'] = l1_resfcn.item()
+        #     pred_resfcn = torch.sigmoid(pred_resfcn)
+        # elif self.global_step % self.amount_of_detectors in self.opt['detector_using_MVSS_indices']: #"MVSS" in self.opt['which_model_for_detector']:
+        #     predicted_masks = self.discriminator(attacked_image)
+        #     _, pred_resfcn = predicted_masks
+        #     CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
+        #     l1_resfcn = 0
+        #     pred_resfcn = torch.sigmoid(pred_resfcn)
+        # elif self.global_step % self.amount_of_detectors in self.opt['detector_using_OSN_indices']: # "OSN" in self.opt['which_model_for_detector']:
+        #     pred_resfcn = self.localizer(attacked_image)
+        #     CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
+        #     l1_resfcn = 0
+        # else:
+        #     raise NotImplementedError("Detector名字不对，请检查！")
 
         return CE_resfcn, l1_resfcn, pred_resfcn
 
 
     def ISP_mixing_during_training(self, *, modified_raw, modified_raw_one_dim, input_raw_one_dim, stored_lists, file_name, gt_rgb):
         stored_image_generator, stored_image_qf_predict, stored_image_netG = stored_lists
-        if self.global_step % 3 == 0:
-            isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
-            stored_list_0, stored_list_1 = stored_image_generator, stored_image_qf_predict
-        elif self.global_step % 3 == 1:
-            isp_model_0, isp_model_1 = self.netG, self.generator
-            stored_list_0, stored_list_1 = stored_image_netG, stored_image_generator
-        else: #if self.global_step % 3 == 2:
-            isp_model_0, isp_model_1 = "pipeline", self.qf_predict_network
-            stored_list_0, stored_list_1 = None, stored_image_qf_predict
+        # if self.global_step % 3 == 0:
+        isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
+        stored_list_0, stored_list_1 = stored_image_generator, stored_image_qf_predict
+        # elif self.global_step % 3 == 1:
+        #     isp_model_0, isp_model_1 = self.netG, self.generator
+        #     stored_list_0, stored_list_1 = stored_image_netG, stored_image_generator
+        # else: #if self.global_step % 3 == 2:
+        #     isp_model_0, isp_model_1 = "pipeline", self.qf_predict_network
+        #     stored_list_0, stored_list_1 = None, stored_image_qf_predict
         # elif self.global_step % 6 == 3:
         #     isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
         #     stored_list_0, stored_list_1 = stored_image_netG, stored_image_qf_predict

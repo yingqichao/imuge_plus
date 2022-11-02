@@ -23,7 +23,7 @@ import torch.nn as nn
 import torch._utils
 import torch.nn.functional as F
 
-BatchNorm2d = nn.BatchNorm2d
+BatchNorm2d = nn.SyncBatchNorm
 BN_MOMENTUM = 0.01
 logger = logging.getLogger(__name__)
 

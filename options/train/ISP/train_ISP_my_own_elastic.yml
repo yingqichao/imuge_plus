@@ -6,11 +6,11 @@ MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
 # restormer: 77999
-load_discriminator_models: 3999 #11499
-load_RAW_models: 3999 #11499 # 10999
+load_discriminator_models: 0 #11499
+load_RAW_models: 0 #11499 # 10999
 load_ISP_models: 43999 #20999 # new: 24999
-load_MVSS_models: 3999
-load_OSN_models: 3999
+load_MVSS_models: 0
+load_OSN_models: 0
 load_customized_models: 0
 
 #### general settings
@@ -25,9 +25,13 @@ gpu_ids: [1,2,3,4]
 skip_attack_probability: 0.85
 skip_aug_probability: 0.85
 
+restart_step: 1000
+
 
 train_isp_networks: false
-train_full_pipeline: true
+#train_full_pipeline: true
+train_RAW2RAW: true
+train_detector: true
 
 which_model_for_detector: HYBRID # MPF
 
@@ -63,7 +67,7 @@ datasets:
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
 
     use_shuffle: true
-    n_workers: 4 # per GPU
+    n_workers: 3 # per GPU
 
     batch_size: 8 # 4
     GT_size: 512 # 608
@@ -87,7 +91,7 @@ train:
   debug_mode: 0
   save_to_latest: 1.0
   load: 0.0
-  lr_scratch: !!float 2e-5   # 2e-5
+  lr_scratch: !!float 1e-4   # 2e-5
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

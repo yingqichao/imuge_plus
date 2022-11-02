@@ -6,7 +6,7 @@ from .dataset import Dataset
 from .models import EdgeModel, InpaintingModel
 from .utils import Progbar, create_dir, stitch_images, imsave
 from .metrics import PSNR, EdgeAccuracy
-
+import torch.nn as nn
 
 class EdgeConnect():
     def __init__(self, config):
@@ -420,20 +420,30 @@ class EdgeConnect():
 #     def __init__(self, weights_path):
 #         self.PATH = weights_path
 #         self.DEVICE = 'cuda'
-
-
-
+from torch.nn.parallel import DistributedDataParallel
 class EdgeConnectTest():
     def __init__(self, config):
+        super(EdgeConnectTest, self).__init__()
         self.config = config
         self.edge_model = EdgeModel(config).cuda()
         self.inpainting_model = InpaintingModel(config).cuda()
+        # self.edge_model.load()
+        # self.inpainting_model.load()
+        self.edge_model = DistributedDataParallel(self.edge_model,
+                                                          device_ids=[torch.cuda.current_device()],
+                                                          find_unused_parameters=True)
+        self.inpainting_model = DistributedDataParallel(self.inpainting_model,
+                                                  device_ids=[torch.cuda.current_device()],
+                                                  find_unused_parameters=True)
 
     def load(self):
-        self.edge_model.load()
-        self.inpainting_model.load()
+        pass
+        # self.edge_model.load()
+        # self.inpainting_model.load()
 
-    def test(self, items):
+    def forward(self, items):
+        self.edge_model.eval()
+        self.inpainting_model.eval()
         images, images_gray, edges, masks = items
         edges = self.edge_model(images_gray, edges, masks).detach()
         outputs = self.inpainting_model(images, edges, masks)

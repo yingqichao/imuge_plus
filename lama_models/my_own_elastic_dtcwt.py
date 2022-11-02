@@ -56,7 +56,7 @@ class BottleNeck(nn.Module):
                                                    kernels_per_layer=kernels_per_layer,
                                                    kernel_size=3, stride=1, padding=1)
         if self.use_act:
-            self.ln_local = nn.SyncBatchNorm(out_channels)
+            self.ln_local = LayerNorm2d(out_channels)
         if self.use_norm:
             self.simple_gate = nn.GELU()  # SimpleGate()
 
@@ -81,7 +81,7 @@ class MyOwnResBlock(nn.Module):
         kernels_per_layer = math.ceil(out_channels/in_channels)
         self.conv_local = depthwise_separable_conv(nin=in_channels, nout=out_channels, kernels_per_layer=kernels_per_layer,
                                                    kernel_size=3, stride=1, padding=1)
-        self.ln_local = nn.SyncBatchNorm(out_channels)
+        self.ln_local = LayerNorm2d(out_channels)
         self.simple_gate = nn.GELU()  # SimpleGate()
         # self.sca_layer = SimplifiedChannelAttention(out_channels)
         self.conv_final = torch.nn.Conv2d(
@@ -110,28 +110,28 @@ class HalfFourierBlock(nn.Module):
         self.conv_local = nn.Sequential(
             depthwise_separable_conv(nin=in_channels//2,nout=out_channels//2, kernels_per_layer=kernels_per_layer,
                                                    kernel_size=3, stride=1, padding=1),
-            nn.SyncBatchNorm(out_channels // 2),
+            LayerNorm2d(out_channels // 2),
             nn.GELU(),
             depthwise_separable_conv(nin=out_channels // 2, nout=out_channels // 2, kernels_per_layer=1,
                                      kernel_size=3, stride=1, padding=1),
-            nn.SyncBatchNorm(out_channels // 2),
+            LayerNorm2d(out_channels // 2),
             nn.GELU(),
         )
-        # self.ln_local = nn.SyncBatchNorm(out_channels//2)
+        # self.ln_local = LayerNorm2d(out_channels//2)
 
         ### fourier branch, input in_channels//2, output in_channels//2
         self.conv_layer = nn.Sequential(
             depthwise_separable_conv(nin=in_channels + (2 if spectral_pos_encoding else 0),
                                           nout=out_channels, kernels_per_layer=kernels_per_layer,
                                           kernel_size=3, stride=1, padding=1),
-            nn.SyncBatchNorm(out_channels),
+            LayerNorm2d(out_channels),
             nn.GELU(),
             depthwise_separable_conv(nin=out_channels, nout=out_channels, kernels_per_layer=1,
                                      kernel_size=3, stride=1, padding=1),
-            nn.SyncBatchNorm(out_channels),
+            LayerNorm2d(out_channels),
             nn.GELU(),
         )
-        # self.ln = nn.SyncBatchNorm(out_channels)
+        # self.ln = LayerNorm2d(out_channels)
 
         # self.simple_gate = nn.GELU() # SimpleGate()
 

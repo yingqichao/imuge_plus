@@ -1,7 +1,7 @@
 #### indices
-simulated_splicing_indices: [3, 6, 8, 7]
+simulated_splicing_indices: [3, 6, 8]
 simulated_copymove_indices: [0, 2, 4]
-simulated_inpainting_indices: [1, 5]
+simulated_inpainting_indices: [1, 5, 7]
 simulated_copysplicing_indices: []
 
 detector_using_MPF_indices: [2,5,8]

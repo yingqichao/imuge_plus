@@ -133,7 +133,7 @@ class Modified_invISP(BaseModel):
             ### todo: Scheduler
             self.schedulers = []
             for optimizer in self.optimizers:
-                self.schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50000))
+                self.schedulers.append(torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=30000))
 
             ### todo: creating dirs
             self.create_folders_for_the_experiment()
@@ -150,14 +150,14 @@ class Modified_invISP(BaseModel):
     def network_definitions(self):
         pass
 
-    def load_model_wrapper(self,*,folder_name,model_name,network_lists):
+    def load_model_wrapper(self,*,folder_name,model_name,network_lists, strict=True):
         load_detector_storage = self.opt[folder_name]
         model_path = str(self.opt[model_name])  # last time: 10999
         load_models = self.opt[model_name] > 0
         if load_models:
             print(f"loading models: {network_lists}")
             pretrain = load_detector_storage + model_path
-            self.reload(pretrain, network_list=network_lists)
+            self.reload(pretrain, network_list=network_lists, strict=strict)
 
     def feed_data_router(self, batch, mode):
         if mode in [0.0]:
@@ -455,11 +455,17 @@ class Modified_invISP(BaseModel):
                                                                   another_immunized=self.previous_protected)
         elif index in self.opt['simulated_inpainting_indices']: #self.using_splicing():
             ### todo: inpainting
-            # attacked_forward = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
+            ## ideal
+            attacked_forward_ideal = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
+            ## edgeconnect
             modified_crop_out = modified_input*(1-masks)
             image_gray, image_canny = self.get_canny(input=modified_crop_out,masks_GT=masks_GT)
-            attacked_forward = self.inpainting_edgeconnect(forward_image=modified_input,image_gray=image_gray,image_canny=image_canny,
-                                                           masks=masks)
+            attacked_forward_edgeconnect = self.inpainting_edgeconnect(forward_image=modified_input,image_gray=image_gray,image_canny=image_canny,
+                                                           masks=masks_GT)
+            ## mixup
+            beta = np.random.rand()
+            attacked_forward = beta*attacked_forward_ideal+(1-beta)*attacked_forward_edgeconnect
+
         else:
             print(index)
             raise NotImplementedError("Tamper的方法没找到！请检查！")
@@ -469,13 +475,22 @@ class Modified_invISP(BaseModel):
 
         return attacked_forward, masks, masks_GT
 
+    def define_CATNET(self):
+        from CATNet.model import get_model
+        model = get_model().cuda()
+        model = DistributedDataParallel(model,
+                                                 device_ids=[torch.cuda.current_device()],
+                                                 find_unused_parameters=True)
+        return model
+
     def define_restormer(self):
         print("using restormer as testing ISP...")
         from restormer.model_restormer import Restormer
-        self.localizer = Restormer(dim=16, ).cuda()
-        self.localizer = DistributedDataParallel(self.localizer,
+        model = Restormer(dim=16, ).cuda()
+        model = DistributedDataParallel(model,
                                 device_ids=[torch.cuda.current_device()],
                                 find_unused_parameters=True)
+        return model
 
 
     def define_my_own_elastic_as_detector(self):
@@ -558,10 +573,27 @@ class Modified_invISP(BaseModel):
                                                           find_unused_parameters=True)
 
     def define_inpainting_edgeconnect(self):
-        from edgeconnect.main import get_model
+        from edgeconnect.main import get_model, load_config
+        from edgeconnect.src.models import EdgeModel, InpaintingModel
         print("Building edgeconnect...........please wait...")
-        self.edgeconnect_model = get_model()
+        config = load_config(mode=2)
+        self.edge_model = EdgeModel(config)
+        self.inpainting_model = InpaintingModel(config)
+        self.edge_model.load()
+        self.inpainting_model.load()
+        self.edge_model = self.edge_model.cuda()
+        self.inpainting_model = self.inpainting_model.cuda()
+        self.edge_model = DistributedDataParallel(self.edge_model,
+                                                  device_ids=[torch.cuda.current_device()],
+                                                  find_unused_parameters=True)
+        self.inpainting_model = DistributedDataParallel(self.inpainting_model,
+                                                        device_ids=[torch.cuda.current_device()],
+                                                        find_unused_parameters=True)
 
+        # self.edgeconnect_model = get_model()
+        # self.edgeconnect_model = DistributedDataParallel(self.edgeconnect_model,
+        #                                               device_ids=[torch.cuda.current_device()],
+        #                                               find_unused_parameters=True)
 
 
     ####################################################################################################
@@ -908,13 +940,13 @@ class Modified_invISP(BaseModel):
 
     
 
-    def reload(self, pretrain, network_list=['netG', 'localizer']):
+    def reload(self, pretrain, network_list=['netG', 'localizer'], strict=True):
         if 'netG' in network_list:
             load_path_G = pretrain + "_netG.pth"
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.netG, strict=True)
+                    self.load_network(load_path_G, self.netG, strict=strict)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -923,7 +955,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.KD_JPEG, strict=True)
+                    self.load_network(load_path_G, self.KD_JPEG, strict=strict)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -932,7 +964,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.discriminator_mask, strict=False)
+                    self.load_network(load_path_G, self.discriminator_mask, strict=strict)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -941,7 +973,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.discriminator, strict=False)
+                    self.load_network(load_path_G, self.discriminator, strict=strict)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -950,7 +982,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.qf_predict_network, strict=True)
+                    self.load_network(load_path_G, self.qf_predict_network, strict=strict)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -959,7 +991,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.localizer, strict=True)
+                    self.load_network(load_path_G, self.localizer, strict=strict)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
@@ -968,7 +1000,7 @@ class Modified_invISP(BaseModel):
             if load_path_G is not None:
                 print('Loading model for class [{:s}] ...'.format(load_path_G))
                 if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.generator, strict=True)
+                    self.load_network(load_path_G, self.generator, strict=strict)
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 

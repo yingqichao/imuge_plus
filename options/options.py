@@ -59,6 +59,9 @@ def parse(*, opt_path,
         if "load_customized_models" not in opt:
             print("using default value as load_customized_models: ISP_alone")
             opt['load_customized_models'] = "ISP_alone"
+        if "restart_step" not in opt:
+            print("using default value as restart_step: 1000")
+            opt['restart_step'] = 1000
     elif 'PAMI' in opt_path:
         pass
 

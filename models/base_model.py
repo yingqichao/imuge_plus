@@ -398,8 +398,15 @@ class BaseModel():
         return  forward_image * (1 - masks) + gt_rgb * masks
 
     def inpainting_edgeconnect(self, *, forward_image, image_gray, image_canny, masks):
-        items = (forward_image, image_gray, image_canny, masks)
-        result = self.edgeconnect_model.test(items)
+        # items = (forward_image, image_gray, image_canny, masks)
+
+        self.edge_model.eval()
+        self.inpainting_model.eval()
+        edges = self.edge_model(image_gray, image_canny, masks).detach()
+        outputs = self.inpainting_model(forward_image, edges, masks)
+        result = (outputs * masks) + forward_image * (1 - masks)
+
+        # result = self.edgeconnect_model(items)
 
         return forward_image * (1 - masks) + result * masks
 

@@ -215,9 +215,9 @@ def main(args,opt):
                     print(info_str)
                     start = time.time()
                     ## refresh the counter to see if the model behaves abnormaly.
-                    # if valid_idx>=restart_step:
-                    #     running_list = [0.0] * len(variables_list)
-                    #     valid_idx = 0
+                    if valid_idx>=restart_step:
+                        running_list = [0.0] * len(variables_list)
+                        valid_idx = 0
 
                 current_step += 1
                 # if rank <= 0:
