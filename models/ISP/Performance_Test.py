@@ -79,57 +79,24 @@ class Performance_Test(Modified_invISP):
         ### detector
         self.define_localizer()
 
+        ## inpainting model
+        self.define_inpainting_edgeconnect()
+        self.define_inpainting_ZITS()
+        self.define_inpainting_lama()
+
     def define_localizer(self):
 
         which_model = self.opt['using_which_model_for_test']
         if 'OSN' in which_model:
-            from ImageForensicsOSN.test import get_model
-            # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
-            # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
-            #                                     find_unused_parameters=True)
-            self.localizer = get_model('/groupshare/ISP_results/models/').cuda()
-            self.localizer = DistributedDataParallel(self.localizer,
-                                                     device_ids=[torch.cuda.current_device()],
-                                                     find_unused_parameters=True)
+            self.localizer = self.define_OSN_as_detector()
         elif 'CAT' in which_model:
-            from CATNet.model import get_model
-            self.localizer = get_model().cuda()
-            self.localizer = DistributedDataParallel(self.localizer,
-                                                     device_ids=[torch.cuda.current_device()],
-                                                     find_unused_parameters=True)
+            self.localizer = self.define_CATNET()
         elif 'MVSS' in which_model:
-            model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
-            from MVSS.models.mvssnet import get_mvss
-            self.localizer = get_mvss(
-                backbone='resnet50',
-                pretrained_base=True,
-                nclass=1,
-                sobel=True,
-                constrain=True,
-                n_input=3
-            )
-            ckp = torch.load(model_path, map_location='cpu')
-            self.localizer.load_state_dict(ckp, strict=True)
-            self.localizer = self.localizer.cuda()
-            self.localizer = DistributedDataParallel(self.localizer,
-                                                     device_ids=[torch.cuda.current_device()],
-                                                     find_unused_parameters=True)
+            self.localizer = self.define_MVSS_as_detector()
         elif 'Mantra' in which_model:
-            model_path = './MantraNetv4.pt'
-            self.localizer = pre_trained_model(model_path).cuda()
-            self.localizer = DistributedDataParallel(self.localizer,
-                                                     device_ids=[torch.cuda.current_device()],
-                                                     find_unused_parameters=True)
+            self.localizer = self.define_MantraNet_as_detector()
         elif 'Resfcn' in which_model:
-            print('resfcn here')
-            from MVSS.models.resfcn import ResFCN
-            discriminator_mask = ResFCN().cuda()
-            checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
-            discriminator_mask.load_state_dict(checkpoint, strict=True)
-            self.localizer = discriminator_mask
-            self.localizer = DistributedDataParallel(self.localizer,
-                                                     device_ids=[torch.cuda.current_device()],
-                                                     find_unused_parameters=True)
+            self.localizer = self.define_resfcn_as_detector()
         elif 'MPF' in which_model:
             print("using my_own_elastic as localizer.")
             self.localizer = self.define_my_own_elastic_as_detector()

@@ -31,7 +31,6 @@ import yaml
 # # get all coco class labels
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
-from MantraNet.mantranet import pre_trained_model
 # from .networks import SPADE_UNet
 from lama_models.HWMNet import HWMNet
 from lama_models.my_own_elastic_dtcwt import my_own_elastic
@@ -549,6 +548,15 @@ class Modified_invISP(BaseModel):
                                                           find_unused_parameters=True)
         return model
 
+    def define_MantraNet_as_detector(self):
+        from MantraNet.mantranet import pre_trained_model
+        model_path = './MantraNetv4.pt'
+        model = pre_trained_model(model_path).cuda()
+        model = DistributedDataParallel(model,
+                                                 device_ids=[torch.cuda.current_device()],
+                                                 find_unused_parameters=True)
+        return model
+
     def define_MVSS_as_detector(self):
         model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
         from MVSS.models.mvssnet import get_mvss
@@ -616,6 +624,8 @@ class Modified_invISP(BaseModel):
         from MVSS.models.resfcn import ResFCN
         print("Building ResFCN...........please wait...")
         model = ResFCN().cuda()
+        checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
+        model.load_state_dict(checkpoint, strict=True)
         model = DistributedDataParallel(model,
                                                           device_ids=[torch.cuda.current_device()],
                                                           find_unused_parameters=True)
