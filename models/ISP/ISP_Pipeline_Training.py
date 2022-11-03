@@ -474,10 +474,7 @@ class ISP_Pipeline_Training(Modified_invISP):
         return logs, debug_logs, did_val
 
     def detecting_forgery(self, *, attacked_image, masks_GT, logs):
-        pred_resfcn = self.discriminator_mask(attacked_image, None)
-        pred_resfcn = Functional.interpolate(pred_resfcn, size=(512, 512), mode='bilinear')
-        pred_resfcn = Functional.softmax(pred_resfcn, dim=1)
-        _, pred_resfcn = torch.split(pred_resfcn, 1, dim=1)
+        pred_resfcn = self.CAT_predict(model=self.discriminator_mask,attacked_image=attacked_image)
         CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
         l1_resfcn = 0
 

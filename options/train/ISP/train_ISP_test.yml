@@ -13,19 +13,13 @@ consider_robost: true
 include_isp_inference: true
 conduct_augmentation: true
 train_inpainting_surrogate_model: false
-psnr_thresh: 36
-CE_hyper_param: 0.02
-perceptual_hyper_param: 0.01
-L1_hyper_param: 1
-style_hyper_param: 10
-raw_classes: 5
 
 ### UNet models #########
 #load_localizer_models: 13999
 #load_RAW_models: 2999 # 13999
 #load_ISP_models: 20999
 ### UNet models #########
-gpu_ids: [0, ]
+gpu_ids: [4, ]
 load_discriminator_models: 18999
 load_RAW_models: 18999 # 13999
 load_ISP_models: 43999
@@ -41,6 +35,13 @@ task_name_ISP_model: my_own_elastic
 activate_OSN: false
 test_baseline: false
 test_restormer: 0 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixisp训练版 4代表传统isp单独版
+
+## inpainting model
+# Hint:
+#  zits_as_inpainting: [ 0,3 ]
+#  edgeconnect_as_inpainting: [ 1,4 ]
+#  lama_as_inpainting: [ 2,5 ]
+which_model_for_inpainting: 0
 
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/ # or finished_MVSS. Don't forget the last /!

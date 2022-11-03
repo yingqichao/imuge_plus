@@ -263,20 +263,23 @@ class Performance_Test(Modified_invISP):
             self.previous_protected = gt_rgb
 
             ans = self.index_helper_for_testing(attack_indices_amounts=[
-                    self.amount_of_inpainting, self.amount_of_augmentation
+                    # self.amount_of_inpainting,
+                    self.amount_of_tampering
                 ],
                 indices_you_want=[
-                    self.opt['edgeconnect_as_inpainting'],
-                    self.opt['simulated_contrast'],
+                    # self.opt['edgeconnect_as_inpainting'],
+                    self.opt['simulated_inpainting_indices'],
                 ]
             )
+
+            self.global_step_for_inpainting = self.opt['which_model_for_inpainting']
 
 
             #####  conduct tampering  ######
             test_input, masks, mask_GT = self.tampering_RAW(
                 masks=masks, masks_GT=masks_GT,
                 modified_input=non_tampered_image, percent_range=percent_range,
-                index=self.opt['inference_tamper_index'],
+                index=ans, #self.opt['inference_tamper_index'],
                 gt_rgb=gt_rgb
             )
 

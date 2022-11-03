@@ -394,9 +394,6 @@ class BaseModel():
     def splicing(self, *, forward_image, masks):
         return  forward_image * (1 - masks) + (self.previous_previous_images) * masks
 
-    def inpainting_for_RAW(self, *, forward_image, masks, gt_rgb):
-        return  forward_image * (1 - masks) + gt_rgb * masks
-
     def inpainting_for_PAMI(self, *, forward_image, masks, modified_canny):
         with torch.no_grad():
             reversed_stuff, reverse_feature = self.netG(

@@ -80,6 +80,7 @@ class Modified_invISP(BaseModel):
         self.default_RAW_to_RAW_networks = ['KD_JPEG']
         self.default_detection_networks_for_training = ['discriminator_mask','discriminator','localizer']
         self.default_customized_networks = ['localizer']
+        self.global_step_for_inpainting = 0
 
         ### todo: constants
         self.amount_of_augmentation = len(
@@ -361,7 +362,7 @@ class Modified_invISP(BaseModel):
 
     def CAT_predict(self, *, model, attacked_image):
         pred_resfcn = model(attacked_image.detach().contiguous(), None)
-        pred_resfcn = Functional.interpolate(pred_resfcn, size=(512, 512), mode='bilinear')
+        pred_resfcn = Functional.interpolate(pred_resfcn, size=(self.width_height, self.width_height), mode='bilinear')
         pred_resfcn = Functional.softmax(pred_resfcn, dim=1)
         _, pred_resfcn = torch.split(pred_resfcn, 1, dim=1)
 
@@ -496,11 +497,15 @@ class Modified_invISP(BaseModel):
                                                                   another_immunized=self.previous_protected)
         elif index in self.opt['simulated_inpainting_indices']: #self.using_splicing():
             ### todo: inpainting
-            ## ideal
-            attacked_forward_ideal = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
-            self.global_step = 1
-            use_which_inpainting = self.global_step % self.amount_of_inpainting
-            if use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
+            ## note! self.global_step_for_inpainting, not index, decides which inpainting model will be used
+
+            use_which_inpainting = self.global_step_for_inpainting % self.amount_of_inpainting
+            if use_which_inpainting in self.opt['ideal_as_inpainting']:
+
+                ## ideal
+                attacked_forward_edgeconnect = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
+
+            elif use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
                 ## edgeconnect
                 attacked_forward_edgeconnect = self.inpainting_edgeconnect(forward_image=modified_input, masks=masks_GT)
             elif use_which_inpainting in self.opt['zits_as_inpainting']:
@@ -512,9 +517,8 @@ class Modified_invISP(BaseModel):
                 attacked_forward_edgeconnect = self.inpainting_lama(forward_image=modified_input,
                                                                     masks=masks_GT)
 
-            ## mixup
-            beta = np.random.rand()
-            attacked_forward = beta*attacked_forward_ideal+(1-beta)*attacked_forward_edgeconnect
+            attacked_forward = attacked_forward_edgeconnect
+            self.global_step_for_inpainting += 1
 
         else:
             print(index)
@@ -728,6 +732,8 @@ class Modified_invISP(BaseModel):
 
         return forward_image * (1 - masks) + result * masks
 
+    def inpainting_for_RAW(self, *, forward_image, masks, gt_rgb):
+        return forward_image * (1 - masks) + gt_rgb * masks
 
     def inpainting_ZITS(self, *, forward_image, masks):
         from ZITSinpainting.single_image_test import load_images_for_test, wf_inference_test, load_masked_position_encoding
@@ -739,7 +745,7 @@ class Modified_invISP(BaseModel):
             forward_image.clone(),
             size=[256, 256],
             mode='bilinear')
-        image_gray, image_canny = self.get_canny(input=image_256, sigma=3)
+        image_gray, image_canny = self.get_canny(input=image_256, sigma=sigma)
 
         rel_pos, abs_pos, direct = None, None, None #torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long()
         for i in range(forward_image.shape[0]):
@@ -1014,7 +1020,9 @@ class Modified_invISP(BaseModel):
             index_for_postprocessing = 7
         else:
             logs["cropped"] = False
-            percent_range = [0, 0.3]
+            percent_range = [0, 0.3] if self.global_step % self.amount_of_tampering in \
+                                        (self.opt['simulated_copymove_indices']+self.opt['simulated_inpainting_indices']) \
+                else [0, 0.25]
             index_for_postprocessing = self.global_step
 
         quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
