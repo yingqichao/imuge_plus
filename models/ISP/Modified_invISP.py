@@ -278,39 +278,35 @@ class Modified_invISP(BaseModel):
         logs['ERROR'] = error_l1
 
         #########################   Image Manipulation Detection Network (Downstream task)   ###########################
-        if "localizer" in self.opt['using_which_model_for_test']:
-            if 'CAT' in self.opt['using_which_model_for_test']:
-                pred_resfcn = target_model(attacked_image.detach().contiguous(), None)
-                import torch.nn.functional as F
-                pred_resfcn = F.interpolate(pred_resfcn, size=(512, 512), mode='bilinear')
-                pred_resfcn = F.softmax(pred_resfcn, dim=1)
-                _, pred_resfcn = torch.split(pred_resfcn, 1, dim=1)
-            elif 'MVSS' in self.opt['using_which_model_for_test']:
-                _, pred_resfcn = target_model(attacked_image.detach().contiguous())
-                pred_resfcn = torch.sigmoid(pred_resfcn)
-            elif 'Resfcn' in self.opt['using_which_model_for_test'] \
-                    or 'Mantra' in self.opt['using_which_model_for_test']:
-                pred_resfcn = target_model(attacked_image.detach().contiguous())
-                pred_resfcn = torch.sigmoid(pred_resfcn)
-            else:
-                pred_resfcn = target_model(attacked_image.detach().contiguous())
+        # if "localizer" in self.opt['using_which_model_for_test']:
+        if 'CAT' in self.opt['using_which_model_for_test']:
+            _, pred_resfcn = self.CAT_predict(model=target_model,
+                                              attacked_image=attacked_image.detach().contiguous())
+
+        elif 'MVSS' in self.opt['using_which_model_for_test']:
+            _, pred_resfcn = self.MVSS_predict(model=target_model,
+                                              attacked_image=attacked_image.detach().contiguous())
+
+        elif 'Resfcn' in self.opt['using_which_model_for_test'] \
+                or 'Mantra' in self.opt['using_which_model_for_test']:
+            pred_resfcn = self.predict_with_sigmoid_eg_resfcn_mantra(model=target_model,
+                                              attacked_image=attacked_image.detach().contiguous())
+
+        # else:
+        elif "MPF" in self.opt['which_model_for_detector']:
+            _, pred_resfcn = self.MPF_predict(model=target_model,
+                                           masks_GT=masks_GT,
+                                           attacked_image=attacked_image.detach().contiguous())
+
+        # elif "MVSS" in self.opt['which_model_for_detector']:
+        #     _, pred_resfcn = target_model(attacked_image.detach().contiguous())
+        #     pred_resfcn = torch.sigmoid(pred_resfcn)
+        elif "OSN" in self.opt['which_model_for_detector']:
+            pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
+                                                       attacked_image=attacked_image.detach().contiguous())
         else:
-            if "MPF" in self.opt['which_model_for_detector']:
-                attacked_cannied, _ = self.get_canny(attacked_image, masks_GT)
-
-                pred_resfcn = target_model(attacked_image.detach().contiguous(), canny=attacked_cannied)
-                if isinstance(pred_resfcn, (tuple)):
-                    # pred_resfcn,  _ = pred_resfcn
-                    _, pred_resfcn = pred_resfcn
-                pred_resfcn = torch.sigmoid(pred_resfcn)
-
-            elif "MVSS" in self.opt['which_model_for_detector']:
-                _, pred_resfcn = target_model(attacked_image.detach().contiguous())
-                pred_resfcn = torch.sigmoid(pred_resfcn)
-            elif "OSN" in self.opt['which_model_for_detector']:
-                pred_resfcn = target_model(attacked_image.detach().contiguous())
-            else:
-                raise NotImplementedError("Detector名字不对，请检查！")
+            pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
+                                                       attacked_image=attacked_image.detach().contiguous())
 
 
 
@@ -361,6 +357,41 @@ class Modified_invISP(BaseModel):
 
         return logs, (pred_resfcn), False
 
+    def CAT_predict(self, *, model, attacked_image):
+        pred_resfcn = model(attacked_image.detach().contiguous(), None)
+        pred_resfcn = Functional.interpolate(pred_resfcn, size=(512, 512), mode='bilinear')
+        pred_resfcn = Functional.softmax(pred_resfcn, dim=1)
+        _, pred_resfcn = torch.split(pred_resfcn, 1, dim=1)
+
+        return None, pred_resfcn
+
+    def MVSS_predict(self, *, model, attacked_image):
+        _, pred_resfcn = model(attacked_image)
+        pred_resfcn = torch.sigmoid(pred_resfcn)
+
+        return None, pred_resfcn
+
+    def predict_with_sigmoid_eg_resfcn_mantra(self, *, model, attacked_image):
+        pred_resfcn = model(attacked_image)
+        pred_resfcn = torch.sigmoid(pred_resfcn)
+
+        return pred_resfcn
+
+    def predict_with_NO_sigmoid(self, *, model, attacked_image):
+        pred_resfcn = model(attacked_image)
+
+        return pred_resfcn
+
+    def MPF_predict(self,  *, model, masks_GT, attacked_image):
+        attacked_cannied, _ = self.get_canny(attacked_image, masks_GT)
+
+        pred_resfcn = model(attacked_image, canny=attacked_cannied)
+        if isinstance(pred_resfcn, (tuple)):
+            # pred_resfcn,  _ = pred_resfcn
+            _, pred_resfcn = pred_resfcn
+        pred_resfcn = torch.sigmoid(pred_resfcn)
+
+        return pred_resfcn
 
     ####################################################################################################
     # todo: MODE == 2
@@ -469,10 +500,7 @@ class Modified_invISP(BaseModel):
             use_which_inpainting = self.global_step % self.amount_of_inpainting
             if use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
                 ## edgeconnect
-                modified_crop_out = modified_input*(1-masks)
-                image_gray, image_canny = self.get_canny(input=modified_crop_out,masks_GT=masks_GT)
-                attacked_forward_edgeconnect = self.inpainting_edgeconnect(forward_image=modified_input,image_gray=image_gray,image_canny=image_canny,
-                                                               masks=masks_GT)
+                attacked_forward_edgeconnect = self.inpainting_edgeconnect(forward_image=modified_input, masks=masks_GT)
             elif use_which_inpainting in self.opt['zits_as_inpainting']:
                 ## zits
                 attacked_forward_edgeconnect = self.inpainting_ZITS(forward_image=modified_input,
@@ -671,8 +699,11 @@ class Modified_invISP(BaseModel):
         result = batch['inpainted']
         return forward_image * (1 - masks) + result * masks
 
-    def inpainting_edgeconnect(self, *, forward_image, image_gray, image_canny, masks):
+    def inpainting_edgeconnect(self, *, forward_image, masks, image_gray=None, image_canny=None):
         # items = (forward_image, image_gray, image_canny, masks)
+        if image_gray is None:
+            modified_crop_out = forward_image * (1 - masks)
+            image_gray, image_canny = self.get_canny(input=modified_crop_out, masks_GT=masks)
 
         self.edge_model.eval()
         self.inpainting_model.eval()
