@@ -4,9 +4,9 @@ import os
 import sys
 import torch
 from datasets.dataset_TSR import ContinuousEdgeLineDatasetMask, ContinuousEdgeLineDatasetMaskFinetune
-from src.TSR_trainer import TrainerConfig, TrainerForContinuousEdgeLine, TrainerForEdgeLineFinetune
-from src.models.TSR_model import EdgeLineGPT256RelBCE, EdgeLineGPTConfig
-from src.utils import set_seed
+from ZITSinpainting.src.TSR_trainer import TrainerConfig, TrainerForContinuousEdgeLine, TrainerForEdgeLineFinetune
+from ZITSinpainting.src.models.TSR_model import EdgeLineGPT256RelBCE, EdgeLineGPTConfig
+from ZITSinpainting.src.utils import set_seed
 
 
 def main_worker(rank, opts):

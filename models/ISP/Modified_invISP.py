@@ -13,6 +13,8 @@ import torch.nn.functional as Functional
 import torchvision.transforms.functional as F
 from torch.nn.parallel import DistributedDataParallel
 from data.pipeline import isp_tensor2image
+from omegaconf import OmegaConf
+import yaml
 # from data.pipeline import rawpy_tensor2image
 # print("Starting MATLAB engine...")
 # engine = matlab.engine.start_matlab()
@@ -91,6 +93,12 @@ class Modified_invISP(BaseModel):
             self.opt['detector_using_MPF_indices'] +
             self.opt['detector_using_MVSS_indices'] +
             self.opt['detector_using_OSN_indices']
+        )
+
+        self.amount_of_inpainting = len(
+            self.opt['zits_as_inpainting'] +
+            self.opt['edgeconnect_as_inpainting'] +
+            self.opt['lama_as_inpainting']
         )
 
         self.mode_dict = {
@@ -457,11 +465,23 @@ class Modified_invISP(BaseModel):
             ### todo: inpainting
             ## ideal
             attacked_forward_ideal = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
-            ## edgeconnect
-            modified_crop_out = modified_input*(1-masks)
-            image_gray, image_canny = self.get_canny(input=modified_crop_out,masks_GT=masks_GT)
-            attacked_forward_edgeconnect = self.inpainting_edgeconnect(forward_image=modified_input,image_gray=image_gray,image_canny=image_canny,
-                                                           masks=masks_GT)
+
+            use_which_inpainting = self.global_step % self.amount_of_inpainting
+            if use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
+                ## edgeconnect
+                modified_crop_out = modified_input*(1-masks)
+                image_gray, image_canny = self.get_canny(input=modified_crop_out,masks_GT=masks_GT)
+                attacked_forward_edgeconnect = self.inpainting_edgeconnect(forward_image=modified_input,image_gray=image_gray,image_canny=image_canny,
+                                                               masks=masks_GT)
+            elif use_which_inpainting in self.opt['zits_as_inpainting']:
+                ## zits
+                attacked_forward_edgeconnect = self.inpainting_ZITS(forward_image=modified_input,
+                                                                           masks=masks_GT)
+            else: #if use_which_inpainting in self.opt['lama_as_inpainting']:
+                ## lama
+                attacked_forward_edgeconnect = self.inpainting_lama(forward_image=modified_input,
+                                                                    masks=masks_GT)
+
             ## mixup
             beta = np.random.rand()
             attacked_forward = beta*attacked_forward_ideal+(1-beta)*attacked_forward_edgeconnect
@@ -567,10 +587,35 @@ class Modified_invISP(BaseModel):
     def define_resfcn_as_detector(self):
         from MVSS.models.resfcn import ResFCN
         print("Building ResFCN...........please wait...")
-        self.discriminator_mask = ResFCN().cuda()
-        self.discriminator_mask = DistributedDataParallel(self.discriminator_mask,
+        model = ResFCN().cuda()
+        model = DistributedDataParallel(model,
                                                           device_ids=[torch.cuda.current_device()],
                                                           find_unused_parameters=True)
+        return model
+
+    def define_inpainting_ZITS(self):
+        from ZITSinpainting.src.FTR_trainer import ZITSModel
+        from shutil import copyfile
+        from ZITSinpainting.src.config import Config
+        from PIL import Image
+        model_path = '/groupshare/ckpt/zits_places2_hr'
+        config_path = os.path.join(model_path, 'config.yml')
+
+        os.makedirs(model_path, exist_ok=True)
+        if not os.path.exists(config_path):
+            copyfile('./ZITSinpainting/config_list/config_ZITS_HR_places2.yml', config_path)
+
+        # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+        config = Config(config_path)
+        config.MODE = 1
+        # config.GPUS = 1
+        # config.GPU_ids = '0'
+        # config.world_size = 1
+        self.ZITS_model = ZITSModel(config=config, test=True).cuda()
+        self.ZITS_model = DistributedDataParallel(self.ZITS_model,
+                                                  device_ids=[torch.cuda.current_device()],
+                                                  find_unused_parameters=True)
+        self.ZITS_model.eval()
 
     def define_inpainting_edgeconnect(self):
         from edgeconnect.main import get_model, load_config
@@ -589,11 +634,107 @@ class Modified_invISP(BaseModel):
         self.inpainting_model = DistributedDataParallel(self.inpainting_model,
                                                         device_ids=[torch.cuda.current_device()],
                                                         find_unused_parameters=True)
-
+        self.edge_model.eval()
+        self.inpainting_model.eval()
         # self.edgeconnect_model = get_model()
         # self.edgeconnect_model = DistributedDataParallel(self.edgeconnect_model,
         #                                               device_ids=[torch.cuda.current_device()],
         #                                               find_unused_parameters=True)
+
+
+    def define_inpainting_lama(self):
+        from saicinpainting.training.trainers import load_checkpoint
+        checkpoint_path = './big-lama/models/best.ckpt'
+        train_config_path = './big-lama/config.yaml'
+        with open(train_config_path, 'r') as f:
+            train_config = OmegaConf.create(yaml.safe_load(f))
+
+        train_config.training_model.predict_only = True
+        train_config.visualizer.kind = 'noop'
+
+        # out_ext = predict_config.get('out_ext', '.png')
+
+        self.lama_model = load_checkpoint(train_config, checkpoint_path, strict=False, map_location='cpu')
+        self.lama_model.freeze()
+        # if not refine == False:
+        # if not predict_config.get('refine', False):
+        self.lama_model = self.lama_model.cuda()
+
+
+    def inpainting_lama(self, *, forward_image, masks):
+        batch = {
+            'image': forward_image,
+            'mask': masks
+        }
+        # batch['mask'] = (batch['mask'] > 0) * 1
+        batch = self.lama_model(batch)
+        result = batch['inpainted']
+        return forward_image * (1 - masks) + result * masks
+
+    def inpainting_edgeconnect(self, *, forward_image, image_gray, image_canny, masks):
+        # items = (forward_image, image_gray, image_canny, masks)
+
+        self.edge_model.eval()
+        self.inpainting_model.eval()
+        edges = self.edge_model(image_gray, image_canny, masks).detach()
+        outputs = self.inpainting_model(forward_image, edges, masks)
+        result = (outputs * masks) + forward_image * (1 - masks)
+
+        # result = self.edgeconnect_model(items)
+
+        return forward_image * (1 - masks) + result * masks
+
+
+    def inpainting_ZITS(self, *, forward_image, masks):
+        from ZITSinpainting.single_image_test import load_images_for_test, wf_inference_test, load_masked_position_encoding
+        sigma = 3.0
+        valid_th = 0.85
+        # items = load_images_for_test(src_img, mask_img, sigma=sigma)
+        ### load_image must be customized
+        image_256 = Functional.interpolate(
+            forward_image.clone(),
+            size=[256, 256],
+            mode='bilinear')
+        image_gray, image_canny = self.get_canny(input=image_256, sigma=3)
+
+        rel_pos, abs_pos, direct = None, None, None #torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long()
+        for i in range(forward_image.shape[0]):
+            mask_numpy = masks[i,0].mul(255).add_(0.5).clamp_(0, 255).contiguous().to('cpu', torch.uint8).numpy()
+            rel_pos_single, abs_pos_single, direct_single = load_masked_position_encoding(mask_numpy)
+            rel_pos_single = torch.LongTensor(rel_pos_single).unsqueeze(0).cuda()
+            abs_pos_single = torch.LongTensor(abs_pos_single).unsqueeze(0).cuda()
+            direct_single = torch.LongTensor(direct_single).unsqueeze(0).cuda()
+            rel_pos = rel_pos_single if rel_pos is None else torch.cat([rel_pos,rel_pos_single],dim=0)
+            abs_pos = abs_pos_single if abs_pos is None else torch.cat([abs_pos, abs_pos_single], dim=0)
+            direct = direct_single if direct is None else torch.cat([direct, direct_single], dim=0)
+
+        batch = dict()
+        batch['image'] = forward_image
+        batch['img_256'] = image_256.clone()
+        batch['mask'] = masks
+        batch['mask_256'] = torch.where(Functional.interpolate(
+            masks.clone(),
+            size=[256, 256],
+            mode='bilinear')>0, 1.0, 0.0).cuda()
+        batch['mask_512'] = masks.clone()
+        batch['edge_256'] = image_canny
+        batch['img_512'] = forward_image.clone()
+        batch['rel_pos'] = rel_pos
+        batch['abs_pos'] = abs_pos
+        batch['direct'] = direct
+        batch['h'] = forward_image.shape[2]
+        batch['w'] = forward_image.shape[3]
+
+        line = wf_inference_test(self.ZITS_model.module.wf, batch['img_512'], h=256, w=256, masks=batch['mask_512'],
+                                 valid_th=valid_th, mask_th=valid_th)
+        batch['line_256'] = line
+
+        # for k in batch:
+        #     if type(batch[k]) is torch.Tensor:
+        #         batch[k] = batch[k].cuda()
+        merged_image = self.ZITS_model(batch)
+
+        return merged_image*masks+forward_image*(1-masks)
 
 
     ####################################################################################################
@@ -808,7 +949,7 @@ class Modified_invISP(BaseModel):
 
         return modified_input_generator, ISP_loss
 
-    def standard_attack_layer(self, *, modified_input, gt_rgb, tamper_index=None, logs=None):
+    def standard_attack_layer(self, *, modified_input, gt_rgb, logs, tamper_index=None):
         ##############    cropping   ###################################################################################
 
         ## settings for attack

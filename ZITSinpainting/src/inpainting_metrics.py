@@ -11,7 +11,7 @@ from torch.autograd import Variable
 from torch.nn.functional import adaptive_avg_pool2d
 from tqdm import tqdm
 
-from src.models.inception import InceptionV3
+from ZITSinpainting.src.models.inception import InceptionV3
 import torch.nn as nn
 import lpips
 

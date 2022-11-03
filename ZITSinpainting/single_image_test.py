@@ -7,15 +7,15 @@ import cv2
 import imageio
 import numpy as np
 import torch
-from src.lsm_hawp.detector import WireframeDetector
-from src.FTR_trainer import ZITS
-from src.config import Config
+from ZITSinpainting.src.lsm_hawp.detector import WireframeDetector
+from ZITSinpainting.src.FTR_trainer import ZITS
+from ZITSinpainting.src.config import Config
 from skimage.color import rgb2gray
 import torchvision.transforms.functional as FF
 import torch.nn.functional as F
 from skimage.feature import canny
 import skimage
-from src.utils import stitch_images, SampleEdgeLineLogits
+from ZITSinpainting.src.utils import stitch_images, SampleEdgeLineLogits
 
 
 def load_masked_position_encoding(mask):
@@ -162,8 +162,8 @@ def to_device(data, device):
 
 
 def wf_inference_test(wf, images, h, w, masks, obj_remove=False, valid_th=0.925, mask_th=0.925):
-    lcnn_mean = torch.tensor([109.730, 103.832, 98.681]).to(0).reshape(1, 3, 1, 1)
-    lcnn_std = torch.tensor([22.275, 22.124, 23.229]).to(0).reshape(1, 3, 1, 1)
+    lcnn_mean = torch.tensor([109.730, 103.832, 98.681]).reshape(1, 3, 1, 1).cuda()
+    lcnn_std = torch.tensor([22.275, 22.124, 23.229]).reshape(1, 3, 1, 1).cuda()
     with torch.no_grad():
         images = images * 255.
         origin_masks = masks
@@ -227,7 +227,7 @@ def wf_inference_test(wf, images, h, w, masks, obj_remove=False, valid_th=0.925,
             lines_tensor.append(to_tensor(lmap).unsqueeze(0))
 
         lines_tensor = torch.cat(lines_tensor, dim=0)
-    return lines_tensor.detach().to(0)
+    return lines_tensor.detach().cuda()
 
 
 def test(model, wf, img_path, mask_path, save_path, valid_th, sigma256=3.0):
@@ -240,7 +240,7 @@ def test(model, wf, img_path, mask_path, save_path, valid_th, sigma256=3.0):
     with torch.no_grad():
         for k in items:
             if type(items[k]) is torch.Tensor:
-                items[k] = items[k].to(0)
+                items[k] = items[k].cuda()
         edge_pred, line_pred = SampleEdgeLineLogits(model.inpaint_model.transformer,
                                                     context=[items['img_256'], items['edge_256'], items['line_256']],
                                                     mask=items['mask_256'].clone(), iterations=5,
@@ -364,7 +364,6 @@ def test_before():
     # load hawp
     print("load HAWP")
     wf = WireframeDetector(is_cuda=True)
-    wf = wf.to(0)
     wf.load_state_dict(torch.load('./ckpt/best_lsm_hawp.pth', map_location='cpu')['model'])
     wf.eval()
 
@@ -389,10 +388,10 @@ if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     config = Config(config_path)
     config.MODE = 1
-    config.GPUS = 1
-    config.GPU_ids = '0'
+    # config.GPUS = 1
+    # config.GPU_ids = '0'
     # config.world_size = 1
-    model = ZITSModel(config, 0, 0, True)
+    model = ZITSModel(config=config, test=True)
     model.eval()
 
     # start test
@@ -407,7 +406,7 @@ if __name__ == '__main__':
 
     for k in items:
         if type(items[k]) is torch.Tensor:
-            items[k] = items[k].to(0)
+            items[k] = items[k].cuda()
     merged_image = model(items)
     result = postprocess(merged_image).cpu().numpy()
     result = result[0].astype(np.uint8)

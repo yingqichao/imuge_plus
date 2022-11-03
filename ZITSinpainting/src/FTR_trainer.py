@@ -7,24 +7,22 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 from ZITSinpainting.datasets.dataset_FTR import *
-from src.models.FTR_model import *
-from src.lsm_hawp.detector import WireframeDetector
+from ZITSinpainting.src.models.FTR_model import *
+from ZITSinpainting.src.lsm_hawp.detector import WireframeDetector
 from .inpainting_metrics import get_inpainting_metrics
 from .utils import Progbar, create_dir, stitch_images, SampleEdgeLineLogits
 
 
 class LaMa:
-    def __init__(self, config, gpu, rank, test=False):
+    def __init__(self, config, test=False):
         self.config = config
-        self.device = gpu
-        self.global_rank = rank
-
+        self.global_rank = 0
         self.model_name = 'inpaint'
 
         kwargs = dict(config.training_model)
         kwargs.pop('kind')
 
-        self.inpaint_model = LaMaInpaintingTrainingModule(config, gpu=gpu, rank=rank, test=test, **kwargs).to(gpu)
+        self.inpaint_model = LaMaInpaintingTrainingModule(config, test=test, **kwargs)
 
         self.train_dataset = ImgDataset(config.TRAIN_FLIST, config.INPUT_SIZE, config.MASK_RATE, config.TRAIN_MASK_FLIST,
                                         augment=True, training=True, test_mask_path=None)
@@ -81,8 +79,8 @@ class LaMa:
             for _, items in enumerate(train_loader):
                 self.inpaint_model.train()
 
-                items['image'] = items['image'].to(self.device)
-                items['mask'] = items['mask'].to(self.device)
+                items['image'] = items['image'].cuda()
+                items['mask'] = items['mask'].cuda()
 
                 # train
                 outputs, gen_loss, dis_loss, logs, batch = self.inpaint_model.process(items)
@@ -167,8 +165,8 @@ class LaMa:
         with torch.no_grad():
             for items in tqdm(val_loader):
                 iteration += 1
-                items['image'] = items['image'].to(self.device)
-                items['mask'] = items['mask'].to(self.device)
+                items['image'] = items['image'].cuda()
+                items['mask'] = items['mask'].cuda()
                 b, _, _, _ = items['image'].size()
 
                 # inpaint model
@@ -200,8 +198,8 @@ class LaMa:
         self.inpaint_model.eval()
         with torch.no_grad():
             items = next(self.sample_iterator)
-            items['image'] = items['image'].to(self.device)
-            items['mask'] = items['mask'].to(self.device)
+            items['image'] = items['image'].cuda()
+            items['mask'] = items['mask'].cuda()
 
             # inpaint model
             iteration = self.inpaint_model.iteration
@@ -245,17 +243,17 @@ class LaMa:
 
 
 class ZITS:
-    def __init__(self, config, gpu, rank, test=False, single_img_test=False):
+    def __init__(self, config, test=False, single_img_test=False):
         self.config = config
-        self.device = gpu
-        self.global_rank = rank
+        # self.device = gpu
+        self.global_rank = 0
 
         self.model_name = 'inpaint'
 
         kwargs = dict(config.training_model)
         kwargs.pop('kind')
 
-        self.inpaint_model = DefaultInpaintingTrainingModule(config, gpu=gpu, rank=rank, test=test, **kwargs).to(gpu)
+        self.inpaint_model = DefaultInpaintingTrainingModule(config, test=test, **kwargs)
 
         if config.min_sigma is None:
             min_sigma = 2.0
@@ -345,7 +343,7 @@ class ZITS:
                 self.inpaint_model.train()
                 for k in items:
                     if type(items[k]) is torch.Tensor:
-                        items[k] = items[k].to(self.device)
+                        items[k] = items[k].cuda()
 
                 image_size = items['image'].shape[2]
                 random_add_v = random.random() * 1.5 + 1.5
@@ -454,7 +452,7 @@ class ZITS:
             for items in tqdm(val_loader):
                 for k in items:
                     if type(items[k]) is torch.Tensor:
-                        items[k] = items[k].to(self.device)
+                        items[k] = items[k].cuda()
                 b, _, _, _ = items['edge'].shape
                 edge_pred, line_pred = SampleEdgeLineLogits(self.inpaint_model.transformer,
                                                             context=[items['img_256'][:b, ...],
@@ -462,8 +460,7 @@ class ZITS:
                                                                      items['line_256'][:b, ...]],
                                                             mask=items['mask_256'][:b, ...].clone(),
                                                             iterations=5,
-                                                            add_v=0.05, mul_v=4,
-                                                            device=self.device)
+                                                            add_v=0.05, mul_v=4,)
                 edge_pred, line_pred = edge_pred[:b, ...].detach().to(torch.float32), \
                                        line_pred[:b, ...].detach().to(torch.float32)
                 if self.config.fix_256 is None or self.config.fix_256 is False:
@@ -504,7 +501,7 @@ class ZITS:
             items = next(self.sample_iterator)
             for k in items:
                 if type(items[k]) is torch.Tensor:
-                    items[k] = items[k].to(self.device)
+                    items[k] = items[k].cuda()
             b, _, _, _ = items['edge'].shape
             edge_pred, line_pred = SampleEdgeLineLogits(self.inpaint_model.transformer,
                                                         context=[items['img_256'][:b, ...],
@@ -512,8 +509,7 @@ class ZITS:
                                                                  items['line_256'][:b, ...]],
                                                         mask=items['mask_256'][:b, ...].clone(),
                                                         iterations=5,
-                                                        add_v=0.05, mul_v=4,
-                                                        device=self.device)
+                                                        add_v=0.05, mul_v=4,)
             edge_pred, line_pred = edge_pred[:b, ...].detach().to(torch.float32), \
                                    line_pred[:b, ...].detach().to(torch.float32)
             if self.config.fix_256 is None or self.config.fix_256 is False:
@@ -569,19 +565,18 @@ class ZITS:
 import torch.nn as nn
 import torch.nn.functional as F
 class ZITSModel(nn.Module):
-    def __init__(self, config, gpu, rank, test=True):
+    def __init__(self, *, config, test=True):
         super(ZITSModel, self).__init__()
         self.config = config
-        self.device = gpu
-        self.global_rank = rank
+        # self.device = gpu
+        # self.global_rank = rank
 
         self.model_name = 'inpaint'
 
         kwargs = dict(config.training_model)
         kwargs.pop('kind')
 
-        self.inpaint_model = DefaultInpaintingTrainingModule(config, gpu=gpu, rank=rank, test=test, **kwargs).to(
-            gpu)
+        self.inpaint_model = DefaultInpaintingTrainingModule(config, test=test, **kwargs)
 
         # if config.min_sigma is None:
         #     min_sigma = 2.0
@@ -596,11 +591,11 @@ class ZITSModel(nn.Module):
         # else:
         #     round = config.round
 
-        self.wf = WireframeDetector(is_cuda=True).to(gpu)
+        self.wf = WireframeDetector(is_cuda=True)
 
 
     def load(self):
-        self.wf.load_state_dict(torch.load('./ckpt/best_lsm_hawp.pth', map_location='cpu')['model'])
+        self.wf.load_state_dict(torch.load('/groupshare/ckpt/best_lsm_hawp.pth', map_location='cpu')['model'])
 
     def eval(self):
         self.inpaint_model.eval()
@@ -611,7 +606,7 @@ class ZITSModel(nn.Module):
         edge_pred, line_pred = SampleEdgeLineLogits(self.inpaint_model.transformer,
                                                     context=[items['img_256'], items['edge_256'], items['line_256']],
                                                     mask=items['mask_256'].clone(), iterations=5,
-                                                    add_v=0.05, mul_v=4, device=self.device)
+                                                    add_v=0.05, mul_v=4)
         edge_pred, line_pred = edge_pred.detach().to(torch.float32), line_pred.detach().to(torch.float32)
         if input_size != 256 and input_size > 256:
             while edge_pred.shape[2] < input_size:

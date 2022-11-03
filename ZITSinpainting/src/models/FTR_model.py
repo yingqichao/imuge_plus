@@ -1,12 +1,12 @@
 import os
 
-from src.losses.adversarial import NonSaturatingWithR1
-from src.losses.feature_matching import masked_l1_loss, feature_matching_loss
-from src.losses.perceptual import ResNetPL
-from src.models.LaMa import *
-from src.models.TSR_model import *
-from src.models.upsample import StructureUpsampling
-from src.utils import get_lr_schedule_with_warmup, torch_init_model
+from ZITSinpainting.src.losses.adversarial import NonSaturatingWithR1
+from ZITSinpainting.src.losses.feature_matching import masked_l1_loss, feature_matching_loss
+from ZITSinpainting.src.losses.perceptual import ResNetPL
+from ZITSinpainting.src.models.LaMa import *
+from ZITSinpainting.src.models.TSR_model import *
+from ZITSinpainting.src.models.upsample import StructureUpsampling
+from ZITSinpainting.src.utils import get_lr_schedule_with_warmup, torch_init_model
 
 
 def make_optimizer(parameters, kind='adamw', **kwargs):
@@ -29,10 +29,10 @@ def add_prefix_to_keys(dct, prefix):
 
 
 class LaMaBaseInpaintingTrainingModule(nn.Module):
-    def __init__(self, config, gpu, name, rank, *args, test=False, **kwargs):
+    def __init__(self, config, name,  *args, test=False, **kwargs):
         super().__init__(*args, **kwargs)
         print('BaseInpaintingTrainingModule init called')
-        self.global_rank = rank
+        # self.global_rank = rank
         self.config = config
         self.iteration = 0
         self.name = name
@@ -40,11 +40,11 @@ class LaMaBaseInpaintingTrainingModule(nn.Module):
         self.gen_weights_path = os.path.join(config.PATH, name + '_gen.pth')
         self.dis_weights_path = os.path.join(config.PATH, name + '_dis.pth')
 
-        self.generator = LaMa_model().cuda(gpu)
+        self.generator = LaMa_model()
         self.best = None
 
         if not test:
-            self.discriminator = NLayerDiscriminator(**self.config.discriminator).cuda(gpu)
+            self.discriminator = NLayerDiscriminator(**self.config.discriminator)
             self.adversarial_loss = NonSaturatingWithR1(**self.config.losses['adversarial'])
             self.generator_average = None
             self.last_generator_averaging_step = -1
@@ -143,10 +143,10 @@ class LaMaBaseInpaintingTrainingModule(nn.Module):
 
 
 class BaseInpaintingTrainingModule(nn.Module):
-    def __init__(self, config, gpu, name, rank, *args, test=False, **kwargs):
+    def __init__(self, config, name,*args, test=False, **kwargs):
         super().__init__(*args, **kwargs)
         print('BaseInpaintingTrainingModule init called')
-        self.global_rank = rank
+        self.global_rank = 0
         self.config = config
         self.iteration = 0
         self.name = name
@@ -154,15 +154,15 @@ class BaseInpaintingTrainingModule(nn.Module):
         self.gen_weights_path = os.path.join(config.PATH, name + '_gen.pth')
         self.dis_weights_path = os.path.join(config.PATH, name + '_dis.pth')
 
-        self.str_encoder = StructureEncoder(config).cuda(gpu)
-        self.generator = ReZeroFFC(config).cuda(gpu)
+        self.str_encoder = StructureEncoder(config)
+        self.generator = ReZeroFFC(config)
         self.best = None
 
         print('Loading %s StructureUpsampling...' % self.name)
         self.structure_upsample = StructureUpsampling()
         data = torch.load(config.structure_upsample_path, map_location='cpu')
         self.structure_upsample.load_state_dict(data['model'])
-        self.structure_upsample = self.structure_upsample.cuda(gpu).eval()
+        self.structure_upsample = self.structure_upsample.eval()
         print("Loading trained transformer...")
         model_config = EdgeLineGPTConfig(embd_pdrop=0.0, resid_pdrop=0.0, n_embd=256, block_size=32,
                                          attn_pdrop=0.0, n_layer=16, n_head=8)
@@ -172,11 +172,11 @@ class BaseInpaintingTrainingModule(nn.Module):
             self.transformer.load_state_dict(checkpoint)
         else:
             self.transformer.load_state_dict(checkpoint['model'])
-        self.transformer.cuda(gpu).eval()
+        self.transformer.eval()
         self.transformer.half()
 
         if not test:
-            self.discriminator = NLayerDiscriminator(**self.config.discriminator).cuda(gpu)
+            self.discriminator = NLayerDiscriminator(**self.config.discriminator)
             self.adversarial_loss = NonSaturatingWithR1(**self.config.losses['adversarial'])
             self.generator_average = None
             self.last_generator_averaging_step = -1
@@ -199,6 +199,8 @@ class BaseInpaintingTrainingModule(nn.Module):
             self.scaler = torch.cuda.amp.GradScaler()
         if not test:
             self.load_rezero()  # load pretrain model
+
+        print("loading ZITS")
         self.load()  # reload for restore
 
         # reset lr
@@ -314,8 +316,8 @@ class BaseInpaintingTrainingModule(nn.Module):
 
 
 class LaMaInpaintingTrainingModule(LaMaBaseInpaintingTrainingModule):
-    def __init__(self, *args, gpu, rank, image_to_discriminator='predicted_image', test=False, **kwargs):
-        super().__init__(*args, gpu=gpu, name='InpaintingModel', rank=rank, test=test, **kwargs)
+    def __init__(self, *args,  image_to_discriminator='predicted_image', test=False, **kwargs):
+        super().__init__(*args, name='InpaintingModel', test=test, **kwargs)
         self.image_to_discriminator = image_to_discriminator
         self.refine_mask_for_losses = None
 
@@ -421,8 +423,8 @@ class LaMaInpaintingTrainingModule(LaMaBaseInpaintingTrainingModule):
 
 
 class DefaultInpaintingTrainingModule(BaseInpaintingTrainingModule):
-    def __init__(self, *args, gpu, rank, image_to_discriminator='predicted_image', test=False, **kwargs):
-        super().__init__(*args, gpu=gpu, name='InpaintingModel', rank=rank, test=test, **kwargs)
+    def __init__(self, *args, image_to_discriminator='predicted_image', test=False, **kwargs):
+        super().__init__(*args, name='InpaintingModel', test=test, **kwargs)
         self.image_to_discriminator = image_to_discriminator
         if self.config.AMP:  # use AMP
             self.scaler = torch.cuda.amp.GradScaler()

@@ -100,7 +100,8 @@ class ISP_Pipeline_Training(Modified_invISP):
 
         ## inpainting model
         self.define_inpainting_edgeconnect()
-
+        self.define_inpainting_ZITS()
+        self.define_inpainting_lama()
 
     def optimize_parameters_main(self, step=None):
         ####################  Image Manipulation Detection Network (Downstream task)  ##################

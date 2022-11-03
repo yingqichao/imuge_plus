@@ -8,8 +8,8 @@ import torch
 from tqdm import tqdm
 
 from datasets.dataset_TSR import ContinuousEdgeLineDatasetMask
-from src.models.TSR_model import EdgeLineGPTConfig, EdgeLineGPT256RelBCE
-from src.utils import set_seed, SampleEdgeLineLogits
+from ZITSinpainting.src.models.TSR_model import EdgeLineGPTConfig, EdgeLineGPT256RelBCE
+from ZITSinpainting.src.utils import set_seed, SampleEdgeLineLogits
 
 if __name__ == '__main__':
     set_seed(42)

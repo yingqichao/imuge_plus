@@ -397,19 +397,6 @@ class BaseModel():
     def inpainting_for_RAW(self, *, forward_image, masks, gt_rgb):
         return  forward_image * (1 - masks) + gt_rgb * masks
 
-    def inpainting_edgeconnect(self, *, forward_image, image_gray, image_canny, masks):
-        # items = (forward_image, image_gray, image_canny, masks)
-
-        self.edge_model.eval()
-        self.inpainting_model.eval()
-        edges = self.edge_model(image_gray, image_canny, masks).detach()
-        outputs = self.inpainting_model(forward_image, edges, masks)
-        result = (outputs * masks) + forward_image * (1 - masks)
-
-        # result = self.edgeconnect_model(items)
-
-        return forward_image * (1 - masks) + result * masks
-
     def inpainting_for_PAMI(self, *, forward_image, masks, modified_canny):
         with torch.no_grad():
             reversed_stuff, reverse_feature = self.netG(
@@ -497,9 +484,9 @@ class BaseModel():
 
         return attacked_forward, masks, masks_GT
 
-    def get_canny(self, input, masks_GT, sigma=1):
-        cannied_list = torch.empty_like(masks_GT).cuda()
-        gray_list = torch.empty_like(masks_GT).cuda()
+    def get_canny(self, input, masks_GT=None, sigma=1):
+        cannied_list = torch.zeros_like(input)[:,:1]
+        gray_list = torch.zeros_like(input)[:,:1]
         for i in range(input.shape[0]):
             grid = input[i]
             ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()

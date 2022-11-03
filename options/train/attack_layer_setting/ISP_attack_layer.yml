@@ -1,14 +1,41 @@
-#### indices
+### 已经使用过的indice： 6 7 8 9 10 11
+skip_attack_probability: 0.85
+skip_aug_probability: 0.85
+
+#### distortion: total 8
+simulated_resize_indices: [0,5]
+simulated_gblur_indices: [6]
+simulated_mblur_indices: [2]
+simulated_AWGN_indices: [1]
+simulated_strong_JPEG_indices: [3,4]
+simulated_weak_JPEG_indices: [7]
+
+#### contrast: total 7
+simulated_hue: [0]
+simulated_contrast: [1,4]
+simulated_saturation: [2,5]
+simulated_brightness: [3,6]
+
+#### manipulation: total 9
 simulated_splicing_indices: [3, 6, 8]
-simulated_copymove_indices: [0, 2, 4]
-simulated_inpainting_indices: [1, 5, 7]
+simulated_copymove_indices: [0, 2, 5]
+simulated_inpainting_indices: [1, 4, 7]
 simulated_copysplicing_indices: []
 
+#### inpainting: total 6
+zits_as_inpainting: [0,3]
+edgeconnect_as_inpainting: [1,4]
+lama_as_inpainting: [2,5]
+
+#### detector: total 11
 detector_using_MPF_indices: [2,5,8]
 detector_using_MVSS_indices: [0,3,6,9]
 detector_using_OSN_indices: [1,4,7,10]
 
+#### crop: total 10
 crop_indices: [3,5,7,9]
+
+minimum_PSNR_caused_by_attack: 25
 
 step_acumulate: 1
 use_gamma_correction: false
@@ -37,17 +64,6 @@ strong_JPEG_upper_bound: 19
 strong_JPEG_lower_bound: 10
 cropping_lower_bound: 0.7
 
-simulated_resize_indices: [0,5]
-simulated_gblur_indices: [6]
-simulated_mblur_indices: [2]
-simulated_AWGN_indices: [1]
-simulated_strong_JPEG_indices: [3,4]
-simulated_weak_JPEG_indices: [7]
-
-simulated_hue: [0]
-simulated_contrast: [1,4]
-simulated_saturation: [2,5]
-simulated_brightness: [3,6]
 
 #CE_psnr_less: !!float 2e-5
 #CE_psnr_higher: !!float 1e-4
@@ -62,4 +78,3 @@ simulated_brightness: [3,6]
 #GAN_update_period: 5
 #skip_aug_probability: 0.66
 #psnr_thresh: 33
-minimum_PSNR_caused_by_attack: 25

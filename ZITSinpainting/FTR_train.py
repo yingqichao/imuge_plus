@@ -9,8 +9,8 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from src.FTR_trainer import ZITS, LaMa
-from src.config import Config
+from ZITSinpainting.src.FTR_trainer import ZITS, LaMa
+from ZITSinpainting.src.config import Config
 
 
 def main_worker(gpu, args):

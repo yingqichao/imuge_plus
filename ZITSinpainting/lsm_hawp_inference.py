@@ -1,4 +1,4 @@
-from src.lsm_hawp.lsm_hawp_model import LSM_HAWP
+from ZITSinpainting.src.lsm_hawp.lsm_hawp_model import LSM_HAWP
 from glob import glob
 import torch
 import os
