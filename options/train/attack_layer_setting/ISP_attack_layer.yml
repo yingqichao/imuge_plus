@@ -23,10 +23,10 @@ simulated_inpainting_indices: [1, 4, 7]
 simulated_copysplicing_indices: []
 
 #### inpainting-level 1 (subject to manipulation): total 5
-zits_as_inpainting: [0]
-edgeconnect_as_inpainting: [1,4]
-lama_as_inpainting: [2]
-ideal_as_inpainting: [3]
+zits_as_inpainting: [0,3]
+edgeconnect_as_inpainting: []
+lama_as_inpainting: [2,4]
+ideal_as_inpainting: [1]
 
 #### detector-level 0: total 11
 detector_using_MPF_indices: [2,5,8]
@@ -36,7 +36,7 @@ detector_using_OSN_indices: [1,4,7,10]
 #### crop-level 0: total 10
 crop_indices: [3,5,7,9]
 
-minimum_PSNR_caused_by_attack: 25
+minimum_PSNR_caused_by_attack: 24
 
 step_acumulate: 1
 use_gamma_correction: false
@@ -47,15 +47,13 @@ conduct_augmentation: true
 train_inpainting_surrogate_model: false
 lower_false_positive: false
 
-psnr_thresh: 43
-CE_hyper_param: 0.2
-Loss_back_psnr_higher: 0.2
+psnr_thresh: 42
+CE_hyper_param: 0.1
 ssim_hyper_param: 0.01
 perceptual_hyper_param: 0.01
 RAW_L1_hyper_param: 2
 L1_hyper_param: 1
 style_hyper_param: 5
-raw_classes: 5
 dtcwt_layers: 16
 model_save_period: 1000
 

@@ -52,7 +52,7 @@ class Train_One_Single_ISP(Modified_invISP):
     def __init__(self, opt, args, train_set=None, val_set=None):
         """
 
-            this file is mode 3
+            this file is mode 5
 
         """
         super(Train_One_Single_ISP, self).__init__(opt, args, train_set, val_set)
@@ -66,7 +66,7 @@ class Train_One_Single_ISP(Modified_invISP):
         self.training_network_list = self.network_list
 
         ## define localizer
-        self.define_restormer()
+        self.localizer = self.define_MPF_as_ISP() #self.define_restormer()
         self.load_model_wrapper(folder_name='Restormer_folder', model_name='load_Restormer_models',
                                 network_lists=['localizer'])
 
@@ -117,7 +117,7 @@ class Train_One_Single_ISP(Modified_invISP):
             logs['CYCLE_PSNR'] = CYCLE_PSNR
             logs['CYCLE_L1'] = CYCLE_loss.item()
 
-            (CYCLE_loss / self.opt['step_acumulate']).backward()
+            CYCLE_loss.backward()
 
             if self.train_opt['gradient_clipping']:
                 nn.utils.clip_grad_norm_(self.localizer.parameters(), 1)

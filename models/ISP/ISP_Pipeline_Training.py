@@ -290,7 +290,8 @@ class ISP_Pipeline_Training(Modified_invISP):
                         stored_lists=(stored_image_generator, stored_image_qf_predict, stored_image_netG),
                         modified_raw_one_dim=modified_raw_one_dim,
                         input_raw_one_dim=input_raw_one_dim,
-                        file_name=file_name, gt_rgb=gt_rgb
+                        file_name=file_name, gt_rgb=gt_rgb,
+                        camera_name=self.camera_name
                     )
                     modified_input_0, modified_input_1 = semi_images
                     tamper_source_0, tamper_source_1 = semi_sources
@@ -327,7 +328,8 @@ class ISP_Pipeline_Training(Modified_invISP):
                     ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                     if "discriminator_mask" in self.training_network_list:
 
-                        CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(attacked_image=attacked_image.detach().contiguous(),
+                        CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
+                                               attacked_image=attacked_image.detach().contiguous(),
                                                masks_GT=masks_GT, logs=logs)
 
                         CE_loss = CE_resfcn + l1_resfcn
@@ -474,7 +476,7 @@ class ISP_Pipeline_Training(Modified_invISP):
         return logs, debug_logs, did_val
 
     def detecting_forgery(self, *, attacked_image, masks_GT, logs):
-        pred_resfcn = self.CAT_predict(model=self.discriminator_mask,attacked_image=attacked_image)
+        _, pred_resfcn = self.CAT_predict(model=self.discriminator_mask,attacked_image=attacked_image)
         CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
         l1_resfcn = 0
 
@@ -504,7 +506,7 @@ class ISP_Pipeline_Training(Modified_invISP):
         return CE_resfcn, l1_resfcn, pred_resfcn
 
 
-    def ISP_mixing_during_training(self, *, modified_raw, modified_raw_one_dim, input_raw_one_dim, stored_lists, file_name, gt_rgb):
+    def ISP_mixing_during_training(self, *, modified_raw, modified_raw_one_dim, input_raw_one_dim, stored_lists, file_name, gt_rgb, camera_name=None):
         stored_image_generator, stored_image_qf_predict, stored_image_netG = stored_lists
         # if self.global_step % 3 == 0:
         isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
@@ -530,9 +532,9 @@ class ISP_Pipeline_Training(Modified_invISP):
         ### first
         if isinstance(isp_model_0, str):
             modified_input_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=modified_raw_one_dim,
-                                                           file_name=file_name, gt_rgb=gt_rgb)
+                                                           file_name=file_name, gt_rgb=gt_rgb, camera_name=camera_name)
             tamper_source_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim,
-                                                           file_name=file_name, gt_rgb=gt_rgb)
+                                                           file_name=file_name, gt_rgb=gt_rgb, camera_name=camera_name)
             ISP_L1_0, ISP_SSIM_0 = 0,0
         else:
             tamper_source_0 = stored_list_0

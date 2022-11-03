@@ -257,7 +257,7 @@ class BaseModel():
         '''
         if self.opt['exp_weight'] is not None:
             exp = self.opt['exp_weight']
-        return min(1, self.opt['Loss_back_psnr_higher']*((exp)**(value-self.opt['psnr_thresh'])))
+        return min(1, self.opt['CE_hyper_param']*((exp)**(value-self.opt['psnr_thresh'])))
 
     def update_history_losses(self, *, index, PSNR, loss, loss_CE, PSNR_attack):
         '''
@@ -614,6 +614,8 @@ class BaseModel():
         # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
         '''
             real-world attack (CV2)
+            ref: https://www.geeksforgeeks.org/python-opencv-imencode-function/
+            imencode will produce the exact result compared to that by imwrite, but much quicker
         '''
         if index is None:
             index = self.global_step

@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as Functional
 import torchvision.transforms.functional as F
 from torch.nn.parallel import DistributedDataParallel
-from data.pipeline import isp_tensor2image
+from data.pipeline import isp_tensor2image, pipeline_tensor2image, rawpy_tensor2image
 from omegaconf import OmegaConf
 import yaml
 # from data.pipeline import rawpy_tensor2image
@@ -361,7 +361,7 @@ class Modified_invISP(BaseModel):
         return logs, (pred_resfcn), False
 
     def CAT_predict(self, *, model, attacked_image):
-        pred_resfcn = model(attacked_image.detach().contiguous(), None)
+        pred_resfcn = model(attacked_image, None)
         pred_resfcn = Functional.interpolate(pred_resfcn, size=(self.width_height, self.width_height), mode='bilinear')
         pred_resfcn = Functional.softmax(pred_resfcn, dim=1)
         _, pred_resfcn = torch.split(pred_resfcn, 1, dim=1)
@@ -414,27 +414,41 @@ class Modified_invISP(BaseModel):
 
         return modified_input_0, ISP_L1_0, ISP_SSIM_0
 
-    def pipeline_ISP_gathering(self, *, modified_raw_one_dim, file_name, gt_rgb):
+    def pipeline_ISP_gathering(self, *, modified_raw_one_dim, file_name, gt_rgb, camera_name=None):
         ### 1029: replacing netG with conventional ISP
-        batch_size = modified_raw_one_dim.shape[0]
+        ### rawpy
         images = torch.zeros_like(gt_rgb)
-        for idx_pipeline in range(batch_size):
-            metadata = self.train_set.metadata_list[file_name[idx_pipeline][:-2]]
-            # flip_val = metadata['flip_val']
-            # metadata = metadata['metadata']
-            # 在metadata中加入要用的flip_val和camera_name
-            # metadata['flip_val'] = flip_val
-            # metadata['camera_name'] = camera_name
+        for idx_pipeline in range(gt_rgb.shape[0]):
             # [B C H W]->[H,W]
-            raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+            raw_1 = modified_raw_one_dim[idx_pipeline]
             # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
             #                                   output_stage='gamma')
-
-            numpy_rgb = isp_tensor2image(raw_image=raw_1, metadata=metadata, file_name=file_name[:-6], camera_name='',
-                             input_stage='normalize')
+            numpy_rgb = rawpy_tensor2image(raw_image=raw_1, template=file_name[idx_pipeline],
+                                           camera_name=camera_name[idx_pipeline], patch_size=512) / 255
 
             images[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
                 np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+
+        ### my own pipeline
+        # batch_size = modified_raw_one_dim.shape[0]
+        # images = torch.zeros_like(gt_rgb)
+        # for idx_pipeline in range(batch_size):
+        #     metadata = self.train_set.metadata_list[file_name[idx_pipeline][:-2]]
+        #     # flip_val = metadata['flip_val']
+        #     # metadata = metadata['metadata']
+        #     # 在metadata中加入要用的flip_val和camera_name
+        #     # metadata['flip_val'] = flip_val
+        #     # metadata['camera_name'] = camera_name
+        #     # [B C H W]->[H,W]
+        #     raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+        #     # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
+        #     #                                   output_stage='gamma')
+        #
+        #     numpy_rgb = isp_tensor2image(raw_image=raw_1, metadata=metadata, file_name=file_name[:-6], camera_name='',
+        #                      input_stage='normalize')
+        #
+        #     images[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
+        #         np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
 
         return images
 
@@ -611,21 +625,31 @@ class Modified_invISP(BaseModel):
 
 
     def define_ISP_network_training(self):
-        self.generator = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
-                                                         ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
-        self.generator = DistributedDataParallel(self.generator, device_ids=[torch.cuda.current_device()],
-                                                 find_unused_parameters=True)
+        self.generator = self.define_invISP()
+        self.qf_predict_network = self.define_UNet_as_ISP()
+        self.netG = self.define_MPF_as_ISP()
 
-        self.qf_predict_network = UNetDiscriminator(in_channels=3, out_channels=3, use_SRM=False).cuda()
-        self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
+    def define_invISP(self):
+        model = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
+                                        ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
+                                                 find_unused_parameters=True)
+        return model
+
+    def define_UNet_as_ISP(self):
+        model = UNetDiscriminator(in_channels=3, out_channels=3, use_SRM=False).cuda()
+        model = DistributedDataParallel(model,
                                                           device_ids=[torch.cuda.current_device()],
                                                           find_unused_parameters=True)
+        return model
 
-        self.netG = my_own_elastic(nin=3, nout=3, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
-                                                     use_norm_conv=False).cuda()
-        # self.netG = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
-        self.netG = DistributedDataParallel(self.netG, device_ids=[torch.cuda.current_device()],
+    def define_MPF_as_ISP(self):
+        model = my_own_elastic(nin=3, nout=3, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
+                       use_norm_conv=False).cuda()
+        # model = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                             find_unused_parameters=True)
+        return model
 
     def define_resfcn_as_detector(self):
         from MVSS.models.resfcn import ResFCN
@@ -853,8 +877,6 @@ class Modified_invISP(BaseModel):
     # todo:  Method specification
     # todo: RAW2RAW, baseline, ISP generation, localization
     ####################################################################################################
-    def baseline_generate_protected_rgb(self, *, gt_rgb):
-        return gt_rgb + self.KD_JPEG(gt_rgb)
 
     def RAW_protection_by_my_own_elastic(self,*,input_raw_one_dim):
         input_psdown = self.psdown(input_raw_one_dim)

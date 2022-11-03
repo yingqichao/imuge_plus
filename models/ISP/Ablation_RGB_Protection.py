@@ -72,11 +72,17 @@ class Ablation_RGB_Protection(Modified_invISP):
         self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
                                 network_lists=self.default_RAW_to_RAW_networks)
         ### detector
-        print("using my_own_elastic as discriminator_mask.")
-        self.discriminator_mask = self.define_my_own_elastic_as_detector()
+        self.discriminator_mask = self.define_CATNET()
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])
 
+        ## inpainting model
+        self.define_inpainting_edgeconnect()
+        self.define_inpainting_ZITS()
+        self.define_inpainting_lama()
+
+    def baseline_generate_protected_rgb(self, *, gt_rgb):
+        return gt_rgb + self.KD_JPEG(gt_rgb)
 
     def optimize_parameters_ablation_on_RAW(self, step=None):
         #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
@@ -95,7 +101,6 @@ class Ablation_RGB_Protection(Modified_invISP):
             self.KD_JPEG.train()
             self.discriminator_mask.train()
 
-
             gt_rgb = self.real_H
 
             batch_size, num_channels, height_width, _ = gt_rgb.shape
@@ -107,15 +112,16 @@ class Ablation_RGB_Protection(Modified_invISP):
                 modified_input = self.baseline_generate_protected_rgb(gt_rgb=gt_rgb)
 
                 RAW_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
-                ISP_percept, ISP_style = self.perceptual_loss(modified_input, gt_rgb,
-                                                                  with_gram=True)
+                RAW_SSIM = - self.ssim_loss(modified_input, gt_rgb)
+                # ISP_percept, ISP_style = self.perceptual_loss(modified_input, gt_rgb,
+                #                                                   with_gram=True)
 
                 modified_input = self.clamp_with_grad(modified_input)
 
                 RAW_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(gt_rgb)).item()
                 logs['RAW_PSNR'] = RAW_PSNR
                 logs['RAW_L1'] = RAW_L1.item()
-                logs['Percept'] = ISP_percept.item()
+                # logs['Percept'] = ISP_percept.item()
 
 
                 collected_protected_image = modified_input.detach() if collected_protected_image is None else \
@@ -123,7 +129,7 @@ class Ablation_RGB_Protection(Modified_invISP):
 
                 ############################    attack layer  ######################################################
                 attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                    modified_input=modified_input, gt_rgb=gt_rgb, tamper_index=3
+                    modified_input=modified_input, gt_rgb=gt_rgb, logs=logs
                 )
 
                 # ERROR = attacked_image-attacked_forward
@@ -132,23 +138,16 @@ class Ablation_RGB_Protection(Modified_invISP):
 
                 ###################    Image Manipulation Detection Network (Downstream task)   ####################
 
-                ### get mean and std of mask_GT
-                std_gt, mean_gt = torch.std_mean(masks_GT, dim=(2, 3))
-
                 ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
 
-                pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image.detach().contiguous())
-                CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
+                CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
+                    attacked_image=attacked_image.detach().contiguous(),
+                    masks_GT=masks_GT, logs=logs)
 
-                # CE_control = self.CE_loss(pred_control, label_control)
-                CE_loss = CE_resfcn + l1_resfcn #+ l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
+                CE_loss = CE_resfcn + l1_resfcn
                 logs['CE'] = CE_resfcn.item()
-                logs['CEL1'] = l1_resfcn.item()
-                # logs['l1_ema'] = l1_resfcn.item()
-                # logs['Mean'] = l1_mean.item()
-                # logs['Std'] = l1_std.item()
-                # logs['CE_control'] = CE_control.item()
+                logs['CE_ema'] = CE_resfcn.item()
+
                 CE_loss.backward()
 
                 if self.train_opt['gradient_clipping']:
@@ -157,26 +156,23 @@ class Ablation_RGB_Protection(Modified_invISP):
                 self.optimizer_discriminator_mask.zero_grad()
 
 
-                ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
+                CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
+                    attacked_image=attacked_image,
+                    masks_GT=masks_GT, logs=logs)
 
-                pred_resfcn, post_resfcn = self.discriminator_mask(attacked_image)
-                CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-                l1_resfcn = self.bce_loss(torch.sigmoid(post_resfcn), masks_GT)
-
-                # CE_control = self.CE_loss(pred_control, label_control)
-                CE_loss = CE_resfcn + l1_resfcn  # + l1_resfcn + 10 * (l1_mean + l1_std)  # + CE_control
+                CE_loss = CE_resfcn
                 logs['CE_ema'] = CE_resfcn.item()
-                logs['l1_ema'] = l1_resfcn.item()
 
 
                 loss = 0
-                loss += self.opt['L1_hyper_param'] * RAW_L1
-                hyper_param_percept = self.opt['perceptual_hyper_param'] if (RAW_PSNR < self.opt['psnr_thresh']) else self.opt['perceptual_hyper_param'] / 4
-                loss_percept = hyper_param_percept * ISP_percept
-                loss += loss_percept
-                hyper_param = self.opt['CE_hyper_param'] if (RAW_PSNR>=self.opt['psnr_thresh']) else self.opt['CE_hyper_param']/10
+                loss_l1 = self.opt['L1_hyper_param'] * RAW_L1
+                loss += loss_l1
+                loss_ssim = self.opt['ssim_hyper_param'] * RAW_SSIM
+                loss += loss_ssim
+                hyper_param = self.exponential_weight_for_backward(value=RAW_PSNR, exp=2)
                 loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
                 logs['loss'] = loss.item()
+                logs['ISP_SSIM_NOW'] = -loss_ssim.item()
 
                 ### Grad Accumulation
                 loss.backward()
@@ -196,9 +192,8 @@ class Ablation_RGB_Protection(Modified_invISP):
                 images = stitch_images(
 
                     self.postprocess(modified_input),
-
                     self.postprocess(gt_rgb),
-
+                    self.postprocess(10 * torch.abs(modified_input - gt_rgb)),
                     self.postprocess(attacked_forward),
                     self.postprocess(attacked_adjusted),
                     self.postprocess(attacked_image),
@@ -215,7 +210,11 @@ class Ablation_RGB_Protection(Modified_invISP):
                 print('\nsaving sample ' + name)
                 images.save(name)
 
+
         ######## Finally ####################
+        for scheduler in self.schedulers:
+            scheduler.step()
+
         if self.global_step % 1000 == 999 or self.global_step == 9:
             if self.rank == 0:
                 print('Saving models and training states.')
@@ -236,3 +235,10 @@ class Ablation_RGB_Protection(Modified_invISP):
         # print(logs)
         # print(debug_logs)
         return logs, debug_logs, did_val
+
+    def detecting_forgery(self, *, attacked_image, masks_GT, logs):
+        _, pred_resfcn = self.CAT_predict(model=self.discriminator_mask,attacked_image=attacked_image)
+        CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
+        l1_resfcn = 0
+
+        return CE_resfcn, l1_resfcn, pred_resfcn

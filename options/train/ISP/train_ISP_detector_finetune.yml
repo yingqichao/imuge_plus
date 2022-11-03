@@ -17,21 +17,11 @@ load_customized_models: 0
 
 #### general settings
 
-name: /groupshare/ISP_results
-use_tb_logger: true
-model: ISP # CVPR
-distortion: sr
-scale: 4
 gpu_ids: [3]
 
 
 restart_step: 1000
 
-
-train_isp_networks: false
-#train_full_pipeline: true
-train_RAW2RAW: true
-train_detector: true
 
 which_model_for_detector: HYBRID # MPF
 
@@ -41,14 +31,6 @@ task_name_KD_JPEG_model: my_own_elastic
 task_name_customized_model: ISP_alone
 task_name_ISP_model: my_own_elastic
 
-#### datasets
-phase: train
-only_gen_immunized: 0.0
-eval_dataset: COCO
-eval_kind: inpainting
-eval_attack: NOATK
-dataset_name: Rerun
-#phase: test
 
 datasets:
   train:
@@ -72,8 +54,6 @@ datasets:
     batch_size: 4 # 4
     GT_size: 512 # 608
 
-    use_flip: true
-    use_rot: true
     color: RGB
 
   val:
@@ -82,72 +62,9 @@ datasets:
     dataroot_GT: /groupshare/COCOdataset/test2017
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
     GT_size: 512 # 608
-#### training settings: learning rate scheme, loss
 
 train:
-  using_self_defined_dataset: 0.0
-  new_task: 1.0  # 0:imuge 1:outward imuge
-  task_name: ImugeV2 # ImugeV2 # CropLocalize # RHI3
-  debug_mode: 0
-  save_to_latest: 1.0
-  load: 0.0
-  lr_scratch: !!float 1e-4   # 2e-5
+  lr_scratch: !!float 1e-4
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
-  niter: 500000 # not necessary
-  warmup_iter: -1  # no warm up
-
-  lr_scheme: MultiStepLR
-  lr_steps: [20000, 40000, 60000, 80000 ,100000,120000,140000,160000,180000,200000]
-  lr_gamma: 0.5
-
-  pixel_criterion_forw: l2
-  pixel_criterion_back: l1
-
-  manual_seed: 12
-
-  val_freq: !!float 5e3
-
-  lambda_fit_forw: 16.
-  lambda_rec_back: 1
-  lambda_ce_forw: 1
-  weight_decay_G: !!float 1e-5
-  gradient_clipping: 10
-
-  current_step: 0
-
-
-#### network structures
-
-network_G:
-  which_model_G:
-      subnet_type: DBNet
-  in_nc: 3
-  out_nc: 3
-  block_num: [6, 6]
-  scale: 4
-  init: xavier
-
-#### path
-
-path:
-#  pretrain_model: ../experiments/pretrained_RHI3_fine_models/12100        # RHI3
-#  pretrain_model: ../experiments/pretrained_crop_fine_models/32100        # Crop
-#  pretrain_model: ../experiments/pretrained_models/fine_models/COCO/22100  # Imuge++ 2100
-#  pretrain_model: ../experiments/pretrained_models/fine_models/CelebA/2100  # Imuge++ 2100
-#  pretrain_model: ../experiments/pretrained_models/230100
-#  pretrain_model: ../experiments/pretrained_models/64100
-  ######## Imuge #########
-  pretrain_model: /qichaoying/Downloads/Invertible-Image-Rescaling-master/experiments/pretrained_models/fine_models/COCO/22100
-  #########################
-  strict_load: true
-  resume_state: ~
-
-
-
-#### logger
-
-logger:
-  print_freq: 100
-  save_checkpoint_freq: !!float 5e3

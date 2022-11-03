@@ -22,7 +22,7 @@ CE_psnr_less: !!float 2e-5
 CE_psnr_higher: !!float 1e-4
 
 #Loss_back_psnr_less: 0.2 # ori: 0.15
-Loss_back_psnr_higher: 0.333 # ori: 0.25
+CE_hyper_param: 0.333 # ori: 0.25
 Null_loss: 2
 Loss_forward: 1
 
