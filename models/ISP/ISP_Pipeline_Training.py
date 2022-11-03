@@ -421,7 +421,8 @@ class ISP_Pipeline_Training(Modified_invISP):
                         self.postprocess(attacked_forward),
                         self.postprocess(attacked_adjusted),
                         self.postprocess(attacked_image),
-                        self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
+                        self.postprocess(10 * torch.abs(attacked_forward - attacked_adjusted)),
+                        self.postprocess(10 * torch.abs(attacked_adjusted - attacked_image)),
                         ### tampering detection
                         # self.postprocess(attacked_cannied),
                         self.postprocess(masks_GT),

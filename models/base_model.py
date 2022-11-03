@@ -911,9 +911,9 @@ class BaseModel():
 
     def generate_stroke_mask(self, im_size, parts=5, parts_square=2, maxVertex=6, maxLength=64, maxBrushWidth=32,
                              maxAngle=360, percent_range=(0.0, 0.25)):
-        minVertex, maxVertex = 1, 6
-        minLength, maxLength = 8, int(im_size[0] * 0.2)
-        minBrushWidth, maxBrushWidth = 8, int(im_size[0] * 0.2)
+        minVertex, maxVertex = 1, int(20*percent_range[1])
+        minLength, maxLength = 8, int(im_size[0] * 0.8 * percent_range[1])
+        minBrushWidth, maxBrushWidth = 8, int(im_size[0] * 0.8 * percent_range[1])
         mask = np.zeros((im_size[0], im_size[1]), dtype=np.float32)
         lower_bound_percent = percent_range[0] + (percent_range[1] - percent_range[0]) * np.random.rand()
 

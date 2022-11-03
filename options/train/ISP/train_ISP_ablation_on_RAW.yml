@@ -1,18 +1,18 @@
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-protection_folder: /groupshare/ISP_results/complete_results/model/ablation_on_RAW/
-detector_folder: /groupshare/ISP_results/complete_results/model/ablation_on_RAW/
-MVSS_folder: /groupshare/ISP_results/complete_results/model/ablation_on_RAW/
-OSN_folder: /groupshare/ISP_results/complete_results/model/ablation_on_RAW/
+protection_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
+detector_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
+MVSS_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
+OSN_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
 
 #### general settings
 
-CE_hyper_param: 0.05
+CE_hyper_param: 0.001
 
-gpu_ids: [3]
+gpu_ids: [0]
 
-load_discriminator_models: 4999
-load_RAW_models: 4999 # 13999
+load_discriminator_models: 0
+load_RAW_models: 3999 # 13999
 load_ISP_models: 43999
 
 

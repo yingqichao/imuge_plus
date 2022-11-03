@@ -87,7 +87,8 @@ class Modified_invISP(BaseModel):
             self.opt['simulated_hue'] +
             self.opt['simulated_contrast'] +
             self.opt['simulated_saturation'] +
-            self.opt['simulated_brightness']
+            self.opt['simulated_brightness'] +
+            self.opt['simulated_gamma']
         )
 
         self.amount_of_detectors = len(
@@ -375,12 +376,18 @@ class Modified_invISP(BaseModel):
         return None, pred_resfcn
 
     def predict_with_sigmoid_eg_resfcn_mantra(self, *, model, attacked_image):
+        """
+            eg: resfcn, mantranet
+        """
         pred_resfcn = model(attacked_image)
         pred_resfcn = torch.sigmoid(pred_resfcn)
 
         return pred_resfcn
 
     def predict_with_NO_sigmoid(self, *, model, attacked_image):
+        """
+            eg: OSN
+        """
         pred_resfcn = model(attacked_image)
 
         return pred_resfcn
@@ -544,6 +551,7 @@ class Modified_invISP(BaseModel):
         return attacked_forward, masks, masks_GT
 
     def define_CATNET(self):
+        print("using CATnet")
         from CATNet.model import get_model
         model = get_model().cuda()
         model = DistributedDataParallel(model,
@@ -562,6 +570,7 @@ class Modified_invISP(BaseModel):
 
 
     def define_my_own_elastic_as_detector(self):
+        print("using MPF_net as detector")
         model = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
                                                  use_norm_conv=True).cuda()
         model = DistributedDataParallel(model,
@@ -570,6 +579,7 @@ class Modified_invISP(BaseModel):
         return model
 
     def define_MantraNet_as_detector(self):
+        print("using mantranet as detector")
         from MantraNet.mantranet import pre_trained_model
         model_path = './MantraNetv4.pt'
         model = pre_trained_model(model_path).cuda()
@@ -579,6 +589,7 @@ class Modified_invISP(BaseModel):
         return model
 
     def define_MVSS_as_detector(self):
+        print("using MVSS as detector")
         model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
         from MVSS.models.mvssnet import get_mvss
         model = get_mvss(
@@ -597,6 +608,7 @@ class Modified_invISP(BaseModel):
         return model
 
     def define_OSN_as_detector(self):
+        print("using OSN as detector")
         from ImageForensicsOSN.test import get_model
         # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
         # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
@@ -625,11 +637,13 @@ class Modified_invISP(BaseModel):
 
 
     def define_ISP_network_training(self):
+        print("using two network-based networks")
         self.generator = self.define_invISP()
         self.qf_predict_network = self.define_UNet_as_ISP()
         self.netG = self.define_MPF_as_ISP()
 
     def define_invISP(self):
+        print("using invISP as ISP")
         model = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
                                         ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
@@ -637,6 +651,7 @@ class Modified_invISP(BaseModel):
         return model
 
     def define_UNet_as_ISP(self):
+        print("using Unet as ISP")
         model = UNetDiscriminator(in_channels=3, out_channels=3, use_SRM=False).cuda()
         model = DistributedDataParallel(model,
                                                           device_ids=[torch.cuda.current_device()],
@@ -644,6 +659,7 @@ class Modified_invISP(BaseModel):
         return model
 
     def define_MPF_as_ISP(self):
+        print("using MPF as ISP")
         model = my_own_elastic(nin=3, nout=3, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
                        use_norm_conv=False).cuda()
         # model = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
@@ -652,8 +668,8 @@ class Modified_invISP(BaseModel):
         return model
 
     def define_resfcn_as_detector(self):
+        print("using ResFCN as detector")
         from MVSS.models.resfcn import ResFCN
-        print("Building ResFCN...........please wait...")
         model = ResFCN().cuda()
         checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
         model.load_state_dict(checkpoint, strict=True)
@@ -666,6 +682,7 @@ class Modified_invISP(BaseModel):
         from ZITSinpainting.src.FTR_trainer import ZITSModel
         from shutil import copyfile
         from ZITSinpainting.src.config import Config
+        print("Building ZITS...........please wait...")
         from PIL import Image
         model_path = '/groupshare/ckpt/zits_places2_hr'
         config_path = os.path.join(model_path, 'config.yml')
@@ -713,6 +730,7 @@ class Modified_invISP(BaseModel):
 
     def define_inpainting_lama(self):
         from saicinpainting.training.trainers import load_checkpoint
+        print("Building LAMA...........please wait...")
         checkpoint_path = './big-lama/models/best.ckpt'
         train_config_path = './big-lama/config.yaml'
         with open(train_config_path, 'r') as f:
@@ -821,19 +839,20 @@ class Modified_invISP(BaseModel):
         is_stronger = np.random.rand() > 0.5
         if index in self.opt['simulated_hue']:
             ## careful!
-            strength = np.random.rand() * (0.1 if is_stronger>0 else -0.1)
+            strength = np.random.rand() * (0.05 if is_stronger>0 else -0.05)
             modified_adjusted = F.adjust_hue(modified_input, hue_factor=0+strength)  # 0.5 ave
         elif index in self.opt['simulated_contrast']:
-            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
             modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1+strength)  # 1 ave
-        # elif self.global_step%5==2:
-        ## not applicable
-        # modified_adjusted = F.adjust_gamma(modified_input,gamma=0.5+1*np.random.rand()) # 1 ave
+        elif index in self.opt['simulated_gamma']:
+            ## careful!
+            strength = np.random.rand() * (0.05 if is_stronger > 0 else -0.05)
+            modified_adjusted = F.adjust_gamma(modified_input, gamma=1+strength) # 1 ave
         elif index in self.opt['simulated_saturation']:
-            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
             modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1+strength)
         elif index in self.opt['simulated_brightness']:
-            strength = np.random.rand() * (0.5 if is_stronger > 0 else -0.5)
+            strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
             modified_adjusted = F.adjust_brightness(modified_input,
                                                     brightness_factor=1+strength)  # 1 ave
         else:
@@ -1034,37 +1053,33 @@ class Modified_invISP(BaseModel):
         resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
                         int(self.random_float(0.7, 1.5) * self.width_height))
 
+        modified_cropped, locs = modified_input, None
         if self.global_step % 10 in self.opt['crop_indices']:
             # not (self.global_step%self.amount_of_benign_attack in (self.opt['simulated_gblur_indices'] + self.opt['simulated_mblur_indices'])) and \
             # not (self.global_step%self.amount_of_benign_attack in self.opt['simulated_strong_JPEG_indices'] and quality_idx<16):
             logs["cropped"] = True
-            percent_range = [0, 0.25]
-            index_for_postprocessing = 7
+            locs, _, modified_cropped = self.cropping_mask_generation(forward_image=modified_input,
+                                                                      min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
+            _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
+            h_start, h_end, w_start, w_end = locs
+            crop_rate = (h_end - h_start) / self.width_height * (w_end - w_start) / self.width_height
         else:
             logs["cropped"] = False
-            percent_range = [0, 0.3] if self.global_step % self.amount_of_tampering in \
-                                        (self.opt['simulated_copymove_indices']+self.opt['simulated_inpainting_indices']) \
-                else [0, 0.25]
-            index_for_postprocessing = self.global_step
+
+
+        percent_range = [0.05, 0.3] if self.global_step % self.amount_of_tampering in \
+                                    (self.opt['simulated_copymove_indices']+self.opt['simulated_inpainting_indices']) \
+            else [0.05, 0.2]
+        index_for_postprocessing = self.global_step
 
         quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+
         ###############   TAMPERING   ##################################################################################
-        rate_mask, masks, masks_GT, modified_cropped = 0, None, None, modified_input
-        while rate_mask < 0.05 or rate_mask >= 0.33 or (logs["cropped"] and rate_mask >= 0.2):  # prevent too small or too big
-            masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
-                                                                  percent_range=percent_range, index=self.global_step)
-
-            if logs["cropped"]:
-                ### determine the crop location and mask
-                locs, _, masks = self.cropping_mask_generation(
-                    forward_image=masks, min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
-                masks = torch.where(masks > 0.5, 1.0, 0.0)
-                masks_GT = masks[:, :1]
-
-                _, _, modified_cropped = self.cropping_mask_generation(forward_image=modified_input, locs=locs)
-                _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
-
-            rate_mask = torch.mean(masks_GT)
+        rate_mask, masks, masks_GT = 0, None, None
+        # while rate_mask < 0.05 or rate_mask >= 0.33:  # prevent too small or too big
+        masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
+                                                              percent_range=percent_range, index=self.global_step)
+        rate_mask = torch.mean(masks_GT)
 
         # attacked_forward = tamper_source_cropped
         attacked_forward, masks, masks_GT = self.tampering_RAW(

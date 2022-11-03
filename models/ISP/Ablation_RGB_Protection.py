@@ -63,8 +63,8 @@ class Ablation_RGB_Protection(Modified_invISP):
     def network_definitions(self):
         ### regular training for ablation (RGB protection)
         self.network_list = ["KD_JPEG", "discriminator_mask"]
-        self.save_network_list = self.network_list
-        self.training_network_list = self.network_list
+        self.save_network_list = ["KD_JPEG", "discriminator_mask"]
+        self.training_network_list = ["discriminator_mask"]
 
         ### RGB protection
         print("using my_own_elastic as RGB protection.")
@@ -72,7 +72,7 @@ class Ablation_RGB_Protection(Modified_invISP):
         self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
                                 network_lists=self.default_RAW_to_RAW_networks)
         ### detector
-        self.discriminator_mask = self.define_CATNET()
+        self.discriminator_mask = self.define_OSN_as_detector()
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])
 
@@ -139,51 +139,53 @@ class Ablation_RGB_Protection(Modified_invISP):
                 ###################    Image Manipulation Detection Network (Downstream task)   ####################
 
                 ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
+                if "discriminator_mask" in self.training_network_list:
+                    CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
+                        attacked_image=attacked_image.detach().contiguous(),
+                        masks_GT=masks_GT, logs=logs)
 
-                CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
-                    attacked_image=attacked_image.detach().contiguous(),
-                    masks_GT=masks_GT, logs=logs)
+                    CE_loss = CE_resfcn + l1_resfcn
+                    logs['CE'] = CE_resfcn.item()
+                    logs['CE_ema'] = CE_resfcn.item()
 
-                CE_loss = CE_resfcn + l1_resfcn
-                logs['CE'] = CE_resfcn.item()
-                logs['CE_ema'] = CE_resfcn.item()
+                    CE_loss.backward()
 
-                CE_loss.backward()
+                    if self.train_opt['gradient_clipping']:
+                        nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                    self.optimizer_discriminator_mask.step()
+                    self.optimizer_discriminator_mask.zero_grad()
 
-                if self.train_opt['gradient_clipping']:
-                    nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                self.optimizer_discriminator_mask.step()
-                self.optimizer_discriminator_mask.zero_grad()
+                if "KD_JPEG" in self.training_network_list:
+                    CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
+                        attacked_image=attacked_image,
+                        masks_GT=masks_GT, logs=logs)
 
-
-                CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
-                    attacked_image=attacked_image,
-                    masks_GT=masks_GT, logs=logs)
-
-                CE_loss = CE_resfcn
-                logs['CE_ema'] = CE_resfcn.item()
+                    CE_loss = CE_resfcn
+                    logs['CE_ema'] = CE_resfcn.item()
 
 
-                loss = 0
-                loss_l1 = self.opt['L1_hyper_param'] * RAW_L1
-                loss += loss_l1
-                loss_ssim = self.opt['ssim_hyper_param'] * RAW_SSIM
-                loss += loss_ssim
-                hyper_param = self.exponential_weight_for_backward(value=RAW_PSNR, exp=2)
-                loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
-                logs['loss'] = loss.item()
-                logs['ISP_SSIM_NOW'] = -loss_ssim.item()
+                    loss = 0
+                    loss_l1 = self.opt['L1_hyper_param'] * RAW_L1
+                    loss += loss_l1
+                    loss_ssim = self.opt['ssim_hyper_param'] * RAW_SSIM
+                    loss += loss_ssim
+                    hyper_param = self.exponential_weight_for_backward(value=RAW_PSNR, exp=2)
+                    loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                    logs['loss'] = loss.item()
+                    logs['ISP_SSIM_NOW'] = -loss_ssim.item()
 
-                ### Grad Accumulation
-                loss.backward()
-                # self.scaler_kd_jpeg.scale(loss).backward()
+                    ### Grad Accumulation
+                    loss.backward()
+                    # self.scaler_kd_jpeg.scale(loss).backward()
 
-                if self.train_opt['gradient_clipping']:
-                    nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
+                    if self.train_opt['gradient_clipping']:
+                        nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
 
-                self.optimizer_KD_JPEG.step()
-                self.optimizer_KD_JPEG.zero_grad()
-                self.optimizer_discriminator_mask.zero_grad()
+                    self.optimizer_KD_JPEG.step()
+                    self.optimizer_KD_JPEG.zero_grad()
+                    self.optimizer_discriminator_mask.zero_grad()
+                else:
+                    logs['loss'] = 0
 
 
             ##### printing the images  ######
@@ -200,8 +202,7 @@ class Ablation_RGB_Protection(Modified_invISP):
                     self.postprocess(10 * torch.abs(attacked_forward - attacked_image)),
                     ### tampering detection
                     self.postprocess(masks_GT),
-
-                    self.postprocess(torch.sigmoid(pred_resfcn)),
+                    self.postprocess(pred_resfcn),
                     img_per_row=1
                 )
 
@@ -237,7 +238,7 @@ class Ablation_RGB_Protection(Modified_invISP):
         return logs, debug_logs, did_val
 
     def detecting_forgery(self, *, attacked_image, masks_GT, logs):
-        _, pred_resfcn = self.CAT_predict(model=self.discriminator_mask,attacked_image=attacked_image)
+        pred_resfcn = self.predict_with_NO_sigmoid(model=self.discriminator_mask,attacked_image=attacked_image)
         CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
         l1_resfcn = 0
 
