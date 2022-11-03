@@ -63,21 +63,30 @@ class Performance_Test(Modified_invISP):
     def network_definitions(self):
         ### OSN performance (val)
         self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks
-        self.network_list += ['localizer']
+        # self.network_list += ['localizer']
         self.save_network_list = []
         self.training_network_list = []
 
         ### ISP networks
         self.define_ISP_network_training()
         self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
-                                network_lists=self.default_ISP_networks)
+                                network_lists=self.default_ISP_networks, strict=False)
         ### RAW2RAW network
         self.define_RAW2RAW_network()
         self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
                                 network_lists=self.default_RAW_to_RAW_networks)
 
         ### detector
-        self.define_localizer()
+        which_model = self.opt['using_which_model_for_test']
+        if 'localizer' in which_model:
+            self.network_list += ['localizer']
+            self.define_localizer()
+        else:
+            self.network_list += ['discriminator_mask']
+            self.discriminator_mask = self.define_CATNET()  # self.define_my_own_elastic_as_detector()
+            self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
+                                    network_lists=['discriminator_mask'])
+
 
         ## inpainting model
         self.define_inpainting_edgeconnect()
@@ -126,7 +135,7 @@ class Performance_Test(Modified_invISP):
         logs = {}
         logs['lr'] = 0
 
-        test_model = self.localizer
+        test_model = self.localizer if "localizer" in self.opt['which_model_for_detector'] else self.discriminator_mask
         # if "MPF" in self.opt['which_model_for_detector']:
         #     test_model = self.discriminator_mask
         # elif "MVSS" in self.opt['which_model_for_detector']:

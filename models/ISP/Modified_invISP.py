@@ -46,6 +46,7 @@ from models.invertible_net import Inveritible_Decolorization_PAMI
 from models.networks import UNetDiscriminator
 from noise_layers import *
 from utils import stitch_images
+import torch.nn.functional as F2
 
 
 # import matlab.engine
@@ -971,6 +972,11 @@ class Modified_invISP(BaseModel):
             modified_input = self.clamp_with_grad(modified_input_0)
             non_tampered_image = modified_input
 
+        elif self.opt['test_restormer'] == 4:
+            modified_input_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim,
+                                                           file_name=file_name, gt_rgb=gt_rgb)
+            modified_input = self.clamp_with_grad(modified_input_0)
+            non_tampered_image = modified_input
         else:
             # print('here')
             non_tampered_image = gt_rgb
