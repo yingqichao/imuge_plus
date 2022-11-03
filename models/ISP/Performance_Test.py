@@ -262,6 +262,16 @@ class Performance_Test(Modified_invISP):
 
             self.previous_protected = gt_rgb
 
+            ans = self.index_helper_for_testing(attack_indices_amounts=[
+                    self.amount_of_inpainting, self.amount_of_augmentation
+                ],
+                indices_you_want=[
+                    self.opt['edgeconnect_as_inpainting'],
+                    self.opt['simulated_contrast'],
+                ]
+            )
+
+
             #####  conduct tampering  ######
             test_input, masks, mask_GT = self.tampering_RAW(
                 masks=masks, masks_GT=masks_GT,
