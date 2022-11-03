@@ -497,6 +497,34 @@ class BaseModel():
             cannied_list[i] = torch.from_numpy(np.ascontiguousarray(cannied)).contiguous().float()
         return cannied_list, gray_list
 
+    def index_helper_for_testing(self,*, attack_indices_amounts: list, indices_you_want: list):
+        """
+        训练和测试的时候inference_tamper_index指定了混合攻击的方式
+        把你想要的攻击模式送进来，这个函数会自己帮你算满足要求的最小的index
+        example:
+        inpainting用Edgeconnect， edgeconnect_as_inpainting: [1,4]
+        color adjust用CE，simulated_contrast: [1,4]
+        distortion用高斯滤波， simulated_gblur_indices: [6]
+        >> ans = index_helper_for_testing(attack_indices_amounts=[self.amount_of_inpainting,
+                                                                  self.amount_of_augmentation,
+                                                                  self.amount_of_tampering], # 也就是[6,7,8]
+                                          indices_you_want=[self.opt['edgeconnect_as_inpainting'],
+                                                            self.opt['simulated_contrast'],
+                                                            self.opt['simulated_gblur_indices']) # 也就是[[1,4],[1,4],[6]]
+        >> ans
+        >> 22
+        友情提示，是有可能会触发下面的NotImplementedError的;)
+        """
+        for i in range(1000):
+            valid=True
+            for idx, cur_amount in enumerate(attack_indices_amounts):
+                valid = (i % cur_amount) in indices_you_want[idx]
+                if not valid:
+                    break
+            if valid:
+                return i
+        raise NotImplementedError("大神，你想找的index过于稀有了，在1000以内都找不到这样的组合，修改一下吧！")
+
 
     def benign_attacks(self, *, attacked_forward, quality_idx, kernel_size=None, resize_ratio=None, index=None):
         '''
