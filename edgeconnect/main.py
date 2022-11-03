@@ -99,9 +99,8 @@ def load_config(mode=None):
     #
     # args = parser.parse_args()
     args = {
-        'path': './checkpoints/places2',
+        'path': './edgeconnect/checkpoints/places2',
         'model': 3,
-
     }
     config_path = os.path.join(args['path'], 'config.yml')
 

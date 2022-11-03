@@ -125,7 +125,7 @@ def get_metadata(raw):
     color_matrix = raw.rgb_xyz_matrix[:3]
     bitdepth = raw.sizes.top_margin
     camera_whitebalance = raw.camera_whitebalance
-    camera_whitebalance = [i/max(camera_whitebalance) for i in camera_whitebalance]
+    # camera_whitebalance = [i/max(camera_whitebalance) for i in camera_whitebalance]
     raw_pattern, color_desc = raw.raw_pattern, raw.color_desc
     flip_val = raw.sizes.flip
     bayer_pattern = get_bayer_pattern(raw_pattern, color_desc, flip_val)
@@ -146,13 +146,13 @@ def get_metadata(raw):
 
 if __name__ == '__main__':
     import pickle
-    with open('/groupshare/raise/metadata.pickle', 'rb') as f:
-        data = pickle.load(f)
-    exit(0)
-    np.seterr(divide='ignore', invalid='ignore')
+    # with open('/groupshare/raise/metadata.pickle', 'rb') as f:
+    #     data = pickle.load(f)
+    # exit(0)
+    # np.seterr(divide='ignore', invalid='ignore')
     # test_raw_path = 'images/a0031-WP_CRW_0736.dng'
     # test_raw_path = './rfffb852et.NEF'
-    data_root = '/groupshare/raise/RAW/'
+    data_root = '/ssd/FiveK_test/Canon/RAW/'
     dng_files = os.listdir(data_root)
     pickle_data = {}
     import pickle

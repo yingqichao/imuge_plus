@@ -171,6 +171,90 @@ class Raise(Dataset):
         return self.len_data
 
 
+class FiveKTest(Dataset):
+    def __init__(self, data_root, camera='Canon', patch_size=512):
+        self.data_root = data_root
+        self.camera = camera
+        self.data_list = self.load()
+        self.len_data = len(self.data_list)
+        self.patch_size = patch_size
+
+    def load(self):
+        file_txt = os.path.join(self.data_root, f'{self.camera}_test.txt')
+        with open(file_txt, "r") as f:
+            data_list = [i.strip() for i in f.readlines()]
+        return data_list
+
+        # file_pickle = os.path.join(self.data_root, 'metadata.pickle')
+        # with open(file_pickle, 'rb') as f:
+        #     metadata_list = pickle.load(f)
+        # return data_list, metadata_list
+
+    def get_bayer_pattern(self, flip_val, bayer):
+        if flip_val == 5:
+            bayer_pattern = (bayer + 1) % 4
+        elif flip_val == 3:
+            bayer_pattern = (bayer + 2) % 4
+        elif flip_val == 6:
+            bayer_pattern = (bayer + 3) % 4
+        else:
+            bayer_pattern = bayer
+        return bayer_pattern
+
+    def norm_raw(self, raw, black_level, white_level):
+        assert black_level.max() == 0 and black_level.min() == 0
+        img = raw / white_level
+        return img
+
+
+    def __getitem__(self, index):
+        file_name = self.data_list[index]
+
+        raw_npz_path = os.path.join(self.data_root, self.camera, 'RAW', file_name+'.npz')
+        rgb_path = os.path.join(self.data_root, self.camera,  'RGB', file_name+'.png')
+
+        raw_file = np.load(raw_npz_path)
+        # rgb = imageio.imread(rgb_path)
+        # rgb = cv2.imread(rgb_path)
+        rgb = imageio.imread(rgb_path)
+        # assert rgb.shape[0] == raw_file['raw_img'].shape[0]
+        # save rgb image as npz to improve the running speed
+        raw_img = raw_file['raw_img']
+
+
+        cwb = raw_file['cwb']
+        cwb = cwb[:3]
+        cwb = cwb / cwb.max()
+        bayer = raw_file['bayer'].item()
+        black_level = raw_file['black_level']
+        white_level = raw_file['white_level'].item()
+        flip_val = raw_file['flip_val'].item()
+
+        bayer_pattern = self.get_bayer_pattern(flip_val, bayer)
+
+
+        input_raw_img = self.norm_raw(raw_img, black_level, white_level)
+        target_rgb_img = rgb / 255
+        input_raw_img = np.expand_dims(input_raw_img, axis=2)
+
+        input_raw_img = torch.Tensor(input_raw_img).permute(2, 0, 1)
+        target_rgb_img = torch.Tensor(target_rgb_img).permute(2, 0, 1)
+
+        sample = {
+            'input_raw': input_raw_img,
+            'target_rgb': target_rgb_img,
+            'file_name': file_name,
+            'camera_whitebalance': cwb,
+            'bayer_pattern': bayer_pattern,
+            'camera_name': self.camera
+        }
+        return sample
+
+
+    def __len__(self):
+        return self.len_data
+
+
 if __name__ == '__main__':
     # with open('/groupshare/raise/test.txt', 'r') as f:
     #     data = [i.strip() for i in f.readlines()]
@@ -178,7 +262,10 @@ if __name__ == '__main__':
     #     for d in data:
     #         for i in range(10):
     #             f.write((d+'_'+str(i)+'\n'))
-    # exit(0)
+    a = FiveKTest('/ssd/FiveK_test', 'NIKON')
+    for i in range(len(a)):
+        item = a[i]
+    exit(0)
     print('test here')
     print('wanna to test RAISE dataset')
     data_root = '/groupshare/raise_crop'

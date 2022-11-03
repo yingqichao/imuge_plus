@@ -305,8 +305,10 @@ class Modified_invISP(BaseModel):
             pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
                                                        attacked_image=attacked_image.detach().contiguous())
         else:
-            pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
-                                                       attacked_image=attacked_image.detach().contiguous())
+            _, pred_resfcn = self.CAT_predict(model=target_model,
+                                              attacked_image=attacked_image.detach().contiguous())
+            # pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
+            #                                            attacked_image=attacked_image.detach().contiguous())
 
 
 
@@ -342,15 +344,15 @@ class Modified_invISP(BaseModel):
                 #                       f"{name}/{str(step).zfill(5)}_{filename_append}tampered_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
 
                 self.print_this_image(pred_resfcn[image_no],
-                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}pred_ce_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}pred_ce_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
                 self.print_this_image(pred_resfcn_bn[image_no],
-                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}pred_cebn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}pred_cebn_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
                 # self.print_this_image(refined_resfcn[image_no],
                 #                       f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
                 # self.print_this_image(refined_resfcn_bn[image_no],
                 #                       f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1bn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
                 self.print_this_image(attacked_image[image_no],
-                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}tamper_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
+                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}tamper_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
                 self.print_this_image(masks_GT[image_no],
                                       f"{name}/{str(step).zfill(5)}_{image_no}_gt.png")
                 print("tampering localization saved at:{}".format(f"{name}/{str(step).zfill(5)}_{image_no}"))
@@ -496,7 +498,7 @@ class Modified_invISP(BaseModel):
             ### todo: inpainting
             ## ideal
             attacked_forward_ideal = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
-
+            self.global_step = 1
             use_which_inpainting = self.global_step % self.amount_of_inpainting
             if use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
                 ## edgeconnect

@@ -26,43 +26,43 @@ raw_classes: 5
 #load_ISP_models: 20999
 ### UNet models #########
 gpu_ids: [0, ]
-#load_discriminator_models: 8999
-load_RAW_models: 8999 # 13999
+load_discriminator_models: 18999
+load_RAW_models: 18999 # 13999
 load_ISP_models: 43999
 #load_MVSS_models: 8999
 #load_OSN_models: 8999
-load_localizer_models: 8999
+load_localizer_models: 11999
 
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
 task_name_KD_JPEG_model: my_own_elastic
 task_name_customized_model: ISP_alone
 task_name_ISP_model: my_own_elastic
 
-activate_OSN: true
+activate_OSN: false
 test_baseline: false
-test_restormer: 0 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixisp训练版
+test_restormer: 0 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixisp训练版 4代表传统isp单独版
 
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/ # or finished_MVSS. Don't forget the last /!
-protection_folder: /groupshare/ISP_results/complete_results/model/finished_OSN/
+protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #detector_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #detector_folder: /groupshare/ISP_results/complete_results/model/finished_MVSS/
-localizer_folder: /groupshare/ISP_results/complete_results/model/finished_OSN/
+localizer_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 # MVSS_origin_localizer or MVSS_finetuned_localizer
-using_which_model_for_test: OSN_finetuned_localizer #OSN_localizer #Resfcn_localizer #discriminator_mask #CAT_localizer # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
+using_which_model_for_test: discriminator_mask #OSN_finetuned_localizer #OSN_localizer #Resfcn_localizer #discriminator_mask #CAT_localizer # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
 ### these variables are the most important, make sure dont mess them up
-which_model_for_detector: OSNNet
+which_model_for_detector: discriminator_mask
 
 #### test settings
 inference_benign_attack_begin_idx: 0
-inference_load_real_world_tamper: true
+inference_load_real_world_tamper: false # true代表splicing
 inference_do_subsequent_prediction: false
-inference_tamper_index: 2
-inference_save_image: false
+inference_tamper_index: 1 # 2代表cmf 1代表inpainting
+inference_save_image: true
 
-restart_step: 100000
+restart_step: 200000
 
 #### datasets
 phase: train

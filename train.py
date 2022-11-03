@@ -135,7 +135,7 @@ def main(args,opt):
             print('Start training from epoch: {:d}, iter: {:d}, total: {:d}'.format(start_epoch, current_step, total))
         latest_values = None
 
-        print_step, restart_step = 40, 1000
+        print_step, restart_step = 40, opt['restart_step']
         start = time.time()
 
         # train_generator_1 = iter(train_loader_1)
