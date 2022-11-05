@@ -81,9 +81,6 @@ class Ablation_RGB_Protection(Modified_invISP):
         self.define_inpainting_ZITS()
         self.define_inpainting_lama()
 
-    def baseline_generate_protected_rgb(self, *, gt_rgb):
-        return gt_rgb + self.KD_JPEG(gt_rgb)
-
     def optimize_parameters_ablation_on_RAW(self, step=None):
         #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
         did_val = False

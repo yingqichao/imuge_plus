@@ -145,15 +145,27 @@ def create_dataset(*, opt,args,rank,seed):
         # # camera_name = ['Canon_EOS_5D','NIKON_D700']
         # print(f'FiveK dataset size:{GT_size}')
         # val_set = FiveKDataset_total(dataset_root, camera_name, stage='test', patch_size=GT_size)
+        val_dataset_name = opt['using_which_dataset_for_test']
+        if 'Raise' in val_dataset_name:
+            from data.RAISE import Raise
+            print('wanna to test RAISE dataset')
+            data_root = '/groupshare/raise_crop'
+            stage = 'crop_test'  # crop_train crop_test
+            val_set = Raise(data_root, stage=stage)
 
-        from data.RAISE import Raise
-        print('wanna to test RAISE dataset')
-        data_root = '/groupshare/raise_crop'
-        stage = 'crop_test'  # crop_train crop_test
-        val_set = Raise(data_root, stage=stage)
+        elif 'FiveK' in val_dataset_name:
+            stage = 'Canon' if 'Canon' in val_dataset_name else 'NIKON'
+            from data.RAISE import FiveKTest
+            print(f'wanna to test {val_dataset_name} dataset')
+            data_root = '/ssd/FiveK_test'
+            val_set = FiveKTest(data_root, stage)
 
-        # from data.sidd import SIDD
-        # val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)
+        elif 'SIDD' in val_dataset_name:
+            from data.sidd import SIDD
+            val_set = SIDD('/groupshare/SIDD_xxhu/', 'meta.pickle', use_skip=True)
+
+        else:
+            raise NotImplementedError('数据集搞错拉！')
 
         # from data.dnd import DND
         # val_set = DND('/groupshare/dnd_raw/', 'data/dnd.pickle')

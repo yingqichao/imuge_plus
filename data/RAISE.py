@@ -201,10 +201,22 @@ class FiveKTest(Dataset):
             bayer_pattern = bayer
         return bayer_pattern
 
-    def norm_raw(self, raw, black_level, white_level):
-        assert black_level.max() == 0 and black_level.min() == 0
-        img = raw / white_level
+    def norm_raw(self, img, black_level, white_level):
+        assert len(black_level) == 4
+        # print(black_level)
+        if len(set(black_level)) > 1:
+            # todo: 需要加上全局判断
+            norm_black_level = sum(black_level) / len(black_level)
+        else:
+            # 黑电平的值一致
+            norm_black_level = black_level[0]
+        img = img - norm_black_level
+        img[img < 0] = 0
+        img = img / (white_level - norm_black_level)
         return img
+        # assert black_level.max() == 0 and black_level.min() == 0
+        # img = raw / white_level
+        # return img
 
 
     def __getitem__(self, index):

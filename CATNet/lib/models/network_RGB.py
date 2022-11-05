@@ -371,7 +371,7 @@ class RGB_Stream(nn.Module):
         extra = config.MODEL.EXTRA
         super(RGB_Stream, self).__init__()
 
-        # RGB branch
+        # RGB branch H*W ==> H/4 * W/4
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1,
                                bias=False)
         self.bn1 = BatchNorm2d(64, momentum=BN_MOMENTUM)
@@ -380,6 +380,7 @@ class RGB_Stream(nn.Module):
         self.bn2 = BatchNorm2d(64, momentum=BN_MOMENTUM)
         self.relu = nn.ReLU(inplace=True)
 
+        # STAGE1: C=64 ==> C=256
         self.stage1_cfg = extra['STAGE1']
         num_channels = self.stage1_cfg['NUM_CHANNELS'][0]
         block = blocks_dict[self.stage1_cfg['BLOCK']]
@@ -387,6 +388,7 @@ class RGB_Stream(nn.Module):
         self.layer1 = self._make_layer(block, 64, num_channels, num_blocks)
         stage1_out_channel = block.expansion * num_channels
 
+        # STAGE2: 开分支了 通道数分别是48和96 包括融合
         self.stage2_cfg = extra['STAGE2']
         num_channels = self.stage2_cfg['NUM_CHANNELS']
         block = blocks_dict[self.stage2_cfg['BLOCK']]

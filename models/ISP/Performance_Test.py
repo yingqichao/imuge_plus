@@ -62,7 +62,7 @@ class Performance_Test(Modified_invISP):
 
     def network_definitions(self):
         ### OSN performance (val)
-        self.network_list = self.default_ISP_networks + self.default_RAW_to_RAW_networks
+        self.network_list = self.default_ISP_networks
         # self.network_list += ['localizer']
         self.save_network_list = []
         self.training_network_list = []
@@ -71,50 +71,57 @@ class Performance_Test(Modified_invISP):
         self.define_ISP_network_training()
         self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
                                 network_lists=self.default_ISP_networks, strict=False)
-        ### RAW2RAW network
-        self.define_RAW2RAW_network()
-        self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
-                                network_lists=self.default_RAW_to_RAW_networks)
+        if not self.opt['activate_OSN'] or 'finetuned' in self.opt['using_which_model_for_test']:
+            ### RAW2RAW network
+            self.network_list += self.default_RAW_to_RAW_networks
+            self.define_RAW2RAW_network()
+            self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
+                                    network_lists=self.default_RAW_to_RAW_networks)
 
         ### detector
-        which_model = self.opt['using_which_model_for_test']
+        which_model = self.opt['which_model_for_detector']
         if 'localizer' in which_model:
             self.network_list += ['localizer']
-            self.define_localizer()
+            self.localizer = self.define_detector()
+            ## loading finetuned models or MPF
+            if 'finetuned' in which_model or 'MPF' in which_model:
+                ## 注意！！这里可能涉及到给模型改名
+                self.load_model_wrapper(folder_name='localizer_folder', model_name='load_localizer_models',
+                                        network_lists=['localizer'])
         else:
             self.network_list += ['discriminator_mask']
-            self.discriminator_mask = self.define_CATNET()  # self.define_my_own_elastic_as_detector()
+            self.discriminator_mask = self.define_detector()  # self.define_my_own_elastic_as_detector()
+            # self.discriminator_mask = self.define_CATNET()  # self.define_my_own_elastic_as_detector()
             self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                     network_lists=['discriminator_mask'])
 
 
         ## inpainting model
-        self.define_inpainting_edgeconnect()
-        self.define_inpainting_ZITS()
-        self.define_inpainting_lama()
+        if self.opt['inference_tamper_index'] == 1:
+            self.define_inpainting_edgeconnect()
+            self.define_inpainting_ZITS()
+            self.define_inpainting_lama()
 
-    def define_localizer(self):
+    def define_detector(self):
 
         which_model = self.opt['using_which_model_for_test']
         if 'OSN' in which_model:
-            self.localizer = self.define_OSN_as_detector()
+            model = self.define_OSN_as_detector()
         elif 'CAT' in which_model:
-            self.localizer = self.define_CATNET()
+            model = self.define_CATNET()
         elif 'MVSS' in which_model:
-            self.localizer = self.define_MVSS_as_detector()
+            model = self.define_MVSS_as_detector()
         elif 'Mantra' in which_model:
-            self.localizer = self.define_MantraNet_as_detector()
+            model = self.define_MantraNet_as_detector()
         elif 'Resfcn' in which_model:
-            self.localizer = self.define_resfcn_as_detector()
+            model = self.define_resfcn_as_detector()
         elif 'MPF' in which_model:
             print("using my_own_elastic as localizer.")
-            self.localizer = self.define_my_own_elastic_as_detector()
+            model = self.define_my_own_elastic_as_detector()
+        else:
+            raise NotImplementedError("测试要用的detector没找到！请检查！")
 
-        ## loading finetuned models or MPF
-        if 'finetuned' in which_model or 'MPF' in which_model:
-            ## 注意！！这里可能涉及到给模型改名
-            self.load_model_wrapper(folder_name='localizer_folder', model_name='load_localizer_models',
-                                    network_lists=['localizer'])
+        return model
 
     @torch.no_grad()
     def get_performance_of_OSN(self, step):
@@ -262,24 +269,24 @@ class Performance_Test(Modified_invISP):
 
             self.previous_protected = gt_rgb
 
-            ans = self.index_helper_for_testing(attack_indices_amounts=[
-                    # self.amount_of_inpainting,
-                    self.amount_of_tampering
-                ],
-                indices_you_want=[
-                    # self.opt['edgeconnect_as_inpainting'],
-                    self.opt['simulated_inpainting_indices'],
-                ]
-            )
+            # ans = self.index_helper_for_testing(attack_indices_amounts=[
+            #         # self.amount_of_inpainting,
+            #         self.amount_of_tampering
+            #     ],
+            #     indices_you_want=[
+            #         # self.opt['edgeconnect_as_inpainting'],
+            #         self.opt['simulated_inpainting_indices'],
+            #     ]
+            # )
 
-            self.global_step_for_inpainting = self.opt['which_model_for_inpainting']
+            # self.global_step_for_inpainting = self.opt['which_model_for_inpainting']
 
 
             #####  conduct tampering  ######
             test_input, masks, mask_GT = self.tampering_RAW(
                 masks=masks, masks_GT=masks_GT,
                 modified_input=non_tampered_image, percent_range=percent_range,
-                index=ans, #self.opt['inference_tamper_index'],
+                index=self.opt['inference_tamper_index'],
                 gt_rgb=gt_rgb
             )
 

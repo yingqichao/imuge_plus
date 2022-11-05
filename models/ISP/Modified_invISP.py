@@ -169,6 +169,9 @@ class Modified_invISP(BaseModel):
             pretrain = load_detector_storage + model_path
             self.reload(pretrain, network_list=network_lists, strict=strict)
 
+    def baseline_generate_protected_rgb(self, *, gt_rgb):
+        return gt_rgb + self.KD_JPEG(gt_rgb)
+
     def feed_data_router(self, batch, mode):
         if mode in [0.0]:
             # self.feed_data_COCO_like(batch, mode='train') # feed_data_COCO_like(batch)
@@ -295,7 +298,7 @@ class Modified_invISP(BaseModel):
                                               attacked_image=attacked_image.detach().contiguous())
 
         # else:
-        elif "MPF" in self.opt['which_model_for_detector']:
+        elif "MPF" in self.opt['using_which_model_for_test']:
             _, pred_resfcn = self.MPF_predict(model=target_model,
                                            masks_GT=masks_GT,
                                            attacked_image=attacked_image.detach().contiguous())
@@ -303,7 +306,7 @@ class Modified_invISP(BaseModel):
         # elif "MVSS" in self.opt['which_model_for_detector']:
         #     _, pred_resfcn = target_model(attacked_image.detach().contiguous())
         #     pred_resfcn = torch.sigmoid(pred_resfcn)
-        elif "OSN" in self.opt['which_model_for_detector']:
+        elif "OSN" in self.opt['using_which_model_for_test']:
             pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
                                                        attacked_image=attacked_image.detach().contiguous())
         else:
