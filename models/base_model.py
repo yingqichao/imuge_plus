@@ -1075,7 +1075,10 @@ def getFScore(pre, gt):
 def getAUC(pre, gt):
     # 输入都是0-1区间内的 mask
     from sklearn.metrics import roc_auc_score
-    auc = roc_auc_score(gt.flatten(), pre.flatten())
+    try:
+        auc = roc_auc_score(gt.flatten(), pre.flatten())
+    except ValueError:
+        return 0.0
     return auc
 
 def getIOU(pre, gt):

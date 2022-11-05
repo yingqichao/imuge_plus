@@ -1,8 +1,8 @@
 
-gpu_ids: [1, ]
+gpu_ids: [2, ]
 load_discriminator_models: 11999
 load_RAW_models: 11999 # 13999
-load_ISP_models: 43999
+load_ISP_models: 84999 #43999
 #load_MVSS_models: 8999
 #load_OSN_models: 8999
 load_localizer_models: 11999
@@ -14,7 +14,7 @@ task_name_ISP_model: my_own_elastic
 
 activate_OSN: false
 test_baseline: false
-test_restormer: 0 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixisp训练版 4代表传统isp单独版
+test_restormer: 2 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixisp训练版 4代表传统isp单独版
 
 ## inpainting model
 # Hint:
@@ -24,7 +24,7 @@ test_restormer: 0 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixis
 which_model_for_inpainting: 0
 
 #### model path dirs
-ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/ # or finished_MVSS. Don't forget the last /!
+ISP_folder: /groupshare/ISP_results/complete_results/model/restormer_ISP_finish/ # or finished_MVSS. Don't forget the last /!
 protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #detector_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
@@ -35,7 +35,7 @@ localizer_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 using_which_model_for_test: CAT #OSN_finetuned_localizer #OSN_localizer #Resfcn_localizer #discriminator_mask #CAT_localizer # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
 ### these variables are the most important, make sure dont mess them up
 which_model_for_detector: discriminator_mask
-using_which_dataset_for_test: FiveK_Canon
+using_which_dataset_for_test: Raise
 
 #### test settings
 inference_benign_attack_begin_idx: 0

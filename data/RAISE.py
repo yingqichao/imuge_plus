@@ -274,6 +274,26 @@ if __name__ == '__main__':
     #     for d in data:
     #         for i in range(10):
     #             f.write((d+'_'+str(i)+'\n'))
+    data_root = '/ssd/FiveK_Dataset'
+    with open('./camera.txt', 'r') as f:
+        cameras = [i.strip() for i in f.readlines()]
+    use_camera_list = []
+    for camera in cameras:
+        if 'Canon' in camera:
+            use_camera_list.append(camera)
+    dng_files = []
+    for camera_name in use_camera_list:
+        test_file_path = os.path.join(data_root, f"{camera_name}_train.txt")
+        with open(test_file_path, 'r') as fin:
+            cur_dng_files = [i.strip() for i in fin.readlines()]
+        result_dng_files = []
+        for ll in range(4):
+            result_dng_files += [i + f'_{ll}' for i in cur_dng_files]
+        dng_files = dng_files + result_dng_files
+    with open('/ssd/FiveK_train/Canon_train.txt', 'w') as fout:
+        for dd in dng_files:
+            fout.write(dd + '\n')
+    exit(0)
     a = FiveKTest('/ssd/FiveK_test', 'NIKON')
     for i in range(len(a)):
         item = a[i]

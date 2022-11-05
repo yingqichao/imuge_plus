@@ -62,15 +62,21 @@ class Performance_Test(Modified_invISP):
 
     def network_definitions(self):
         ### OSN performance (val)
-        self.network_list = self.default_ISP_networks
         # self.network_list += ['localizer']
         self.save_network_list = []
         self.training_network_list = []
+        if self.opt['test_restormer'] != 2:
+            self.network_list = self.default_ISP_networks
+            ### ISP networks
+            self.define_ISP_network_training()
+            self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
+                                    network_lists=self.default_ISP_networks, strict=False)
+        else:
+            self.network_list = ['localizer']
+            self.localizer = self.define_restormer()
+            self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
+                                    network_lists=['localizer'])
 
-        ### ISP networks
-        self.define_ISP_network_training()
-        self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
-                                network_lists=self.default_ISP_networks, strict=False)
         if not self.opt['activate_OSN'] or 'finetuned' in self.opt['using_which_model_for_test']:
             ### RAW2RAW network
             self.network_list += self.default_RAW_to_RAW_networks

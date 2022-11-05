@@ -439,38 +439,38 @@ class Modified_invISP(BaseModel):
     def pipeline_ISP_gathering(self, *, modified_raw_one_dim, file_name, gt_rgb, camera_name=None):
         ### 1029: replacing netG with conventional ISP
         ### rawpy
-        images = torch.zeros_like(gt_rgb)
-        for idx_pipeline in range(gt_rgb.shape[0]):
-            # [B C H W]->[H,W]
-            raw_1 = modified_raw_one_dim[idx_pipeline]
-            # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
-            #                                   output_stage='gamma')
-            numpy_rgb = rawpy_tensor2image(raw_image=raw_1, template=file_name[idx_pipeline],
-                                           camera_name=camera_name[idx_pipeline], patch_size=512) / 255
-
-            images[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
-                np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-
-        ### my own pipeline
-        # batch_size = modified_raw_one_dim.shape[0]
         # images = torch.zeros_like(gt_rgb)
-        # for idx_pipeline in range(batch_size):
-        #     metadata = self.train_set.metadata_list[file_name[idx_pipeline][:-2]]
-        #     # flip_val = metadata['flip_val']
-        #     # metadata = metadata['metadata']
-        #     # 在metadata中加入要用的flip_val和camera_name
-        #     # metadata['flip_val'] = flip_val
-        #     # metadata['camera_name'] = camera_name
+        # for idx_pipeline in range(gt_rgb.shape[0]):
         #     # [B C H W]->[H,W]
-        #     raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+        #     raw_1 = modified_raw_one_dim[idx_pipeline]
         #     # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
         #     #                                   output_stage='gamma')
-        #
-        #     numpy_rgb = isp_tensor2image(raw_image=raw_1, metadata=metadata, file_name=file_name[:-6], camera_name='',
-        #                      input_stage='normalize')
+        #     numpy_rgb = rawpy_tensor2image(raw_image=raw_1, template=file_name[idx_pipeline],
+        #                                    camera_name=camera_name[idx_pipeline], patch_size=512) / 255
         #
         #     images[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
         #         np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
+
+        ## my own pipeline
+        batch_size = modified_raw_one_dim.shape[0]
+        images = torch.zeros_like(gt_rgb)
+        for idx_pipeline in range(batch_size):
+            metadata = self.train_set.metadata_list[file_name[idx_pipeline][:-2]]
+            # flip_val = metadata['flip_val']
+            # metadata = metadata['metadata']
+            # 在metadata中加入要用的flip_val和camera_name
+            # metadata['flip_val'] = flip_val
+            # metadata['camera_name'] = camera_name
+            # [B C H W]->[H,W]
+            raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
+            # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
+            #                                   output_stage='gamma')
+
+            numpy_rgb = isp_tensor2image(raw_image=raw_1, metadata=metadata, file_name=file_name[:-6], camera_name='',
+                             input_stage='normalize')
+
+            images[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
+                np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
 
         return images
 
