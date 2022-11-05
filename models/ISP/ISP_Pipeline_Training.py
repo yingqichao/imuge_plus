@@ -83,20 +83,10 @@ class ISP_Pipeline_Training(Modified_invISP):
                                 network_lists=self.default_RAW_to_RAW_networks)
         ### detector networks: using hybrid model
         print("using CATNET as discriminator_mask.")
-        # self.discriminator_mask = UNetDiscriminator(in_channels=3, out_channels=1, use_SRM=False).cuda()
-        # self.discriminator_mask = DistributedDataParallel(self.discriminator_mask, device_ids=[torch.cuda.current_device()],
-        #                                        find_unused_parameters=True)
+
         self.discriminator_mask = self.define_CATNET() #self.define_my_own_elastic_as_detector()
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])
-        # print("using MVSS as discriminator.")
-        # self.discriminator = self.define_MVSS_as_detector()
-        # self.load_model_wrapper(folder_name='MVSS_folder', model_name='load_MVSS_models',
-        #                         network_lists=['discriminator'])
-        # print("using OSN as discriminator_mask.")
-        # self.localizer = self.define_OSN_as_detector()
-        # self.load_model_wrapper(folder_name='OSN_folder', model_name='load_OSN_models',
-        #                         network_lists=['localizer'])
 
         ## inpainting model
         self.define_inpainting_edgeconnect()

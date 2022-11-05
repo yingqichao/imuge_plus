@@ -67,15 +67,7 @@ class Train_One_Single_Detector(Modified_invISP):
 
         ## define detector, 这个可以根据需要去做修改
         print(f"using {self.opt['finetune_detector_name']} as discriminator_mask.")
-        if 'MVSS' in self.opt['finetune_detector_name']:
-            self.discriminator_mask = self.define_MVSS_as_detector()
-        elif 'resfcn' in self.opt['finetune_detector_name']:
-            self.discriminator_mask = self.define_resfcn_as_detector()
-        elif 'OSN' in self.opt['finetune_detector_name']:
-            self.discriminator_mask = self.define_OSN_as_detector()
-        else:
-            raise NotImplementedError("要finetune的detector没找到，请检查！")
-
+        self.discriminator_mask = self.define_detector(opt_name='finetune_detector_name')
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])
 
@@ -102,17 +94,10 @@ class Train_One_Single_Detector(Modified_invISP):
                     modified_input=self.real_H, gt_rgb=self.real_H, logs=logs)
 
                 ############    Image Manipulation Detection Network (Downstream task)   ###############################
-                target_model = self.discriminator_mask
-                if 'MVSS' in self.opt['finetune_detector_name']:
-                    _, pred_resfcn = self.MVSS_predict(model=target_model,
-                                                       attacked_image=attacked_image.detach().contiguous())
-                elif 'OSN' in self.opt['finetune_detector_name']:
-                    pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
-                                                               attacked_image=attacked_image.detach().contiguous())
-                elif 'resfcn' in self.opt['finetune_detector_name']:
-                    pred_resfcn = self.predict_with_sigmoid_eg_resfcn_mantra(model=target_model,
-                                                                             attacked_image=attacked_image.detach().contiguous())
-                CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
+                pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                               attacked_image=attacked_image.detach().contiguous(),
+                                                               opt_name='finetune_detector_name',
+                                                               masks_GT=masks_GT)
 
                 logs['CE'] = CE_resfcn.item()
 

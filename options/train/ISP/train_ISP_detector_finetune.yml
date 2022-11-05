@@ -1,17 +1,17 @@
 #### model path dirs
-finetune_detector_name: OSN
+finetune_detector_name: Resfcn
 
 #ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-detector_folder: /groupshare/ISP_results/complete_results/model/OSN/
+detector_folder: /groupshare/ISP_results/complete_results/model/Resfcn/
 
 
 # restormer: 77999
-load_discriminator_models: 29999
+load_discriminator_models: 56999
 
 #### general settings
 
-gpu_ids: [3]
+gpu_ids: [2]
 
 
 

@@ -284,51 +284,12 @@ class Modified_invISP(BaseModel):
 
         #########################   Image Manipulation Detection Network (Downstream task)   ###########################
         # if "localizer" in self.opt['using_which_model_for_test']:
-        if 'CAT' in self.opt['using_which_model_for_test']:
-            _, pred_resfcn = self.CAT_predict(model=target_model,
-                                              attacked_image=attacked_image.detach().contiguous())
+        pred_resfcn, CE_resfcn = self.detector_predict(model=target_model,
+                                                       attacked_image=attacked_image.detach().contiguous(),
+                                                       opt_name='using_which_model_for_test',
+                                                       masks_GT=masks_GT)
 
-        elif 'MVSS' in self.opt['using_which_model_for_test']:
-            _, pred_resfcn = self.MVSS_predict(model=target_model,
-                                              attacked_image=attacked_image.detach().contiguous())
-
-        elif 'Resfcn' in self.opt['using_which_model_for_test'] \
-                or 'Mantra' in self.opt['using_which_model_for_test']:
-            pred_resfcn = self.predict_with_sigmoid_eg_resfcn_mantra(model=target_model,
-                                              attacked_image=attacked_image.detach().contiguous())
-
-        # else:
-        elif "MPF" in self.opt['using_which_model_for_test']:
-            _, pred_resfcn = self.MPF_predict(model=target_model,
-                                           masks_GT=masks_GT,
-                                           attacked_image=attacked_image.detach().contiguous())
-
-        # elif "MVSS" in self.opt['which_model_for_detector']:
-        #     _, pred_resfcn = target_model(attacked_image.detach().contiguous())
-        #     pred_resfcn = torch.sigmoid(pred_resfcn)
-        elif "OSN" in self.opt['using_which_model_for_test']:
-            pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
-                                                       attacked_image=attacked_image.detach().contiguous())
-        else:
-            _, pred_resfcn = self.CAT_predict(model=target_model,
-                                              attacked_image=attacked_image.detach().contiguous())
-            # pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
-            #                                            attacked_image=attacked_image.detach().contiguous())
-
-
-
-        # refined_resfcn, std_pred, mean_pred = post_pack
-        # CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
-        # # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
-        # logs['CE'] = CE_resfcn.item()
-        # # logs['CEL1'] = l1_resfcn.item()
-        # pred_resfcn = torch.sigmoid(pred_resfcn)
-        CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
-        # l1_resfcn = self.bce_loss(self.clamp_with_grad(refined_resfcn), masks_GT)
         logs['CE'] = CE_resfcn.item()
-        # logs['CEL1'] = l1_resfcn.item()
-
-        # refined_resfcn_bn = torch.where(refined_resfcn > 0.5, 1.0, 0.0)
 
         F1, RECALL, AUC, IoU = self.F1score(pred_resfcn, masks_GT, thresh=0.5, get_auc=True)
         # F1_1, RECALL_1 = self.F1score(refined_resfcn_bn, masks_GT, thresh=0.5)
@@ -363,6 +324,57 @@ class Modified_invISP(BaseModel):
                 print("tampering localization saved at:{}".format(f"{name}/{str(step).zfill(5)}_{image_no}"))
 
         return logs, (pred_resfcn), False
+
+    def define_detector(self, *, opt_name):
+
+        which_model = self.opt[opt_name]
+        if 'OSN' in which_model:
+            model = self.define_OSN_as_detector()
+        elif 'CAT' in which_model:
+            model = self.define_CATNET()
+        elif 'MVSS' in which_model:
+            model = self.define_MVSS_as_detector()
+        elif 'Mantra' in which_model:
+            model = self.define_MantraNet_as_detector()
+        elif 'Resfcn' in which_model:
+            model = self.define_resfcn_as_detector()
+        elif 'MPF' in which_model:
+            print("using my_own_elastic as localizer.")
+            model = self.define_my_own_elastic_as_detector()
+        else:
+            raise NotImplementedError("测试要用的detector没找到！请检查！")
+
+        return model
+
+    def detector_predict(self, *, model, attacked_image, opt_name, masks_GT=None):
+        if 'CAT' in self.opt[opt_name]:
+            _, pred_resfcn = self.CAT_predict(model=model,
+                                              attacked_image=attacked_image)
+
+        elif 'MVSS' in self.opt[opt_name]:
+            _, pred_resfcn = self.MVSS_predict(model=model,
+                                              attacked_image=attacked_image)
+
+        elif 'Resfcn' in self.opt[opt_name] \
+                or 'Mantra' in self.opt[opt_name]:
+            pred_resfcn = self.predict_with_sigmoid_eg_resfcn_mantra(model=model,
+                                              attacked_image=attacked_image)
+
+        elif "MPF" in self.opt[opt_name]:
+            _, pred_resfcn = self.MPF_predict(model=model,
+                                           masks_GT=masks_GT,
+                                           attacked_image=attacked_image)
+
+        elif "OSN" in self.opt[opt_name]:
+            pred_resfcn = self.predict_with_NO_sigmoid(model=model,
+                                                       attacked_image=attacked_image)
+        else:
+            _, pred_resfcn = self.CAT_predict(model=model,
+                                              attacked_image=attacked_image)
+
+        CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
+
+        return pred_resfcn, CE_resfcn
 
     def CAT_predict(self, *, model, attacked_image):
         pred_resfcn = model(attacked_image, None)

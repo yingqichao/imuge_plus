@@ -80,18 +80,16 @@ class Performance_Test(Modified_invISP):
 
         ### detector
         which_model = self.opt['which_model_for_detector']
+        self.network_list += ['discriminator_mask']
         if 'localizer' in which_model:
-            self.network_list += ['localizer']
-            self.localizer = self.define_detector()
+            self.discriminator_mask = self.define_detector(opt_name='using_which_model_for_test')
             ## loading finetuned models or MPF
             if 'finetuned' in which_model or 'MPF' in which_model:
                 ## 注意！！这里可能涉及到给模型改名
                 self.load_model_wrapper(folder_name='localizer_folder', model_name='load_localizer_models',
-                                        network_lists=['localizer'])
+                                        network_lists=['discriminator_mask'])
         else:
-            self.network_list += ['discriminator_mask']
-            self.discriminator_mask = self.define_detector()  # self.define_my_own_elastic_as_detector()
-            # self.discriminator_mask = self.define_CATNET()  # self.define_my_own_elastic_as_detector()
+            self.discriminator_mask = self.define_detector(opt_name='using_which_model_for_test')
             self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                     network_lists=['discriminator_mask'])
 
@@ -101,27 +99,6 @@ class Performance_Test(Modified_invISP):
             self.define_inpainting_edgeconnect()
             self.define_inpainting_ZITS()
             self.define_inpainting_lama()
-
-    def define_detector(self):
-
-        which_model = self.opt['using_which_model_for_test']
-        if 'OSN' in which_model:
-            model = self.define_OSN_as_detector()
-        elif 'CAT' in which_model:
-            model = self.define_CATNET()
-        elif 'MVSS' in which_model:
-            model = self.define_MVSS_as_detector()
-        elif 'Mantra' in which_model:
-            model = self.define_MantraNet_as_detector()
-        elif 'Resfcn' in which_model:
-            model = self.define_resfcn_as_detector()
-        elif 'MPF' in which_model:
-            print("using my_own_elastic as localizer.")
-            model = self.define_my_own_elastic_as_detector()
-        else:
-            raise NotImplementedError("测试要用的detector没找到！请检查！")
-
-        return model
 
     @torch.no_grad()
     def get_performance_of_OSN(self, step):
@@ -142,7 +119,7 @@ class Performance_Test(Modified_invISP):
         logs = {}
         logs['lr'] = 0
 
-        test_model = self.localizer if "localizer" in self.opt['which_model_for_detector'] else self.discriminator_mask
+        test_model = self.discriminator_mask
         # if "MPF" in self.opt['which_model_for_detector']:
         #     test_model = self.discriminator_mask
         # elif "MVSS" in self.opt['which_model_for_detector']:
@@ -159,8 +136,7 @@ class Performance_Test(Modified_invISP):
                                              file_name=file_name, camera_name=camera_name)
 
         ### generate non-tampered protected (or not) image
-        if "localizer" not in self.opt['using_which_model_for_test'] or 'finetuned' in self.opt[
-            'using_which_model_for_test']:
+        if "localizer" not in self.opt['using_which_model_for_test'] or 'finetuned' in self.opt['using_which_model_for_test']:
             ## RAW protection ##
             if not self.opt["test_baseline"]:
                 self.KD_JPEG.eval()

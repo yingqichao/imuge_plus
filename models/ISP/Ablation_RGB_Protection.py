@@ -73,16 +73,7 @@ class Ablation_RGB_Protection(Modified_invISP):
                                 network_lists=self.default_RAW_to_RAW_networks)
         ### detector
         print(f"using {self.opt['finetune_detector_name']} as discriminator_mask.")
-        if 'MVSS' in self.opt['finetune_detector_name']:
-            self.discriminator_mask = self.define_MVSS_as_detector()
-        elif 'resfcn' in self.opt['finetune_detector_name']:
-            self.discriminator_mask = self.define_resfcn_as_detector()
-        elif 'OSN' in self.opt['finetune_detector_name']:
-            self.discriminator_mask = self.define_OSN_as_detector()
-        else:
-            raise NotImplementedError("要finetune的detector没找到，请检查！")
-
-        self.discriminator_mask = self.define_OSN_as_detector()
+        self.discriminator_mask = self.define_detector(opt_name='finetune_detector_name')
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])
 
@@ -147,15 +138,15 @@ class Ablation_RGB_Protection(Modified_invISP):
 
                 ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                 if "discriminator_mask" in self.training_network_list:
-                    CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
-                        attacked_image=attacked_image.detach().contiguous(),
-                        masks_GT=masks_GT, logs=logs)
+                    pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                                   attacked_image=attacked_image.detach().contiguous(),
+                                                                   opt_name='finetune_detector_name',
+                                                                   masks_GT=masks_GT)
 
-                    CE_loss = CE_resfcn + l1_resfcn
                     logs['CE'] = CE_resfcn.item()
                     logs['CE_ema'] = CE_resfcn.item()
 
-                    CE_loss.backward()
+                    CE_resfcn.backward()
 
                     if self.train_opt['gradient_clipping']:
                         nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
@@ -163,11 +154,11 @@ class Ablation_RGB_Protection(Modified_invISP):
                     self.optimizer_discriminator_mask.zero_grad()
 
                 if "KD_JPEG" in self.training_network_list:
-                    CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
-                        attacked_image=attacked_image,
-                        masks_GT=masks_GT, logs=logs)
+                    pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                                  attacked_image=attacked_image,
+                                                                  opt_name='finetune_detector_name',
+                                                                  masks_GT=masks_GT)
 
-                    CE_loss = CE_resfcn
                     logs['CE_ema'] = CE_resfcn.item()
 
 
@@ -177,7 +168,7 @@ class Ablation_RGB_Protection(Modified_invISP):
                     loss_ssim = self.opt['ssim_hyper_param'] * RAW_SSIM
                     loss += loss_ssim
                     hyper_param = self.exponential_weight_for_backward(value=RAW_PSNR, exp=2)
-                    loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                    loss += hyper_param * CE_resfcn
                     logs['loss'] = loss.item()
                     logs['ISP_SSIM_NOW'] = -loss_ssim.item()
 
