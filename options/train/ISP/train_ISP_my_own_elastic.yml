@@ -1,21 +1,21 @@
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-detector_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+protection_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
+detector_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
+#MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+#OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
 # restormer: 77999
-load_discriminator_models: 9999 #11499
-load_RAW_models: 9999 #11499 # 10999
+load_discriminator_models: 11999 #11499
+load_RAW_models: 11999 #11499 # 10999
 load_ISP_models: 43999 #20999 # new: 24999
-load_MVSS_models: 9999
-load_OSN_models: 9999
+load_MVSS_models: 11999
+load_OSN_models: 11999
 load_customized_models: 0
 
 #### general settings
 
-gpu_ids: [1,2]
+gpu_ids: [3,4]
 
 
 restart_step: 1000
@@ -26,7 +26,6 @@ train_full_pipeline: true
 train_RAW2RAW: true
 train_detector: true
 
-which_model_for_detector: HYBRID # MPF
 
 ### directory
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
@@ -68,7 +67,7 @@ datasets:
 
 
 train:
-  lr_scratch: !!float 1e-4
+  lr_scratch: !!float 2e-5
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

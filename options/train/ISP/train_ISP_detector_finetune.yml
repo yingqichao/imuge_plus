@@ -1,4 +1,9 @@
 #### model path dirs
+
+## OSN finetune: 16999
+## MVSS finetune: 22999
+## resfcn finetune: 27999
+
 finetune_detector_name: Resfcn
 
 #ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/

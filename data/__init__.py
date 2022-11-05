@@ -62,11 +62,20 @@ def create_dataset(*, opt,args,rank,seed):
         # print(f'FiveK dataset size')
         # train_set = FiveKDataset_total(dataset_root, camera_name, stage='train', patch_size=GT_size)
 
-        from data.RAISE import Raise
-        print('wanna to test RAISE dataset')
-        data_root = '/groupshare/raise_crop'
-        stage = 'crop_train'  # crop_train crop_test
-        train_set = Raise(data_root, stage=stage)
+        from data.RAISE import Raise, FiveKTest
+        if "Raise" in opt['using_which_dataset_for_training']:
+            print('wanna to test RAISE dataset')
+            data_root = '/groupshare/raise_crop'
+            stage = 'crop_train'  # crop_train crop_test
+            train_set = Raise(data_root, stage=stage)
+        elif "FiveK" in opt['using_which_dataset_for_training']:
+            print('wanna to test CANON dataset')
+            data_root = '/ssd/FiveK_train'
+            camera_name = 'Canon' if 'Canon' in opt['using_which_dataset_for_training'] else 'NIKON'
+            stage = 'train'
+            train_set = FiveKTest(data_root, camera_name, stage=stage)
+        else:
+            raise NotImplementedError("ISP的数据集定义不对，请检查！")
 
         # dataset_root_1 = [ '/ssd/invISP_skip/']
         # camera_name_1 = [ 'NIKON_D700']
