@@ -72,6 +72,16 @@ class Ablation_RGB_Protection(Modified_invISP):
         self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
                                 network_lists=self.default_RAW_to_RAW_networks)
         ### detector
+        print(f"using {self.opt['finetune_detector_name']} as discriminator_mask.")
+        if 'MVSS' in self.opt['finetune_detector_name']:
+            self.discriminator_mask = self.define_MVSS_as_detector()
+        elif 'resfcn' in self.opt['finetune_detector_name']:
+            self.discriminator_mask = self.define_resfcn_as_detector()
+        elif 'OSN' in self.opt['finetune_detector_name']:
+            self.discriminator_mask = self.define_OSN_as_detector()
+        else:
+            raise NotImplementedError("要finetune的detector没找到，请检查！")
+
         self.discriminator_mask = self.define_OSN_as_detector()
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])

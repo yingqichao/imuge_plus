@@ -564,7 +564,7 @@ class BaseModel():
 
         ## we regulate that jpeg attack also should not cause PSNR to be lower than 30dB
         jpeg_result = processed_image
-        quality = quality_idx
+        quality = quality_idx * 5
         for q_index in range(quality_idx,21):
             quality = int(q_index * 5)
             jpeg_layer_after_blurring = self.jpeg_simulate[q_index - 10][0] if quality < 100 else self.identity

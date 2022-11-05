@@ -66,7 +66,7 @@ class Train_One_Single_ISP(Modified_invISP):
         self.training_network_list = self.network_list
 
         ## define localizer
-        self.localizer = self.define_MPF_as_ISP() #self.define_restormer()
+        self.localizer = self.define_restormer() #self.define_restormer()
         self.load_model_wrapper(folder_name='Restormer_folder', model_name='load_Restormer_models',
                                 network_lists=['localizer'])
 

@@ -1,10 +1,11 @@
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 protection_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
-detector_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
+detector_folder: /groupshare/ISP_results/complete_results/model/OSN/
 MVSS_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
 OSN_folder: /groupshare/ISP_results/complete_results/model/ablation_OSN_finish/
 
+finetune_detector_name: OSN
 #### general settings
 
 CE_hyper_param: 0.001
@@ -35,7 +36,7 @@ datasets:
     use_shuffle: true
     n_workers: 1 # per GPU
 
-    batch_size: 2 # 4
+    batch_size: 1 # 4
     GT_size: 512 # 608
 
     color: RGB

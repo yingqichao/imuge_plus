@@ -1,35 +1,18 @@
 #### model path dirs
-finetune_detector_name: resfcn
+finetune_detector_name: OSN
 
-ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-detector_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+#ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+#protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+detector_folder: /groupshare/ISP_results/complete_results/model/OSN/
+
 
 # restormer: 77999
-load_discriminator_models: 0 #11499
-load_RAW_models: 0 #11499 # 10999
-load_ISP_models: 43999 #20999 # new: 24999
-load_MVSS_models: 0
-load_OSN_models: 0
-load_customized_models: 0
+load_discriminator_models: 29999
 
 #### general settings
 
 gpu_ids: [3]
 
-
-restart_step: 1000
-
-
-which_model_for_detector: HYBRID # MPF
-
-### directory
-task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
-task_name_KD_JPEG_model: my_own_elastic
-task_name_customized_model: ISP_alone
-task_name_ISP_model: my_own_elastic
 
 
 datasets:
@@ -51,7 +34,7 @@ datasets:
     use_shuffle: true
     n_workers: 1 # per GPU
 
-    batch_size: 4 # 4
+    batch_size: 2 # 4
     GT_size: 512 # 608
 
     color: RGB

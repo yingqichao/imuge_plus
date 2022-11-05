@@ -106,15 +106,13 @@ class Train_One_Single_Detector(Modified_invISP):
                 if 'MVSS' in self.opt['finetune_detector_name']:
                     _, pred_resfcn = self.MVSS_predict(model=target_model,
                                                        attacked_image=attacked_image.detach().contiguous())
-                    CE_resfcn = self.bce_loss(torch.sigmoid(pred_resfcn), masks_GT)
                 elif 'OSN' in self.opt['finetune_detector_name']:
                     pred_resfcn = self.predict_with_NO_sigmoid(model=target_model,
                                                                attacked_image=attacked_image.detach().contiguous())
-                    CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
                 elif 'resfcn' in self.opt['finetune_detector_name']:
                     pred_resfcn = self.predict_with_sigmoid_eg_resfcn_mantra(model=target_model,
                                                                              attacked_image=attacked_image.detach().contiguous())
-                    CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
+                CE_resfcn = self.bce_loss(pred_resfcn, masks_GT)
 
                 logs['CE'] = CE_resfcn.item()
 

@@ -59,11 +59,11 @@ class GaussianBlur(nn.Module):
             gaussian_layer = self.get_gaussian_kernel(kernel).cuda()
             blur_result = gaussian_layer(tensor)
             psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()
-            if psnr>=self.psnr_thresh:
+            if psnr>=self.psnr_thresh or kernel==7:
                 return blur_result, kernel
         ## if none of the above satisfy psnr>30, we abandon the attack
         # print("abandoned gaussian blur, we cannot find a suitable kernel that satisfy PSNR>=25")
-        return tensor, 0
+        return blur_result, kernel
 
     def forward_with_specific_kernel(self, tensor, kernel=3):
         gaussian_layer = self.get_gaussian_kernel(kernel).cuda()

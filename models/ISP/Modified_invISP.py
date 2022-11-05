@@ -1053,8 +1053,8 @@ class Modified_invISP(BaseModel):
 
         ## settings for attack
         kernel = random.choice([3, 5, 7])  # 3,5,7
-        resize_ratio = (int(self.random_float(0.7, 1.5) * self.width_height),
-                        int(self.random_float(0.7, 1.5) * self.width_height))
+        resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                        int(self.random_float(0.5, 2) * self.width_height))
 
         modified_cropped, locs = modified_input, None
         if self.global_step % 10 in self.opt['crop_indices']:
