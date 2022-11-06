@@ -4,19 +4,22 @@
 ## MVSS finetune: 22999
 ## resfcn finetune: 27999
 
-finetune_detector_name: Resfcn
+finetune_detector_name: OSN
+consider_robost: false
+conduct_augmentation: false
+model_save_period: 500
 
 #ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-detector_folder: /groupshare/ISP_results/complete_results/model/Resfcn/
+detector_folder: /groupshare/ISP_results/complete_results/model/OSN_finetune_no_protection_no_attack/
 
 
 # restormer: 77999
-load_discriminator_models: 56999
+load_discriminator_models: 0
 
 #### general settings
 
-gpu_ids: [2]
+gpu_ids: [1]
 
 
 

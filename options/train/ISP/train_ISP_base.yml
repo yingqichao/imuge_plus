@@ -8,11 +8,6 @@
 using_which_dataset_for_training: Canon_FiveK # RAISE
 using_which_dataset_for_test: Canon_FiveK
 
-train_isp_networks: false
-train_full_pipeline: true
-train_RAW2RAW: true
-train_detector: true
-
 name: /groupshare/ISP_results
 model: ISP # CVPR
 use_gamma_correction: false

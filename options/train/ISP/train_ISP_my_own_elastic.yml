@@ -1,31 +1,36 @@
 #### model path dirs
-ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+ISP_folder: /groupshare/ISP_results/complete_results/model/ISP_RAISE/
 protection_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
-detector_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
+detector_folder: /groupshare/ISP_results/complete_results/model/finished_MVSS/
 #MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
+finetune_detector_name: MVSS
+
 # restormer: 77999
-load_discriminator_models: 11999 #11499
+load_discriminator_models: 6999 #11499
 load_RAW_models: 11999 #11499 # 10999
-load_ISP_models: 43999 #20999 # new: 24999
-load_MVSS_models: 11999
-load_OSN_models: 11999
-load_customized_models: 0
+load_ISP_models: 43999 #20999 # new: 43999
+#load_MVSS_models: 11999
+#load_OSN_models: 11999
+#load_customized_models: 0
 
 #### general settings
 
-gpu_ids: [3,4]
-
+gpu_ids: [4]
+conduct_cropping: true
+consider_robost: true
+include_isp_inference: true
+conduct_augmentation: true
 
 restart_step: 1000
-
+model_save_period: 1000
 
 train_isp_networks: false
-train_full_pipeline: true
-train_RAW2RAW: true
+#train_full_pipeline: true
+train_RAW2RAW: false
 train_detector: true
-
+using_which_dataset_for_training: Raise
 
 ### directory
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
@@ -53,7 +58,7 @@ datasets:
     use_shuffle: true
     n_workers: 2 # per GPU
 
-    batch_size: 4 # 4
+    batch_size: 1 # 4
     GT_size: 512 # 608
 
     color: RGB
@@ -67,7 +72,7 @@ datasets:
 
 
 train:
-  lr_scratch: !!float 2e-5
+  lr_scratch: !!float 1e-4
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

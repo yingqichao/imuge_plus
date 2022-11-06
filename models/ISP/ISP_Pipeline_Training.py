@@ -82,9 +82,9 @@ class ISP_Pipeline_Training(Modified_invISP):
         self.load_model_wrapper(folder_name='protection_folder',model_name='load_RAW_models',
                                 network_lists=self.default_RAW_to_RAW_networks)
         ### detector networks: using hybrid model
-        print("using CATNET as discriminator_mask.")
+        print(f"using {self.opt['finetune_detector_name']} as discriminator_mask.")
 
-        self.discriminator_mask = self.define_CATNET() #self.define_my_own_elastic_as_detector()
+        self.discriminator_mask = self.define_detector(opt_name='finetune_detector_name') #self.define_my_own_elastic_as_detector()
         self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                 network_lists=['discriminator_mask'])
 
@@ -173,33 +173,18 @@ class ISP_Pipeline_Training(Modified_invISP):
                         self.optimizer_qf.step()
                         self.optimizer_qf.zero_grad()
 
-
-                    # #### HWMNET ####
-                    # modified_input_netG, THIRD_loss = self.ISP_image_generation_general(network=self.netG,
+                    #### InvISP #####
+                    # modified_input_generator, ISP_loss = self.ISP_image_generation_general(network=self.generator,
                     #                                                                        input_raw=input_raw.detach().contiguous(),
                     #                                                                        target=gt_rgb)
-                    #
-                    # modified_input_netG_detach = self.clamp_with_grad(modified_input_netG.detach())
-                    # PIPE_PSNR = self.psnr(self.postprocess(modified_input_netG_detach),self.postprocess(gt_rgb)).item()
-                    # logs['PIPE_PSNR'] = PIPE_PSNR
-                    # logs['PIPE_L1'] = THIRD_loss.item()
-                    # ## STORE THE RESULT FOR LATER USE
-                    # stored_image_netG = modified_input_netG_detach if stored_image_netG is None else \
-                    #     torch.cat([stored_image_netG, modified_input_netG_detach], dim=0)
-                    #
-                    # if self.opt['train_isp_networks']:
-                    #     # self.optimizer_generator.zero_grad()
-                    #     THIRD_loss.backward()
-                    #
-                    #     if self.train_opt['gradient_clipping']:
-                    #         nn.utils.clip_grad_norm_(self.netG.parameters(), 1)
-                    #     self.optimizer_G.step()
-                    #     self.optimizer_G.zero_grad()
+                    modified_input_generator = self.generator(input_raw)
+                    # ISP_SSIM = - self.ssim_loss(modified_input_generator, gt_rgb)
+                    ISP_forward = self.l1_loss(input=modified_input_generator, target=gt_rgb)
+                    modified_input_generator = self.clamp_with_grad(modified_input_generator)
+                    rev_RAW, _ = self.generator(modified_input_generator, rev=True)
 
-                    #### InvISP #####
-                    modified_input_generator, ISP_loss = self.ISP_image_generation_general(network=self.generator,
-                                                                                           input_raw=input_raw.detach().contiguous(),
-                                                                                           target=gt_rgb)
+                    ISP_backward = self.l1_loss(input=rev_RAW, target=input_raw)
+                    ISP_loss = ISP_backward + ISP_forward
 
                     modified_input_generator_detach = modified_input_generator.detach()
                     ISP_PSNR = self.psnr(self.postprocess(modified_input_generator_detach), self.postprocess(gt_rgb)).item()
@@ -209,8 +194,6 @@ class ISP_Pipeline_Training(Modified_invISP):
                         torch.cat([stored_image_generator, modified_input_generator_detach], dim=0)
 
                     if self.opt['train_isp_networks']:
-                        ### Grad Accumulation (which we have abandoned)
-                        # self.optimizer_generator.zero_grad()
                         ISP_loss.backward()
 
                         if self.train_opt['gradient_clipping']:
@@ -237,7 +220,7 @@ class ISP_Pipeline_Training(Modified_invISP):
                     print(f'Bayer: {bayer_pattern}. Saving sample {name}')
                     images.save(name)
 
-            if self.opt['train_full_pipeline']:
+            if self.opt['train_RAW2RAW'] or self.opt['train_detector']:
                 ### HINT FOR WHICH IS WHICH
                 ### KD_JPEG: RAW2RAW, WHICH IS A MODIFIED HWMNET WITH STYLE CONDITION
                 ### discriminator_mask: HWMNET WITH SUBTASK
@@ -254,11 +237,10 @@ class ISP_Pipeline_Training(Modified_invISP):
                 with torch.enable_grad():
 
                     ### RAW PROTECTION ###
-                    if self.task_name == "my_own_elastic":
-                        modified_raw_one_dim = self.RAW_protection_by_my_own_elastic(input_raw_one_dim=input_raw_one_dim)
-
-                    else:
-                        modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
+                    # if self.task_name == "my_own_elastic":
+                    modified_raw_one_dim = self.RAW_protection_by_my_own_elastic(input_raw_one_dim=input_raw_one_dim)
+                    # else:
+                    #     modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
 
                     modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
                     RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
@@ -300,29 +282,25 @@ class ISP_Pipeline_Training(Modified_invISP):
                         modified_input=modified_input, gt_rgb=gt_rgb, logs=logs
                     )
 
-                    # ERROR = attacked_image-attacked_forward
                     error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_adjusted)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
                     logs['ERROR'] = error_l1
 
-                    #####################   Image Manipulation Detection Network (Downstream task)   ###############
-                    ### mantranet: localizer mvssnet: netG resfcn: discriminator
-                    # _, pred_mvss = self.netG(attacked_image)
-                    # CE_MVSS = self.bce_with_logit_loss(pred_mvss, masks_GT)
-                    # logs['CE_MVSS'] = CE_MVSS.item()
-                    # pred_mantra = self.localizer(attacked_image)
-                    # CE_mantra = self.bce_with_logit_loss(pred_mantra, masks_GT)
-                    # logs['CE_mantra'] = CE_mantra.item()
                     ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
 
 
                     ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
                     if "discriminator_mask" in self.training_network_list:
 
-                        CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
-                                               attacked_image=attacked_image.detach().contiguous(),
-                                               masks_GT=masks_GT, logs=logs)
+                        pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                                       attacked_image=attacked_image.detach().contiguous(),
+                                                                       opt_name='finetune_detector_name',
+                                                                       masks_GT=masks_GT)
 
-                        CE_loss = CE_resfcn + l1_resfcn
+                        # CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
+                        #                        attacked_image=attacked_image.detach().contiguous(),
+                        #                        masks_GT=masks_GT, logs=logs)
+
+                        CE_loss = CE_resfcn
                         logs['CE'] = CE_resfcn.item()
                         logs['CE_ema'] = CE_resfcn.item()
                         # logs['Mean'] = l1_mean.item()
@@ -337,9 +315,14 @@ class ISP_Pipeline_Training(Modified_invISP):
                     ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
                     if "KD_JPEG" in self.training_network_list:
 
-                        CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
-                            attacked_image=attacked_image,
-                            masks_GT=masks_GT, logs=logs)
+                        pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                                       attacked_image=attacked_image,
+                                                                       opt_name='finetune_detector_name',
+                                                                       masks_GT=masks_GT)
+
+                        # CE_resfcn, l1_resfcn, pred_resfcn = self.detecting_forgery(
+                        #     attacked_image=attacked_image,
+                        #     masks_GT=masks_GT, logs=logs)
 
                         CE_loss = CE_resfcn
                         logs['CE_ema'] = CE_resfcn.item()
@@ -384,9 +367,9 @@ class ISP_Pipeline_Training(Modified_invISP):
                         # self.optimizer_discriminator.zero_grad()
 
                 ### update and track history losses
-                self.update_history_losses(index=self.global_step, PSNR=PSNR_DIFF,
-                                           loss=loss.item(),
-                                           loss_CE=CE_loss.item(), PSNR_attack=error_l1)
+                # self.update_history_losses(index=self.global_step, PSNR=PSNR_DIFF,
+                #                            loss=loss.item(),
+                #                            loss_CE=CE_loss.item(), PSNR_attack=error_l1)
 
                 #########################    printing the images   #################################################
                 anomalies = False  # CE_recall.item()>0.5

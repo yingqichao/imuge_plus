@@ -247,7 +247,8 @@ class Performance_Test(Modified_invISP):
             self.previous_images = self.label[0:1]
 
             masks, masks_GT, percent_range = self.mask_generation(modified_input=gt_rgb,
-                                                                  percent_range=None)
+                                                                  percent_range=None,
+                                                                  index=self.opt['inference_tamper_index'],)
 
             self.previous_protected = gt_rgb
 
