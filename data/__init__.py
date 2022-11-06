@@ -44,15 +44,15 @@ def create_dataset(*, opt,args,rank,seed):
         print("dataset with canny")
         from data.LQGT_dataset import LQGTDataset as D
         train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode == 1:
+    elif "ISP" in opt['model'] and args.mode in [1]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode in [3, 6]:
+    elif "ISP" in opt['model'] and args.mode in [3]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         train_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode in [0,2,4,5]:
+    elif "ISP" in opt['model'] and args.mode in [0,2,4,5,6]:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total
         # with open("./data/camera.txt", 'r') as t:
@@ -137,15 +137,15 @@ def create_dataset(*, opt,args,rank,seed):
     #     from data.tianchi_dataset import LQGTDataset as D
     #     val_set = D()
     #     # train_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode == 1:
+    elif "ISP" in opt['model'] and args.mode in [1]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         val_set = D(opt, dataset_opt)
-    elif "ISP" in opt['model'] and args.mode in [3, 6]:
+    elif "ISP" in opt['model'] and args.mode in [3]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         val_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode != 1:
+    elif "ISP" in opt['model'] and args.mode in [0,2,4,5,6]:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total
         # with open("./data/camera.txt", 'r') as t:

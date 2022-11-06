@@ -1,14 +1,14 @@
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/ISP_RAISE/
 protection_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
-detector_folder: /groupshare/ISP_results/complete_results/model/finished_MVSS/
+detector_folder: /groupshare/ISP_results/complete_results/model/finished_OSN/
 #MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
-finetune_detector_name: MVSS
+finetune_detector_name: OSN
 
 # restormer: 77999
-load_discriminator_models: 6999 #11499
+load_discriminator_models: 14999 #11499
 load_RAW_models: 11999 #11499 # 10999
 load_ISP_models: 43999 #20999 # new: 43999
 #load_MVSS_models: 11999
@@ -17,7 +17,7 @@ load_ISP_models: 43999 #20999 # new: 43999
 
 #### general settings
 
-gpu_ids: [4]
+gpu_ids: [1]
 conduct_cropping: true
 consider_robost: true
 include_isp_inference: true
@@ -28,7 +28,7 @@ model_save_period: 1000
 
 train_isp_networks: false
 #train_full_pipeline: true
-train_RAW2RAW: false
+train_RAW2RAW: true
 train_detector: true
 using_which_dataset_for_training: Raise
 

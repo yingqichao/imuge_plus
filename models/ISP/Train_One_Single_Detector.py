@@ -81,8 +81,8 @@ class Train_One_Single_Detector(Modified_invISP):
 
         logs, debug_logs = {}, []
 
-        self.real_H = self.clamp_with_grad(self.real_H)
-        batch_size, num_channels, height_width, _ = self.real_H.shape
+        self.label = self.clamp_with_grad(self.label)
+        batch_size, num_channels, height_width, _ = self.label.shape
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
 
@@ -91,7 +91,7 @@ class Train_One_Single_Detector(Modified_invISP):
             with torch.enable_grad():  # cuda.amp.autocast():
 
                 attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                    modified_input=self.real_H, gt_rgb=self.real_H, logs=logs)
+                    modified_input=self.label, gt_rgb=self.label, logs=logs)
 
                 ############    Image Manipulation Detection Network (Downstream task)   ###############################
                 pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
@@ -110,7 +110,7 @@ class Train_One_Single_Detector(Modified_invISP):
 
                 if self.global_step % 1000 == 3 or self.global_step <= 10:
                     images = stitch_images(
-                        self.postprocess(self.real_H),
+                        self.postprocess(self.label),
                         self.postprocess(attacked_image),
                         self.postprocess(attacked_adjusted),
                         self.postprocess(attacked_forward),
@@ -133,11 +133,11 @@ class Train_One_Single_Detector(Modified_invISP):
             if self.rank == 0:
                 print('Saving models and training states.')
                 self.save(self.global_step, folder='model', network_list=self.network_list)
-        if self.real_H is not None:
+        if self.label is not None:
             if self.previous_images is not None:
                 self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.real_H
-            self.previous_protected = self.real_H
+            self.previous_images = self.label
+            self.previous_protected = self.label
         self.global_step = self.global_step + 1
 
         # print(logs)

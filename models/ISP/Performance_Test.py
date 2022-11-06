@@ -248,7 +248,8 @@ class Performance_Test(Modified_invISP):
 
             masks, masks_GT, percent_range = self.mask_generation(modified_input=gt_rgb,
                                                                   percent_range=None,
-                                                                  index=self.opt['inference_tamper_index'],)
+                                                                  index=self.opt['inference_tamper_index'],
+                                                                  )
 
             self.previous_protected = gt_rgb
 

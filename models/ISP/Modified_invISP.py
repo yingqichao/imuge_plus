@@ -173,20 +173,15 @@ class Modified_invISP(BaseModel):
         return gt_rgb + self.KD_JPEG(gt_rgb)
 
     def feed_data_router(self, batch, mode):
-        if mode in [0.0]:
-            # self.feed_data_COCO_like(batch, mode='train') # feed_data_COCO_like(batch)
-            self.feed_data_ISP(batch, mode='train')
-        elif mode in [1.0,3.0,6.0]:
+        if mode in [1.0,3.0]:
             self.feed_data_COCO_like(batch, mode='train')
-        elif mode in [2.0,4.0,5.0]:
+        elif mode in [0.0,2.0,4.0,5.0,6.0]:
             self.feed_data_ISP(batch, mode='train')
 
     def feed_data_val_router(self, batch, mode):
-        if mode in [0.0]:
-            self.feed_data_ISP(batch, mode='val')
-        elif mode in [1.0,3.0,6.0]:
+        if mode in [1.0,3.0]:
             self.feed_data_COCO_like(batch, mode='val')
-        elif mode in [2.0,4.0,5.0]:
+        elif mode in [0.0,2.0,4.0,5.0,6.0]:
             self.feed_data_ISP(batch, mode='val')
 
 
