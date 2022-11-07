@@ -17,7 +17,11 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
         from models.CLRNet.IRNclrNew_model import IRNclrModel as M
         model = M(opt, args)
     elif which_model == 'ISP':
-        if args.mode==2:
+        if args.mode==0:
+            from models.ISP.Protected_Image_Generation import Protected_Image_Generation as M
+        elif args.mode==1:
+            from models.ISP.Localization_Mode_One import Localization_Mode_One as M
+        elif args.mode==2:
             from models.ISP.ISP_Pipeline_Training import ISP_Pipeline_Training as M
         elif args.mode==3:
             from models.ISP.Ablation_RGB_Protection import Ablation_RGB_Protection as M
