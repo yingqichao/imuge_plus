@@ -100,7 +100,8 @@ class Modified_invISP(BaseModel):
         self.amount_of_inpainting = len(
             self.opt['zits_as_inpainting'] +
             self.opt['edgeconnect_as_inpainting'] +
-            self.opt['lama_as_inpainting']
+            self.opt['lama_as_inpainting'] +
+            self.opt['ideal_as_inpainting']
         )
 
         self.mode_dict = {
@@ -111,6 +112,8 @@ class Modified_invISP(BaseModel):
             4: 'OSN performance(val)',
             5: 'train a ISP using restormer for validation(train)',
             6: 'train resfcn (train)',
+            7: 'Test 1110 add ablation',
+            8: 'Inverting RGB to RAW',
         }
         print(f"network list:{self.network_list}")
         print(f"Current mode: {self.args.mode}")
@@ -173,15 +176,15 @@ class Modified_invISP(BaseModel):
         return gt_rgb + self.KD_JPEG(gt_rgb)
 
     def feed_data_router(self, batch, mode):
-        if mode in [1.0,3.0]:
+        if mode in self.opt['using_COCO_like_dataset_training']:
             self.feed_data_COCO_like(batch, mode='train')
-        elif mode in [0.0,2.0,4.0,5.0,6.0]:
+        elif mode in self.opt['using_RAW_dataset_training']:
             self.feed_data_ISP(batch, mode='train')
 
     def feed_data_val_router(self, batch, mode):
-        if mode in [1.0,3.0]:
+        if mode in self.opt['using_COCO_like_dataset_testing']:
             self.feed_data_COCO_like(batch, mode='val')
-        elif mode in [0.0,2.0,4.0,5.0,6.0]:
+        elif mode in self.opt['using_RAW_dataset_testing']:
             self.feed_data_ISP(batch, mode='val')
 
 
@@ -226,6 +229,12 @@ class Modified_invISP(BaseModel):
             return self.train_ISP_using_rstormer(step=step)
         elif mode==6.0:
             return self.train_resfcn(step=step)
+        elif mode==7.0:
+            return self.main_test(step=step)
+        elif mode==8.0:
+            return self.invert_RGB_to_RAW(step=step)
+        else:
+            raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
     ####################################################################################################
     # todo: MODE == 0
@@ -498,6 +507,20 @@ class Modified_invISP(BaseModel):
         pass
 
     ####################################################################################################
+    # todo: MODE == 7
+    # todo: main_test
+    ####################################################################################################
+    def main_test(self, step=None):
+        pass
+
+    ####################################################################################################
+    # todo: MODE == 8
+    # todo: invert_RGB_to_RAW
+    ####################################################################################################
+    def invert_RGB_to_RAW(self, step=None):
+        pass
+
+    ####################################################################################################
     # todo: define how to tamper the rendered RGB
     ####################################################################################################
     def tampering_RAW(self, *, masks, masks_GT, gt_rgb, modified_input, percent_range, index=None):
@@ -757,7 +780,7 @@ class Modified_invISP(BaseModel):
         # if not predict_config.get('refine', False):
         self.lama_model = self.lama_model.cuda()
 
-
+    @torch.no_grad()
     def inpainting_lama(self, *, forward_image, masks):
         batch = {
             'image': forward_image,
@@ -766,8 +789,9 @@ class Modified_invISP(BaseModel):
         # batch['mask'] = (batch['mask'] > 0) * 1
         batch = self.lama_model(batch)
         result = batch['inpainted']
-        return forward_image * (1 - masks) + result * masks
+        return forward_image * (1 - masks) + result.clone().detach() * masks
 
+    @torch.no_grad()
     def inpainting_edgeconnect(self, *, forward_image, masks, image_gray=None, image_canny=None):
         # items = (forward_image, image_gray, image_canny, masks)
         if image_gray is None:
@@ -782,11 +806,12 @@ class Modified_invISP(BaseModel):
 
         # result = self.edgeconnect_model(items)
 
-        return forward_image * (1 - masks) + result * masks
+        return forward_image * (1 - masks) + result.clone().detach() * masks
 
     def inpainting_for_RAW(self, *, forward_image, masks, gt_rgb):
         return forward_image * (1 - masks) + gt_rgb * masks
 
+    @torch.no_grad()
     def inpainting_ZITS(self, *, forward_image, masks):
         from ZITSinpainting.single_image_test import load_images_for_test, wf_inference_test, load_masked_position_encoding
         sigma = 3.0
@@ -836,7 +861,7 @@ class Modified_invISP(BaseModel):
         #         batch[k] = batch[k].cuda()
         merged_image = self.ZITS_model(batch)
 
-        return merged_image*masks+forward_image*(1-masks)
+        return merged_image.clone().detach() * masks + forward_image * (1-masks)
 
 
     ####################################################################################################

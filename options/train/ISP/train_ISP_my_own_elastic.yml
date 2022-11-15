@@ -1,23 +1,41 @@
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/ISP_RAISE/
 protection_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
-detector_folder: /groupshare/ISP_results/complete_results/model/finished_OSN/
+detector_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
 #MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
-finetune_detector_name: OSN
+finetune_detector_name: CAT
+
+## ours:                                CANON: 12999
+## mvss: 30999 (KD 12999)  CANON: 12999 (KD finished_MVSS 12999)
+## osn: 12999 (KD 12999)
+## ISP canon: 16999  CANON: 10999 (KD finished_OSN 19999)
 
 # restormer: 77999
-load_discriminator_models: 14999 #11499
+load_discriminator_models: 11999 #11499
 load_RAW_models: 11999 #11499 # 10999
-load_ISP_models: 43999 #20999 # new: 43999
+load_ISP_models: 43999 #20999 # new: 43999 # canon: 16999
 #load_MVSS_models: 11999
 #load_OSN_models: 11999
 #load_customized_models: 0
 
+simulated_splicing_indices: [3, 6, 8]
+simulated_copymove_indices: [0, 2]
+simulated_inpainting_indices: [1, 4, 5, 7]
+simulated_copysplicing_indices: []
+
+simulated_resize_indices: [0,5]
+simulated_gblur_indices: [1]
+simulated_mblur_indices: [2,7]
+simulated_AWGN_indices: [4]
+simulated_strong_JPEG_indices: [3,6]
+simulated_weak_JPEG_indices: []
+
+
 #### general settings
 
-gpu_ids: [1]
+gpu_ids: [2]
 conduct_cropping: true
 consider_robost: true
 include_isp_inference: true
@@ -30,7 +48,7 @@ train_isp_networks: false
 #train_full_pipeline: true
 train_RAW2RAW: true
 train_detector: true
-using_which_dataset_for_training: Raise
+using_which_dataset_for_training: Raise #Canon_FiveK
 
 ### directory
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
@@ -56,9 +74,9 @@ datasets:
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
 
     use_shuffle: true
-    n_workers: 2 # per GPU
+    n_workers: 1 # per GPU
 
-    batch_size: 1 # 4
+    batch_size: 4 # 4
     GT_size: 512 # 608
 
     color: RGB

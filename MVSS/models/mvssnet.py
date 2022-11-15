@@ -34,10 +34,10 @@ def get_sobel(in_chan, out_chan):
     conv_x.weight = filter_x
     conv_y = nn.Conv2d(in_chan, out_chan, kernel_size=3, stride=1, padding=1, bias=False)
     conv_y.weight = filter_y
-    sobel_x = nn.Sequential(conv_x, nn.BatchNorm2d(out_chan))
-    sobel_y = nn.Sequential(conv_y, nn.BatchNorm2d(out_chan))
+    sobel_x = nn.Sequential(conv_x, nn.SyncBatchNorm(out_chan))
+    sobel_y = nn.Sequential(conv_y, nn.SyncBatchNorm(out_chan))
     return sobel_x, sobel_y
-
+    
 
 def run_sobel(conv_x, conv_y, input):
     g_x = conv_x(input)
@@ -99,12 +99,12 @@ class Bottleneck(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None, rate=1):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
+        self.bn1 = nn.SyncBatchNorm(planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
                                padding=rate, dilation=rate, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
+        self.bn2 = nn.SyncBatchNorm(planes)
         self.conv3 = nn.Conv2d(planes, planes * self.expansion, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm2d(planes * self.expansion)
+        self.bn3 = nn.SyncBatchNorm(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -138,7 +138,7 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(n_input, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
+        self.bn1 = nn.SyncBatchNorm(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -151,7 +151,7 @@ class ResNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, nn.SyncBatchNorm):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
@@ -161,7 +161,7 @@ class ResNet(nn.Module):
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion,
                           kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes * block.expansion),
+                nn.SyncBatchNorm(planes * block.expansion),
             )
 
         layers = []
@@ -178,7 +178,7 @@ class ResNet(nn.Module):
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion,
                           kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(planes * block.expansion),
+                nn.SyncBatchNorm(planes * block.expansion),
             )
 
         layers = []
@@ -263,7 +263,7 @@ class ERB(nn.Module):
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.relu = nn.ReLU()
-        self.bn = nn.BatchNorm2d(out_channels)
+        self.bn = nn.SyncBatchNorm(out_channels)
         self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x, relu=True):
@@ -401,7 +401,7 @@ class _ChannelAttentionModule(nn.Module):
 
 
 class _DAHead(nn.Module):
-    def __init__(self, in_channels, nclass, aux=True, norm_layer=nn.BatchNorm2d, norm_kwargs=None, **kwargs):
+    def __init__(self, in_channels, nclass, aux=True, norm_layer=nn.SyncBatchNorm, norm_kwargs=None, **kwargs):
         super(_DAHead, self).__init__()
         self.aux = aux
         inter_channels = in_channels // 4

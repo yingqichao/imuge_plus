@@ -114,7 +114,7 @@ class Train_One_Single_Detector(Modified_invISP):
                         self.postprocess(attacked_image),
                         self.postprocess(attacked_adjusted),
                         self.postprocess(attacked_forward),
-                        self.postprocess(torch.sigmoid(pred_resfcn)),
+                        self.postprocess(pred_resfcn),
                         self.postprocess(masks_GT),
                         img_per_row=1
                     )

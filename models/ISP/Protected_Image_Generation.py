@@ -235,6 +235,7 @@ class Protected_Image_Generation(Modified_invISP):
                             masks=masks, masks_GT=masks_GT,
                             modified_input=source_image, percent_range=percent_range,
                             index=self.opt['inference_tamper_index'],
+                            gt_rgb=gt_rgb
                         )
 
                         self.previous_protected = source_image.clone().detach()

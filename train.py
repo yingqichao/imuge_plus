@@ -151,7 +151,7 @@ def main(args,opt):
             #                     'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
             # if rank <= 0:
             #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
-            running_list = [0.0]*len(variables_list)
+            running_list = {} #[0.0]*len(variables_list)
             valid_idx = 0
             # running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
             if opt['dist']:
@@ -175,8 +175,8 @@ def main(args,opt):
                         print("The end of val set is reached. Refreshing...")
 
                         info_str = f'valid_idx:{valid_idx} '
-                        for i in range(len(variables_list)):
-                            info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.4f} '
+                        for key in running_list:
+                            info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
                         with open('./test_result.txt', 'a') as f:
                             f.write(info_str+'\n')
                         f.close()
@@ -184,22 +184,22 @@ def main(args,opt):
                         if opt['inference_benign_attack_begin_idx'] >= 24:
                             raise StopIteration()
                         current_step = 0
-                        running_list = [0.0] * len(variables_list)
+                        running_list = {} #[0.0] * len(variables_list)
                         valid_idx = 0
                         val_generator = iter(val_loader)
                         val_item = next(val_generator)
                     model.feed_data_val_router(batch=val_item, mode=args.mode)
 
-                if variables_list[0] in logs or variables_list[1] in logs or variables_list[2] in logs:
-                    for i in range(len(variables_list)):
-                        if variables_list[i] in logs:
-                            running_list[i] += logs[variables_list[i]]
-                        # running_CE_mantra += logs['CE_mantra']
-                        # running_CE_resfcn += logs['CE_resfcn']
-                    valid_idx += 1
-                else:
-                    ## which is kind of abnormal, print
-                    print(variables_list)
+                # if variables_list[0] in logs or variables_list[1] in logs or variables_list[2] in logs:
+                for key in logs:
+                    if key not in running_list:
+                        running_list[key] = 0
+                    running_list[key] += logs[key]
+                valid_idx += 1
+                # else:
+                #     ## which is kind of abnormal, print
+                #     print(variables_list)
+
                 if valid_idx>0 and (idx<10 or valid_idx % print_step == print_step - 1):  # print every 2000 mini-batches
                     # print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
                     #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.2f} '
@@ -209,14 +209,14 @@ def main(args,opt):
                     end = time.time()
                     lr = logs['lr']
                     info_str = f'[{epoch + 1}, {valid_idx + 1} {idx*model.real_H.shape[0]} {rank} {lr}] '
-                    for i in range(len(variables_list)):
-                        info_str += f'{variables_list[i]}: {running_list[i] / valid_idx:.4f} '
+                    for key in running_list:
+                        info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
                     info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.4f} s'
                     print(info_str)
                     start = time.time()
                     ## refresh the counter to see if the model behaves abnormaly.
                     if valid_idx>=restart_step:
-                        running_list = [0.0] * len(variables_list)
+                        running_list = {} #[0.0] * len(variables_list)
                         valid_idx = 0
 
                 current_step += 1

@@ -48,13 +48,13 @@ from utils import stitch_images
 from models.ISP.Modified_invISP import Modified_invISP
 
 
-class ISP_Pipeline_Training(Modified_invISP):
+class Test(Modified_invISP):
     def __init__(self, opt, args, train_set=None, val_set=None):
         """
             this file is mode 2
 
         """
-        super(ISP_Pipeline_Training, self).__init__(opt, args, train_set, val_set)
+        super(Test, self).__init__(opt, args, train_set, val_set)
         ### todo: options
 
         ### todo: constants
@@ -93,7 +93,7 @@ class ISP_Pipeline_Training(Modified_invISP):
         self.define_inpainting_ZITS()
         self.define_inpainting_lama()
 
-    def optimize_parameters_main(self, step=None):
+    def main_test(self, step=None):
         ####################  Image Manipulation Detection Network (Downstream task)  ##################
         ### mantranet: localizer mvssnet: netG resfcn: discriminator
 
@@ -234,13 +234,11 @@ class ISP_Pipeline_Training(Modified_invISP):
                 # self.localizer.train() if "localizer" in self.training_network_list else self.localizer.eval()
 
 
-                with torch.enable_grad():
+                with torch.no_grad():
 
                     ### RAW PROTECTION ###
-                    # if self.task_name == "my_own_elastic":
+
                     modified_raw_one_dim = self.RAW_protection_by_my_own_elastic(input_raw_one_dim=input_raw_one_dim)
-                    # else:
-                    #     modified_raw_one_dim = self.KD_JPEG(input_raw_one_dim)
 
                     modified_raw = self.visualize_raw(modified_raw_one_dim, bayer_pattern=bayer_pattern, white_balance=camera_white_balance)
                     RAW_L1 = self.l1_loss(input=modified_raw, target=input_raw)
@@ -251,11 +249,6 @@ class ISP_Pipeline_Training(Modified_invISP):
                     logs['RAW_PSNR'] = RAW_PSNR
                     logs['RAW_L1'] = RAW_L1.item()
 
-                    ########################    RAW2RGB pipelines   ################################################
-                    ### note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
-                    ### thus, we are not let the ISP network approaching the ground-truth RGB.
-
-                    ### model selection，shuffle the gts to enable color control
 
                     modified_input, tamper_source, semi_images, semi_sources, semi_losses = self.ISP_mixing_during_training(
                         modified_raw=modified_raw,
@@ -278,39 +271,53 @@ class ISP_Pipeline_Training(Modified_invISP):
                     collected_protected_image = tamper_source
 
                     #######################   attack layer   #######################################################
-                    attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                        modified_input=modified_input, gt_rgb=gt_rgb, logs=logs
-                    )
-
-                    error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_adjusted)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-                    logs['ERROR'] = error_l1
-
-                    ### why contiguous? https://discuss.pytorch.org/t/runtimeerror-set-sizes-and-strides-is-not-allowed-on-a-tensor-created-from-data-or-detach/116910/10
+                    results_list = []
+                    buffer_index = self.global_step
 
 
-                    ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
-                    if "discriminator_mask" in self.training_network_list:
+                    # while rate_mask < 0.05 or rate_mask >= 0.33:  # prevent too small or too big
+                    masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
+                                                                          percent_range=(0,0.2),
+                                                                          index=self.global_step)
 
-                        pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
-                                                                       attacked_image=attacked_image.detach().contiguous(),
-                                                                       opt_name='finetune_detector_name',
-                                                                       masks_GT=masks_GT)
+                    kernel = 3  # 3,5,7
+                    resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                                    int(self.random_float(0.5, 2) * self.width_height))
 
+                    tamper_shifted, masks, masks_GT = self.get_shifted_image_for_copymove(forward_image=modified_input,
+                                                                                          percent_range=percent_range,
+                                                                                          masks=masks)
+                    attacked_forward = modified_input * (1 - masks) + tamper_shifted.clone().detach() * masks
 
-                        CE_loss = CE_resfcn
-                        logs['CE'] = CE_resfcn.item()
-                        logs['CE_ema'] = CE_resfcn.item()
-                        # logs['Mean'] = l1_mean.item()
-                        # logs['Std'] = l1_std.item()
-                        CE_loss.backward()
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
-                        self.optimizer_discriminator_mask.step()
-                        self.optimizer_discriminator_mask.zero_grad()
+                    for i in range(5):
+                        self.global_step = i
 
 
-                    ### USING THE MOMENTUM LOCALIZER TO TRAIN THE PIPELINE
-                    if "KD_JPEG" in self.training_network_list:
+                        index_for_postprocessing = self.global_step
+
+                        quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+
+                        ###############   TAMPERING   ##################################################################################
+
+                        # attacked_forward, masks, masks_GT = self.copymove(forward_image=modified_input, masks=masks,
+                        #                                                   masks_GT=masks_GT,
+                        #                                                   percent_range=percent_range)
+
+                        # attacked_forward = self.inpainting_ZITS(forward_image=modified_input,
+                        #                                                     masks=masks_GT)
+                        attacked_forward = self.clamp_with_grad(attacked_forward)
+
+                        attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(
+                            attacked_forward=attacked_forward,
+                            quality_idx=quality_idx,
+                            index=index_for_postprocessing,
+                            kernel_size=kernel,
+                            resize_ratio=resize_ratio
+                            )
+
+                        error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(attacked_forward)).item() #self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+                        logs['ERROR'] = error_l1
+
 
                         pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
                                                                        attacked_image=attacked_image,
@@ -320,80 +327,36 @@ class ISP_Pipeline_Training(Modified_invISP):
                         CE_loss = CE_resfcn
                         logs['CE_ema'] = CE_resfcn.item()
 
-                        loss = 0
-                        loss_l1 = self.opt['L1_hyper_param'] * ISP_L1
-                        loss += loss_l1
-                        hyper_param_raw = self.opt['RAW_L1_hyper_param'] # if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['RAW_L1_hyper_param']/5
-                        loss += hyper_param_raw * RAW_L1
-                        loss_ssim = self.opt['ssim_hyper_param'] * ISP_SSIM
-                        loss += loss_ssim
-                        # hyper_param_percept = self.opt['perceptual_hyper_param'] # if (ISP_PSNR < self.opt['psnr_thresh']) else self.opt['perceptual_hyper_param'] / 4
-                        # loss_percept = hyper_param_percept * (ISP_percept_0+ISP_percept_1)/2
-                        # loss += loss_percept
-                        # loss_style = self.opt['style_hyper_param'] * (ISP_style_0 +ISP_style_1) / 2
-                        # loss += loss_style
-                        # hyper_param = self.opt['CE_hyper_param'] if (ISP_PSNR>=self.opt['psnr_thresh']) else self.opt['CE_hyper_param']/10
-                        hyper_param = self.exponential_weight_for_backward(value=ISP_PSNR, exp=2)
-                        loss += hyper_param * CE_loss  # (CE_MVSS+CE_mantra+CE_resfcn)/3
+                        results_list.append(pred_resfcn)
 
-                        logs['ISP_SSIM_NOW'] = -loss_ssim.item()
-                        # logs['Percept'] = loss_percept.item()
-                        # logs['Style'] = loss_style.item()
-                        logs['Gray'] = loss_l1.item()
-                        logs['loss'] = loss.item()
+                    self.global_step = buffer_index
 
-
-                        ##### Grad Accumulation (not used any more)
-                        loss.backward()
-
-                        if self.train_opt['gradient_clipping']:
-                            nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
-
-                        self.optimizer_KD_JPEG.step()
-
-                        self.optimizer_KD_JPEG.zero_grad()
-                        self.optimizer_G.zero_grad()
-                        self.optimizer_discriminator_mask.zero_grad()
-                        self.optimizer_generator.zero_grad()
-                        self.optimizer_qf.zero_grad()
-                        # self.optimizer_localizer.zero_grad()
-                        # self.optimizer_discriminator.zero_grad()
-
-                ### update and track history losses
-                # self.update_history_losses(index=self.global_step, PSNR=PSNR_DIFF,
-                #                            loss=loss.item(),
-                #                            loss_CE=CE_loss.item(), PSNR_attack=error_l1)
 
                 #########################    printing the images   #################################################
                 anomalies = False  # CE_recall.item()>0.5
-                if anomalies or self.global_step % 200 == 3 or self.global_step <= 10:
+                if True:
                     images = stitch_images(
                         self.postprocess(input_raw),
                         ### RAW2RAW
                         self.postprocess(modified_raw),
                         self.postprocess(10 * torch.abs(modified_raw - input_raw)),
                         ### rendered images and protected images
-                        self.postprocess(modified_input_0),
-                        self.postprocess(tamper_source_0),
-                        self.postprocess(10 * torch.abs(modified_input_0 - tamper_source_0)),
-                        self.postprocess(modified_input_1),
-                        self.postprocess(tamper_source_1),
-                        self.postprocess(10 * torch.abs(modified_input_1 - tamper_source_1)),
                         self.postprocess(modified_input),
-
                         self.postprocess(gt_rgb),
 
                         ### tampering and benign attack
                         self.postprocess(attacked_forward),
-                        self.postprocess(attacked_adjusted),
+                        # self.postprocess(attacked_adjusted),
                         self.postprocess(attacked_image),
-                        self.postprocess(10 * torch.abs(attacked_forward - attacked_adjusted)),
-                        self.postprocess(10 * torch.abs(attacked_adjusted - attacked_image)),
                         ### tampering detection
                         # self.postprocess(attacked_cannied),
                         self.postprocess(masks_GT),
 
-                        self.postprocess(pred_resfcn),
+                        self.postprocess(results_list[0]),
+                        self.postprocess(results_list[1]),
+                        self.postprocess(results_list[2]),
+                        self.postprocess(results_list[3]),
+                        self.postprocess(results_list[4]),
                         # self.postprocess(torch.sigmoid(post_resfcn)),
 
                         img_per_row=1

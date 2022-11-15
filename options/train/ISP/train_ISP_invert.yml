@@ -1,24 +1,32 @@
+#### model path dirs
+ISP_folder: /groupshare/ISP_results/complete_results/model/ISP_RAISE/
+protection_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
+detector_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
+#MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+#OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
+finetune_detector_name: CAT
 
-finetune_detector_name: MVSS
-consider_robost: true
-conduct_cropping: true
-conduct_augmentation: true
-restart_step: 100
-model_save_period: 100
-using_which_dataset_for_training: Raise #Canon_FiveK
-
-#ISP_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-#protection_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-detector_folder: /groupshare/ISP_results/complete_results/model/ablation_MVSS_robust/
-
+## ours:                                CANON: 12999
+## mvss: 30999 (KD 12999)  CANON: 12999 (KD finished_MVSS 12999)
+## osn: 12999 (KD 12999)
+## ISP canon: 16999  CANON: 10999 (KD finished_OSN 19999)
 
 # restormer: 77999
-load_discriminator_models: 3999
+load_discriminator_models: 0 #11499
+load_RAW_models: 0 #11499 # 10999
+load_ISP_models: 0 #20999 # new: 43999 # canon: 16999
+
+
 
 #### general settings
 
-gpu_ids: [0]
+gpu_ids: [2,3]
+
+restart_step: 1000
+model_save_period: 1000
+
+using_which_dataset_for_training: Raise #Canon_FiveK
 
 
 
@@ -30,7 +38,7 @@ datasets:
 #    dataroot_GT: /groupshare//Places/data_256                                        # Places
 #    dataroot_GT: /groupshare/CelebA/img/img_celeba_200                                          # CelebA
 #    dataroot_GT: /groupshare/paris_street_view/paris_train                            # ParisStreetView
-    dataroot_GT: /groupshare/COCOdataset/train2017                                   # COCO
+    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0                                   # COCO
 #    dataroot_GT: /groupshare//Flickr1024/train                                 # Flicker
 #    dataroot_GT: /groupshare//DIV2K_valid                                # DIV2K
 #    dataroot_GT: /groupshare//VOC2012/JPEGImages
@@ -39,7 +47,7 @@ datasets:
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
 
     use_shuffle: true
-    n_workers: 4 # per GPU
+    n_workers: 2 # per GPU
 
     batch_size: 4 # 4
     GT_size: 512 # 608
@@ -49,9 +57,10 @@ datasets:
   val:
     name: val_DIV2K
     mode: LQGT
-    dataroot_GT: /groupshare/COCOdataset/test2017
+    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
-    GT_size: 512 # 608
+    GT_size: 512
+
 
 train:
   lr_scratch: !!float 1e-4

@@ -511,12 +511,12 @@ class my_own_elastic(nn.Module):
 
         return Y
 
-        # x_feats = x_feats if self.nin != self.nout else X + x_feats
+        # Y_out = torch.where(Y>0,1,0)
         # ### identical to that in HWMNet
         # if self.use_norm_conv:
         #     ## minimize the affect on the CE prediction using detach
         #     # norm_pred = self.IN(torch.sigmoid(out_1.detach()))
-        #     sigmoid_pred = torch.sigmoid(x_feats.detach())
+        #
         #     std, mean = torch.std_mean(sigmoid_pred,dim=(2,3))
         #     norm_pred = (sigmoid_pred-mean.unsqueeze(-1).unsqueeze(-1))/std.unsqueeze(-1).unsqueeze(-1)
         #     ## get mean and std from msff_result

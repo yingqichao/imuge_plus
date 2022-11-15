@@ -3,7 +3,13 @@
 #RAW2RAW_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #detector_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 
+using_RAW_dataset_training: [0.0,2.0,4.0,5.0,6.0,7.0,8.0]
+using_RAW_dataset_testing: [0.0,2.0,4.0,5.0,6.0,7.0,8.0]
+using_COCO_like_dataset_training: [1.0,3.0]
+using_COCO_like_dataset_testing: [1.0,3.0]
 #### general settings
+
+
 
 using_which_dataset_for_training: Canon_FiveK # RAISE
 using_which_dataset_for_test: Canon_FiveK
