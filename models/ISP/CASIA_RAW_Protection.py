@@ -48,35 +48,45 @@ from utils import stitch_images
 from models.ISP.Modified_invISP import Modified_invISP
 
 
-class Invert_RGB_to_RAW(Modified_invISP):
+class CASIA_RAW_Protection(Modified_invISP):
     def __init__(self, opt, args, train_set=None, val_set=None):
         """
-            this file is mode 8
+            this file is mode 9
 
         """
-        super(Invert_RGB_to_RAW, self).__init__(opt, args, train_set, val_set)
+        super(CASIA_RAW_Protection, self).__init__(opt, args, train_set, val_set)
         ### todo: options
 
         ### todo: constants
 
     def network_definitions(self):
         ### mode=8: InvISP to bi-directionally convert RGB and RAW,
-        self.network_list = ["generator", "qf_predict_network", "netG"]
-        self.save_network_list = ["generator", "qf_predict_network"]
-        self.training_network_list = ["generator", "qf_predict_network"]
+        self.network_list = ["generator", 'KD_JPEG','discriminator_mask']
+        self.save_network_list = ['KD_JPEG','discriminator_mask']
+        self.training_network_list = ['KD_JPEG','discriminator_mask']
 
         ### ISP networks
-        self.netG = self.define_UNet_as_ISP()
-        self.load_model_wrapper(folder_name='original_ISP_folder', model_name='load_origin_ISP_models',
-                                network_lists=['netG'], strict=True)
+        # self.netG = self.define_UNet_as_ISP()
+        # self.load_model_wrapper(folder_name='original_ISP_folder', model_name='load_origin_ISP_models',
+        #                         network_lists=['netG'], strict=True)
 
         self.generator = self.define_invISP()
-        self.qf_predict_network = self.define_UNet_as_ISP()
+        # self.qf_predict_network = self.define_UNet_as_ISP()
         self.load_model_wrapper(folder_name='ISP_folder', model_name='load_ISP_models',
-                                network_lists=["generator", "qf_predict_network"], strict=True)
+                                network_lists=["generator"], strict=True)
 
+        ### RAW2RAW network
+        self.define_RAW2RAW_network(n_channels=3)
+        self.load_model_wrapper(folder_name='protection_folder', model_name='load_RAW_models',
+                                network_lists=['KD_JPEG'])
 
-    def invert_RGB_to_RAW(self, step=None):
+        ### detector
+        print(f"using {self.opt['finetune_detector_name']} as discriminator_mask.")
+        self.discriminator_mask = self.define_detector(opt_name='finetune_detector_name')
+        self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
+                                network_lists=['discriminator_mask'])
+
+    def RAW_protection_on_CASIA(self, step=None):
         ####################  Image Manipulation Detection Network (Downstream task)  ##################
         ### mantranet: localizer mvssnet: netG resfcn: discriminator
 
@@ -91,103 +101,124 @@ class Invert_RGB_to_RAW(Modified_invISP):
         logs['lr'] = lr
 
 
-        sum_batch_size = self.real_H.shape[0]
-
-        ### camera_white_balance SIZE (B,3)
-        camera_white_balance = self.camera_white_balance
-        file_name = self.file_name
-        ### bayer_pattern sized (B,1) ranging from [0,3]
-        bayer_pattern = self.bayer_pattern
-
-        input_raw_one_dim = self.real_H
-        gt_rgb = self.label
-        input_raw = self.visualize_raw(input_raw_one_dim, bayer_pattern=bayer_pattern,
-                                       white_balance=camera_white_balance, eval=not self.opt['train_isp_networks'])
-
-        batch_size, num_channels, height_width, _ = input_raw.shape
-        # input_raw = self.clamp_with_grad(input_raw)
+        # self.real_H, self.canny_image
 
         with torch.enable_grad():
 
-            self.generator.train()
-            self.qf_predict_network.train()
-            self.netG.eval()
+            self.generator.eval()
+            # self.qf_predict_network.train()
+            self.KD_JPEG.train()
+            self.discriminator_mask.train()
+            gt_rgb = self.real_H
+            masks_GT = self.canny_image
 
-            ####### UNetDiscriminator ##############
-            unet_rev_RAW = self.qf_predict_network(gt_rgb)
-            CYCLE_loss = self.l1_loss(input=unet_rev_RAW, target=input_raw)
-            unet_rev_RAW = self.clamp_with_grad(unet_rev_RAW)
-            CYCLE_PSNR = self.psnr(self.postprocess(unet_rev_RAW),
-                                   self.postprocess(input_raw)).item()
-            logs['U_REV_PSNR'] = CYCLE_PSNR
-            logs['U_REV_L1'] = CYCLE_loss.item()
+            ####### InvISP revert image into RAW ########################
 
-            rendered_rgb_unet = self.netG(unet_rev_RAW)
-            CYCLE_RENDER_loss = self.l1_loss(input=rendered_rgb_unet, target=gt_rgb)
-            rendered_rgb_unet = self.clamp_with_grad(rendered_rgb_unet)
-            CYCLE_PSNR_RENDER = self.psnr(self.postprocess(rendered_rgb_unet),
-                                   self.postprocess(gt_rgb)).item()
-            logs['U_RENDER_PSNR'] = CYCLE_PSNR_RENDER
-            logs['U_RENDER_L1'] = CYCLE_RENDER_loss.item()
-
-            CYCLE_total = CYCLE_loss + CYCLE_RENDER_loss
-            CYCLE_total.backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-            self.optimizer_qf.step()
-            self.optimizer_qf.zero_grad()
-
-            ####### InvISP ########################
-            rgb_invisp = self.generator(input_raw)
-            ISP_forward = self.l1_loss(input=rgb_invisp, target=gt_rgb)
-            rgb_invisp = self.clamp_with_grad(rgb_invisp)
-            ISP_PSNR = self.psnr(self.postprocess(rgb_invisp),
-                                 self.postprocess(gt_rgb)).item()
-            logs['INV_PSNR'] = ISP_PSNR
-            logs['INV_L1'] = ISP_forward.item()
-
-            raw_invisp, _ = self.generator(rgb_invisp, rev=True)
-            ISP_backward = self.l1_loss(input=raw_invisp, target=input_raw)
+            raw_invisp, _ = self.generator(self.real_H, rev=True)
             raw_invisp = self.clamp_with_grad(raw_invisp)
-            ISP_REV_PSNR = self.psnr(self.postprocess(raw_invisp),
-                                     self.postprocess(input_raw)).item()
-            logs['INV_REV_PSNR'] = ISP_REV_PSNR
-            logs['INV_REV_L1'] = ISP_backward.item()
 
-            # rendered_rgb_invISP = self.netG(raw_invisp)
-            # CYCLE_RENDER_loss = self.l1_loss(input=rendered_rgb_invISP, target=gt_rgb)
-            # rendered_rgb_invISP = self.clamp_with_grad(rendered_rgb_invISP)
-            # CYCLE_PSNR_RENDER = self.psnr(self.postprocess(rendered_rgb_invISP),
-            #                               self.postprocess(gt_rgb)).item()
-            # logs['INV_RENDER_PSNR'] = CYCLE_PSNR_RENDER
-            # logs['INV_RENDER_L1'] = CYCLE_RENDER_loss.item()
+            modified_input = self.real_H + self.KD_JPEG(self.real_H)
 
-            ISP_loss = ISP_backward + ISP_forward #+ CYCLE_RENDER_loss
+            RAW_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
+            RAW_SSIM = - self.ssim_loss(modified_input, gt_rgb)
+            # ISP_percept, ISP_style = self.perceptual_loss(modified_input, gt_rgb,
+            #                                                   with_gram=True)
 
-            ISP_loss.backward()
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-            self.optimizer_generator.step()
-            self.optimizer_generator.zero_grad()
+            modified_input = self.clamp_with_grad(modified_input)
 
-        ### emptying cache to save memory ###
-        # torch.cuda.empty_cache()
+            RAW_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(gt_rgb)).item()
+            logs['RAW_PSNR'] = RAW_PSNR
+            logs['RAW_L1'] = RAW_L1.item()
+
+            ############################    attack layer  ######################################################
+            attacked_image = modified_input*(1-masks_GT)+gt_rgb*masks_GT
+
+            index_for_postprocessing = self.global_step
+            quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+            ## settings for attack
+            kernel = random.choice([3, 5, 7])  # 3,5,7
+            resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                            int(self.random_float(0.5, 2) * self.width_height))
+
+            skip_robust = np.random.rand() > self.opt['skip_attack_probability']
+            if not skip_robust and self.opt['consider_robost']:
+
+                attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_image,
+                                                                                     quality_idx=quality_idx,
+                                                                                     index=index_for_postprocessing,
+                                                                                     kernel_size=kernel,
+                                                                                     resize_ratio=resize_ratio
+                                                                                     )
+            else:
+                attacked_image = attacked_image
+
+
+
+            ###################    Image Manipulation Detection Network (Downstream task)   ####################
+
+            ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
+            if "discriminator_mask" in self.training_network_list:
+                pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                               attacked_image=attacked_image.detach().contiguous(),
+                                                               opt_name='finetune_detector_name',
+                                                               masks_GT=masks_GT)
+
+                logs['CE'] = CE_resfcn.item()
+                logs['CE_ema'] = CE_resfcn.item()
+
+                CE_resfcn.backward()
+
+                if self.train_opt['gradient_clipping']:
+                    nn.utils.clip_grad_norm_(self.discriminator_mask.parameters(), 1)
+                self.optimizer_discriminator_mask.step()
+                self.optimizer_discriminator_mask.zero_grad()
+
+            if "KD_JPEG" in self.training_network_list:
+                pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                               attacked_image=attacked_image,
+                                                               opt_name='finetune_detector_name',
+                                                               masks_GT=masks_GT)
+
+                logs['CE_ema'] = CE_resfcn.item()
+
+                loss = 0
+                loss_l1 = self.opt['L1_hyper_param'] * RAW_L1
+                loss += loss_l1
+                loss_ssim = self.opt['ssim_hyper_param'] * RAW_SSIM
+                loss += loss_ssim
+                hyper_param = self.exponential_weight_for_backward(value=RAW_PSNR, exp=2)
+                loss += hyper_param * CE_resfcn
+                logs['loss'] = loss.item()
+                logs['ISP_SSIM_NOW'] = -loss_ssim.item()
+
+                ### Grad Accumulation
+                loss.backward()
+                # self.scaler_kd_jpeg.scale(loss).backward()
+
+                if self.train_opt['gradient_clipping']:
+                    nn.utils.clip_grad_norm_(self.KD_JPEG.parameters(), 1)
+
+                self.optimizer_KD_JPEG.step()
+                self.optimizer_KD_JPEG.zero_grad()
+                self.optimizer_discriminator_mask.zero_grad()
+            else:
+                logs['loss'] = 0
+
 
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             images = stitch_images(
                 self.postprocess(gt_rgb),
-                self.postprocess(rgb_invisp),
-                self.postprocess(input_raw),
                 self.postprocess(raw_invisp),
-                self.postprocess(unet_rev_RAW),
-                self.postprocess(rendered_rgb_unet),
+                self.postprocess(modified_input),
+                self.postprocess(10 * torch.abs(modified_input - gt_rgb)),
+                self.postprocess(pred_resfcn),
+                self.postprocess(masks_GT),
                 # self.postprocess(rendered_rgb_invISP),
                 img_per_row=1
             )
 
             name = f"{self.out_space_storage}/isp_images/{self.task_name}/{str(self.global_step).zfill(5)}" \
                    f"_{str(self.rank)}.png"
-            print(f'Bayer: {bayer_pattern}. Saving sample {name}')
             images.save(name)
 
         ######## Finally ####################

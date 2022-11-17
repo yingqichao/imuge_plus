@@ -1,0 +1,86 @@
+import random
+import numpy as np
+import cv2
+import lmdb
+import torch
+import torch.utils.data as data
+import data.util as util
+import os
+# from turbojpeg import TurboJPEG
+from PIL import Image
+# from jpeg2dct.numpy import load, loads
+from skimage.feature import canny
+from skimage.color import rgb2gray, gray2rgb
+import torchvision.transforms as transforms
+import torchvision.transforms.functional as F
+import albumentations as A
+import copy
+
+class CASIA_dataset(data.Dataset):
+    '''
+    Read LQ (Low Quality, here is LR) and GT image pairs.
+    If only GT image is provided, generate LQ image on-the-fly.
+    The pair is ensured by 'sorted' function, so please check the name convention.
+    '''
+
+    def __init__(self, opt, dataset_opt, is_train=True):
+        super(CASIA_dataset, self).__init__()
+        # self.is_train = is_train
+        self.opt = opt
+        self.dataset_opt = dataset_opt
+        self.paths_LQ, self.paths_GT = None, None
+        self.sizes_LQ, self.sizes_GT = None, None
+        self.GT_size = self.dataset_opt['GT_size']
+        self.paths_GT, _ = util.get_image_paths('/groupshare/CASIA2/Tp')
+        self.paths_mask, _ = util.get_image_paths('/groupshare/CASIA2/CASIA 2 Groundtruth')
+        self.transform_just_resize = A.Compose(
+            [
+                A.Resize(always_apply=True, height=self.GT_size, width=self.GT_size)
+            ]
+        )
+
+        assert self.paths_GT, 'Error: GT path is empty.'
+
+
+
+    def __getitem__(self, index):
+
+        # scale = self.dataset_opt['scale']
+
+        # get GT image
+        GT_path = self.paths_GT[index]
+
+        # img_GT = util.read_img(GT_path)
+        img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
+        img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+        img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
+        img_GT = img_GT.astype(np.float32) / 255.
+        if img_GT.ndim == 2:
+            img_GT = np.expand_dims(img_GT, axis=2)
+        # some images have 4 channels
+        if img_GT.shape[2] > 3:
+            img_GT = img_GT[:, :, :3]
+        # BGR to RGB, HWC to CHW, numpy to tensor
+        img_GT = img_GT[:, :, [2, 1, 0]]
+
+        img_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
+
+        mask_path = self.paths_mask[index]
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        mask = (mask > 127).astype(np.uint8) * 255
+        # mask = util.channel_convert(mask.shape[2], self.dataset_opt['color'], [mask])[0]
+        mask = self.transform_just_resize(image=copy.deepcopy(mask))["image"]
+        mask = mask.astype(np.float32) / 255.
+        # if img_GT.ndim == 2:
+        #     mask = np.expand_dims(mask, axis=2)
+        mask = torch.from_numpy(np.ascontiguousarray(mask)).float()
+
+        return (img_GT, mask)
+
+    def __len__(self):
+        return len(self.paths_GT)
+
+    # def to_tensor(self, img):
+    #     img = Image.fromarray(img)
+    #     img_t = F.to_tensor(img).float()
+    #     return img_t

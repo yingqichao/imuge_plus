@@ -114,6 +114,7 @@ class Modified_invISP(BaseModel):
             6: 'train resfcn (train)',
             7: 'Test 1110 add ablation',
             8: 'Inverting RGB to RAW',
+            9: 'RAW protection on CASIA1',
         }
         print(f"network list:{self.network_list}")
         print(f"Current mode: {self.args.mode}")
@@ -233,6 +234,8 @@ class Modified_invISP(BaseModel):
             return self.main_test(step=step)
         elif mode==8.0:
             return self.invert_RGB_to_RAW(step=step)
+        elif mode==9.0:
+            return self.RAW_protection_on_CASIA(step=step)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
@@ -532,6 +535,13 @@ class Modified_invISP(BaseModel):
         pass
 
     ####################################################################################################
+    # todo: MODE == 9
+    # todo: RAW_protection_on_CASIA
+    ####################################################################################################
+    def RAW_protection_on_CASIA(self, step=None):
+        pass
+
+    ####################################################################################################
     # todo: define how to tamper the rendered RGB
     ####################################################################################################
     def tampering_RAW(self, *, masks, masks_GT, gt_rgb, modified_input, percent_range, index=None):
@@ -664,10 +674,11 @@ class Modified_invISP(BaseModel):
                                                  find_unused_parameters=True)
         return model
 
-    def define_RAW2RAW_network(self):
+    def define_RAW2RAW_network(self, n_channels=None):
         # if 'UNet' not in self.task_name:
         print("using my_own_elastic as KD_JPEG.")
-        n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4 # 36/48 12
+        if n_channels is None:
+            n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4 # 36/48 12
         self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.opt['dtcwt_layers'],
                                       use_norm_conv=False).cuda()
         # else:

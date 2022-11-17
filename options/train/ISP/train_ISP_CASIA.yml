@@ -1,9 +1,8 @@
 #### model path dirs
 ISP_folder: /groupshare/ISP_results/complete_results/model/invert_RGB_to_RAW/
 original_ISP_folder: /groupshare/ISP_results/complete_results/model/invert_RGB_to_RAW/
-#detector_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
-#MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-#OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
+protection_folder: /groupshare/ISP_results/complete_results/model/RAW_protection_CASIA/
+detector_folder: /groupshare/ISP_results/complete_results/model/RAW_protection_CASIA/
 
 finetune_detector_name: CAT
 
@@ -15,7 +14,8 @@ finetune_detector_name: CAT
 # restormer: 77999
 load_origin_ISP_models: 43999
 load_ISP_models: 45999 #20999 # new: 43999 # canon: 16999
-
+load_RAW_models: 23999
+load_discriminator_models: 23999
 
 
 #### general settings
@@ -25,10 +25,9 @@ gpu_ids: [2,3]
 restart_step: 2000
 model_save_period: 2000
 
-#using_which_dataset_for_training: Raise #Canon_FiveK
-#using_which_dataset_for_test: Raise
+using_which_dataset_for_training: Raise #Canon_FiveK
+using_which_dataset_for_test: Raise
 
-CE_hyper_param: 0.001
 
 datasets:
   train:

@@ -35,6 +35,8 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
             from models.ISP.Test import Test as M
         elif args.mode==8:
             from models.ISP.Invert_RGB_to_RAW import Invert_RGB_to_RAW as M
+        elif args.mode==9:
+            from models.ISP.CASIA_RAW_Protection import CASIA_RAW_Protection as M
         else:
             raise NotImplementedError('大神ISP的模式是不是搞错了？')
         ### original version
