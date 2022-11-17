@@ -86,15 +86,17 @@ class Performance_Test(Modified_invISP):
 
         ### detector
         which_model = self.opt['which_model_for_detector']
-        self.network_list += ['discriminator_mask']
         if 'localizer' in which_model:
-            self.discriminator_mask = self.define_detector(opt_name='using_which_model_for_test')
+            self.network_list += ['localizer']
+            self.localizer = self.define_detector(opt_name='using_which_model_for_test')
             ## loading finetuned models or MPF
-            if 'finetuned' in which_model or 'MPF' in which_model:
+            which_model_detailed = self.opt['using_which_model_for_test']
+            if 'finetuned' in which_model_detailed or 'MPF' in which_model_detailed:
                 ## 注意！！这里可能涉及到给模型改名
                 self.load_model_wrapper(folder_name='localizer_folder', model_name='load_localizer_models',
-                                        network_lists=['discriminator_mask'])
+                                        network_lists=['localizer'])
         else:
+            self.network_list += ['discriminator_mask']
             self.discriminator_mask = self.define_detector(opt_name='using_which_model_for_test')
             self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
                                     network_lists=['discriminator_mask'])
@@ -102,7 +104,7 @@ class Performance_Test(Modified_invISP):
 
         ## inpainting model
         if self.opt['inference_tamper_index'] == 1:
-            self.define_inpainting_edgeconnect()
+            # self.define_inpainting_edgeconnect() # ec is removed
             self.define_inpainting_ZITS()
             self.define_inpainting_lama()
 
@@ -125,7 +127,7 @@ class Performance_Test(Modified_invISP):
         logs = {}
         logs['lr'] = 0
 
-        test_model = self.discriminator_mask
+        test_model = self.localizer if 'localizer' in self.opt['which_model_for_detector'] else self.discriminator_mask
         # if "MPF" in self.opt['which_model_for_detector']:
         #     test_model = self.discriminator_mask
         # elif "MVSS" in self.opt['which_model_for_detector']:
@@ -178,7 +180,10 @@ class Performance_Test(Modified_invISP):
             non_tampered_image = gt_rgb
 
             # print("remember to remove this gaussian blur, we use it to beat CAT!!!")
-            # non_tampered_image = self.median_blur(non_tampered_image)
+            # non_tampered_image, _ = self.median_blur(non_tampered_image)
+
+        # print("remember to remove this gaussian blur, we use it to beat CAT!!!")
+        # non_tampered_image = self.median_blur(non_tampered_image)
 
         RGB_PSNR = self.psnr(self.postprocess(non_tampered_image), self.postprocess(
             gt_rgb)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
@@ -275,11 +280,21 @@ class Performance_Test(Modified_invISP):
             )
 
         ### attacks generate them all ###
+        # attack_lists = [
+        #     (None, None, None), (0, None, None), (1, None, None), (2, None, None),
+        #     (3, 18, None), (3, 14, None), (3, 10, None), (4, None, None),
+        #     (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
+        # ]
+        # rescale gaussian blur median blur jpeg70
+
         attack_lists = [
-            (None, None, None), (0, None, None), (1, None, None), (2, None, None),
-            (3, 18, None), (3, 14, None), (3, 10, None), (4, None, None),
-            (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
+            (0, None, None), (1, None, None), (2, None, None), (3, 14, None),
         ]
+
+        # attack_lists = [
+        #     (3, 14, 0),  (1, 20, 1), (2, 20, 2), (4, 20, 3)
+        #     ]
+
         # attack_lists = [
         #     (0, 20, 1),  (1, 20, 3), (3, 18, 0),
         #     (None,None,None),(None,None,0),(None,None,1),

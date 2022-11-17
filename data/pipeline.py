@@ -118,6 +118,10 @@ def rawpy_tensor2image(*, raw_image, template, camera_name, patch_size):
         default_root = '/ssd/FiveK_Dataset/'
         dng_path = os.path.join(default_root, camera_name, 'DNG', template + '.dng')
         template = rawpy.imread(dng_path)
+
+        # default_root = '/groupshare/raise/RAW/'
+        # dng_path = os.path.join(default_root, template[:-2] + '.NEF')
+        # template = rawpy.imread(dng_path)
     flip_val = template.sizes.flip
     white_level = template.white_level
     black_level = template.black_level_per_channel

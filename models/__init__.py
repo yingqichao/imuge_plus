@@ -39,7 +39,7 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
             raise NotImplementedError('大神ISP的模式是不是搞错了？')
         ### original version
         # from models.ISP.Modified_invISP import Modified_invISP as M
-        model = M(opt, args, train_set)
+        model = M(opt, args, train_set, val_set)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 

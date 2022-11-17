@@ -122,6 +122,8 @@ def get_metadata(raw):
     black_level = raw.black_level_per_channel
     # white_level = [raw.white_level] * 4
     white_level = raw.camera_white_level_per_channel
+    if white_level is None:
+        white_level = [raw.white_level] * 4
     color_matrix = raw.rgb_xyz_matrix[:3]
     bitdepth = raw.sizes.top_margin
     camera_whitebalance = raw.camera_whitebalance
@@ -152,19 +154,38 @@ if __name__ == '__main__':
     # np.seterr(divide='ignore', invalid='ignore')
     # test_raw_path = 'images/a0031-WP_CRW_0736.dng'
     # test_raw_path = './rfffb852et.NEF'
-    data_root = '/ssd/FiveK_test/Canon/RAW/'
-    dng_files = os.listdir(data_root)
+    data_root = '/ssd/FiveK_Dataset/'
+    test_root = '/ssd/FiveK_test/'
+
+    with open('./camera.txt', 'r') as f:
+        cameras = [i.strip() for i in f.readlines()]
+    use_camera_list = []
+    for camera in cameras:
+        if 'Canon' in camera:
+            use_camera_list.append(camera)
+    dng_files = []
+    camera_files = []
+    for camera_name in use_camera_list:
+        test_file_path = os.path.join(data_root, f"{camera_name}_train.txt")
+        with open(test_file_path, 'r') as fin:
+            cur_dng_files = [i.strip() for i in fin.readlines()]
+
+        dng_files = dng_files + cur_dng_files
+        camera_files = camera_files + [camera_name] * len(cur_dng_files)
+
     pickle_data = {}
     import pickle
     from tqdm import tqdm
     # random.shuffle(dng_files)
-    for file_name in tqdm(dng_files):
-        test_raw_path = os.path.join(data_root, file_name)
+    for i in tqdm(range(len(dng_files))):
+        file_name = dng_files[i]
+        camera_name = camera_files[i]
+        test_raw_path = os.path.join(data_root, camera_name, 'DNG', file_name+'.dng')
         raw = rawpy.imread(test_raw_path)
         # rgb = raw.postprocess(no_auto_bright=True, use_auto_wb=False)
         # imageio.imwrite('./test2.png', rgb)
         metadata = get_metadata(raw)
-        pickle_data[file_name[:-4]] = metadata
+        pickle_data[file_name] = metadata
         # raw_image = raw.raw_image_visible.copy()
         # raw_image = flip(raw_image, metadata['flip_val'])
         # raw_image = raw_image
@@ -174,5 +195,5 @@ if __name__ == '__main__':
         # out = (data[..., ::-1] * 255).astype(np.uint8)
         # cv2.imwrite('./test.png', out)
         # exit(0)
-    with open('/groupshare/raise/metadata.pickle', 'wb') as f:
+    with open('/ssd/FiveK_train/Canon_metadata.pickle', 'wb') as f:
         pickle.dump(pickle_data, f)

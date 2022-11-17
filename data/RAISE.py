@@ -176,7 +176,7 @@ class FiveKTest(Dataset):
         self.data_root = data_root
         self.camera = camera
         self.stage = stage
-        self.data_list = self.load()
+        self.data_list, self.camera_list, self.metadata_list = self.load()
         self.len_data = len(self.data_list)
         self.patch_size = patch_size
 
@@ -184,8 +184,15 @@ class FiveKTest(Dataset):
     def load(self):
         file_txt = os.path.join(self.data_root, f'{self.camera}_{self.stage}.txt')
         with open(file_txt, "r") as f:
-            data_list = [i.strip() for i in f.readlines()]
-        return data_list
+            content = f.readlines()
+            data_list = [i.strip().split(' ')[0] for i in content]
+            camera_list = [i.strip().split(' ')[-1] for i in content]
+
+        file_pickle = os.path.join(self.data_root, f'{self.camera}_metadata.pickle')
+        with open(file_pickle, 'rb') as f:
+            metadata_list = pickle.load(f)
+
+        return data_list, camera_list, metadata_list
 
         # file_pickle = os.path.join(self.data_root, 'metadata.pickle')
         # with open(file_pickle, 'rb') as f:
@@ -260,7 +267,7 @@ class FiveKTest(Dataset):
             'file_name': file_name,
             'camera_whitebalance': cwb,
             'bayer_pattern': bayer_pattern,
-            'camera_name': self.camera
+            'camera_name': self.camera_list[index]
         }
         return sample
 
@@ -269,34 +276,51 @@ class FiveKTest(Dataset):
         return self.len_data
 
 
-if __name__ == '__main__':
+"""
+这个函数用来为数据集生成对应的列表文件， 主要针对的是FiveK数据集
+"""
+def generate_dataset_file(key= 'Canon', stage='test'):
     # with open('/groupshare/raise/test.txt', 'r') as f:
     #     data = [i.strip() for i in f.readlines()]
     # with open('/groupshare/raise_crop/crop_test.txt', 'w') as f:
     #     for d in data:
     #         for i in range(10):
-    #             f.write((d+'_'+str(i)+'\n'))
-    # data_root = '/ssd/FiveK_Dataset'
-    # with open('./camera.txt', 'r') as f:
-    #     cameras = [i.strip() for i in f.readlines()]
-    # use_camera_list = []
-    # for camera in cameras:
-    #     if 'Canon' in camera:
-    #         use_camera_list.append(camera)
-    # dng_files = []
-    # for camera_name in use_camera_list:
-    #     test_file_path = os.path.join(data_root, f"{camera_name}_train.txt")
-    #     with open(test_file_path, 'r') as fin:
-    #         cur_dng_files = [i.strip() for i in fin.readlines()]
-    #     result_dng_files = []
-    #     for ll in range(4):
-    #         result_dng_files += [i + f'_{ll}' for i in cur_dng_files]
-    #     dng_files = dng_files + result_dng_files
-    # with open('/ssd/FiveK_train/Canon_train.txt', 'w') as fout:
-    #     for dd in dng_files:
-    #         fout.write(dd + '\n')
+    #             f.write((d + '_' + str(i) + '\n'))
+
+    data_root = '/ssd/FiveK_Dataset'
+    with open('./camera.txt', 'r') as f:
+        cameras = [i.strip() for i in f.readlines()]
+    use_camera_list = []
+    for camera in cameras:
+        if key in camera:
+            use_camera_list.append(camera)
+    dng_files = []
+    camera_files = []
+    for camera_name in use_camera_list:
+        test_file_path = os.path.join(data_root, f"{camera_name}_{stage}.txt")
+        with open(test_file_path, 'r') as fin:
+            cur_dng_files = [i.strip() for i in fin.readlines()]
+        result_dng_files = []
+        for ll in range(4):
+            result_dng_files += [i + f'_{ll}' for i in cur_dng_files]
+        dng_files = dng_files + result_dng_files
+        camera_files = camera_files + [camera_name] * len(result_dng_files)
+    assert len(camera_files) == len(dng_files)
+    with open(f'/ssd/FiveK_{stage}/{key}_{stage}.txt', 'w') as fout:
+        for dd in range(len(dng_files)):
+            fout.write(dng_files[dd] + ' ' + camera_files[dd]+ '\n')
+
+
+
+if __name__ == '__main__':
+    # generate_dataset_file('Canon', stage='train')
     # exit(0)
-    a = FiveKTest('/ssd/FiveK_train', 'Canon', stage='train')
+    print('wanna to test RAISE dataset')
+    data_root = '/groupshare/raise_crop'
+    stage = 'crop_train'  # crop_train crop_test
+    train_set = Raise(data_root, stage=stage)
+    exit(0)
+    a = FiveKTest('/ssd/FiveK_test', 'Canon', stage='test')
     for i in range(len(a)):
         item = a[i]
     exit(0)
