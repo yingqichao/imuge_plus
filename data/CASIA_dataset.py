@@ -23,7 +23,7 @@ class CASIA_dataset(data.Dataset):
     The pair is ensured by 'sorted' function, so please check the name convention.
     '''
 
-    def __init__(self, opt, dataset_opt, is_train=True, dataset="CASIA1"):
+    def __init__(self, opt, dataset_opt, is_train=True, dataset="CASIA1",attack_list={0,1,2}):
         super(CASIA_dataset, self).__init__()
         self.is_train = is_train
         self.opt = opt
@@ -63,7 +63,7 @@ class CASIA_dataset(data.Dataset):
         self.paths_GT, self.paths_mask = [], []
         GT_items, mask_items = self.GT_folder[self.dataset_name], self.mask_folder[self.dataset_name]
 
-        attack_list = {0}
+        # attack_list = {0,1,2}
         for idx in range(len(GT_items)):
             if idx in attack_list:
                 GT_path, _ = util.get_image_paths(GT_items[idx])

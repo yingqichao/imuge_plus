@@ -52,10 +52,11 @@ def create_dataset(*, opt,args,rank,seed):
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         train_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode in [9]:
-        print("dataset CASIA1")
+    elif ("ISP" in opt['model'] and args.mode in [9]) or \
+            ("IFA" in opt['model']):
+        print("dataset Defacto")
         from data.CASIA_dataset import CASIA_dataset as D
-        train_set = D(opt, dataset_opt, is_train=True)
+        train_set = D(opt, dataset_opt, is_train=True, dataset="Defacto", attack_list={0,1,2})
     elif "ISP" in opt['model'] and args.mode in opt['using_RAW_dataset_training']:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total
@@ -149,10 +150,11 @@ def create_dataset(*, opt,args,rank,seed):
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         val_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode in [9]:
+    elif "ISP" in opt['model'] and args.mode in [9] or \
+            ("IFA" in opt['model']):
         print("dataset CASIA1")
         from data.CASIA_dataset import CASIA_dataset as D
-        val_set = D(opt, dataset_opt, is_train=False)
+        val_set = D(opt, dataset_opt, is_train=False, dataset="Defacto", attack_list={0,1,2})
     elif "ISP" in opt['model'] and args.mode in opt['using_RAW_dataset_testing']:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total

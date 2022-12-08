@@ -87,7 +87,7 @@ class base_IFA(BaseModel):
         print(f"Function: {self.mode_dict[self.args.mode]}")
 
 
-        self.out_space_storage = f"{self.opt['name']}/complete_results"
+        self.out_space_storage = f"{self.opt['name']}"
 
         if prepare_networks_optimizers:
             ### todo: network definitions
@@ -113,6 +113,15 @@ class base_IFA(BaseModel):
         #         self.resume_training(state_path, self.network_list)
         #     else:
         #         print('Did not find state [{:s}] ...'.format(state_path))
+
+    def create_folders_for_the_experiment(self):
+        from utils.commons import create_folder
+        create_folder(self.out_space_storage)
+        create_folder(self.out_space_storage + "/model")
+        create_folder(self.out_space_storage + "/images")
+        create_folder(self.out_space_storage + "/model/" + self.task_name)
+        create_folder(self.out_space_storage + "/images/" + self.task_name)
+        create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
 
     def network_definitions(self):
         pass

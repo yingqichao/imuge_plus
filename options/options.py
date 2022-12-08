@@ -7,12 +7,14 @@ Loader, Dumper = OrderedYaml()
 
 default_attack_opt = {
     'ISP': 'options/train/attack_layer_setting/ISP_attack_layer.yml',
-    'PAMI': 'options/train/attack_layer_setting/PAMI_attack_layer.yml'
+    'PAMI': 'options/train/attack_layer_setting/PAMI_attack_layer.yml',
+    'IFA': 'options/train/attack_layer_setting/ISP_attack_layer.yml',
 }
 
 default_base_opt = {
     'ISP': 'options/train/ISP/train_ISP_base.yml',
-    'PAMI': 'options/train/PAMI/train_PAMI_base.yml'
+    'PAMI': 'options/train/PAMI/train_PAMI_base.yml',
+    'IFA': 'options/train/IFA/train_IFA_base.yml',
 }
 
 def parse(*, opt_path,
@@ -26,6 +28,10 @@ def parse(*, opt_path,
             base_opt_path = default_base_opt['ISP']
         elif 'IRN+' in opt_path or 'PAMI' in opt_path:
             base_opt_path = default_base_opt['PAMI']
+        elif 'IFA' in opt_path:
+            base_opt_path = default_base_opt['IFA']
+        else:
+            raise NotImplementedError("base opt not found")
     with open(base_opt_path, mode='r') as f:
         opt = yaml.load(f, Loader=Loader)
 
@@ -35,6 +41,10 @@ def parse(*, opt_path,
             attack_opt_path = default_attack_opt['ISP']
         elif 'IRN+' in opt_path or 'PAMI' in opt_path:
             attack_opt_path = default_attack_opt['PAMI']
+        elif 'IFA' in opt_path:
+            attack_opt_path = default_attack_opt['IFA']
+        else:
+            raise NotImplementedError("base opt not found")
     with open(attack_opt_path, mode='r') as f:
         opt_attack = yaml.load(f, Loader=Loader)
     opt.update(opt_attack)
@@ -63,6 +73,8 @@ def parse(*, opt_path,
             print("using default value as restart_step: 1000")
             opt['restart_step'] = 1000
     elif 'PAMI' in opt_path:
+        pass
+    elif 'IFA' in opt_path:
         pass
 
     print(f"Opt List: {opt}")
