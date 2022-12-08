@@ -68,71 +68,24 @@ import torch.nn.functional as F2
 # import contextual_loss as cl
 # import contextual_loss.functional as F
 
-class Modified_invISP(BaseModel):
+class base_IFA(BaseModel):
     def __init__(self, opt, args, train_set=None, val_set=None, prepare_networks_optimizers=True):
         """
             prepare_networks_optimizers: set True current, preserved for future uses that only invoke static methods without creating an instances.
 
         """
-        super(Modified_invISP, self).__init__(opt, args, train_set, val_set)
+        super(base_IFA, self).__init__(opt, args, train_set, val_set)
         ### todo: options
-        self.default_ISP_networks = ['generator', 'netG', 'qf_predict_network']
-        self.default_RAW_to_RAW_networks = ['KD_JPEG']
-        self.default_detection_networks_for_training = ['discriminator_mask','discriminator','localizer']
-        self.default_customized_networks = ['localizer']
-        self.global_step_for_inpainting = 0
+        self.default_detection_networks_for_training = ['qf_predict_network']
 
-        ### todo: constants
-        self.amount_of_augmentation = len(
-            self.opt['simulated_hue'] +
-            self.opt['simulated_contrast'] +
-            self.opt['simulated_saturation'] +
-            self.opt['simulated_brightness'] +
-            self.opt['simulated_gamma']
-        )
-
-        self.amount_of_detectors = len(
-            self.opt['detector_using_MPF_indices'] +
-            self.opt['detector_using_MVSS_indices'] +
-            self.opt['detector_using_OSN_indices']
-        )
-
-        self.amount_of_inpainting = len(
-            self.opt['zits_as_inpainting'] +
-            self.opt['edgeconnect_as_inpainting'] +
-            self.opt['lama_as_inpainting'] +
-            self.opt['ideal_as_inpainting']
-        )
 
         self.mode_dict = {
-            0: 'generating protected images(val)',
-            1: 'tampering localization on generating protected images(val)',
-            2: 'regular training, including ISP, RAW2RAW and localization(train)',
-            3: 'regular training for ablation(RGB protection), including RAW2RAW and localization (train)',
-            4: 'OSN performance(val)',
-            5: 'train a ISP using restormer for validation(train)',
-            6: 'train resfcn (train)',
-            7: 'Test 1110 add ablation',
-            8: 'Inverting RGB to RAW',
-            9: 'RAW protection on CASIA1',
+            0: 'RR IFA',
         }
         print(f"network list:{self.network_list}")
         print(f"Current mode: {self.args.mode}")
         print(f"Function: {self.mode_dict[self.args.mode]}")
 
-        self.kernel_RAW_k0 = torch.tensor([[[1, 0], [0, 0]], [[0, 1], [1, 0]], [[0, 0], [0, 1]]], device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k1 = torch.tensor([[[0, 0], [1, 0]], [[1, 0], [0, 1]], [[0, 1], [0, 0]]], device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k2 = torch.tensor([[[0, 0], [0, 1]], [[0, 1], [1, 0]], [[1, 0], [0, 0]]], device="cuda",
-                                          requires_grad=False).unsqueeze(0)
-        self.kernel_RAW_k3 = torch.tensor([[[0, 1], [0, 0]], [[0, 1], [1, 0]], [[0, 0], [1, 0]]], device="cuda",
-                                          requires_grad=False)
-        expand_times = int(self.width_height // 2)
-        self.kernel_RAW_k0 = self.kernel_RAW_k0.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k1 = self.kernel_RAW_k1.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k2 = self.kernel_RAW_k2.repeat(1, 1, expand_times, expand_times)
-        self.kernel_RAW_k3 = self.kernel_RAW_k3.repeat(1, 1, expand_times, expand_times)
 
         self.out_space_storage = f"{self.opt['name']}/complete_results"
 
@@ -164,7 +117,7 @@ class Modified_invISP(BaseModel):
     def network_definitions(self):
         pass
 
-    def load_model_wrapper(self,*,folder_name,model_name,network_lists, strict=True):
+    def load_model_wrapper(self, *, folder_name, model_name, network_lists, strict=True):
         load_detector_storage = self.opt[folder_name]
         model_path = str(self.opt[model_name])  # last time: 10999
         load_models = self.opt[model_name] > 0
@@ -173,37 +126,18 @@ class Modified_invISP(BaseModel):
             pretrain = load_detector_storage + model_path
             self.reload(pretrain, network_list=network_lists, strict=strict)
 
-    def baseline_generate_protected_rgb(self, *, gt_rgb):
-        return gt_rgb + self.KD_JPEG(gt_rgb)
 
     def feed_data_router(self, batch, mode):
-        if mode in self.opt['using_COCO_like_dataset_training']:
-            self.feed_data_COCO_like(batch, mode='train')
-        elif mode in self.opt['using_RAW_dataset_training']:
-            self.feed_data_ISP(batch, mode='train')
+
+        self.feed_data_COCO_like(batch, mode='train')
+
 
     def feed_data_val_router(self, batch, mode):
-        if mode in self.opt['using_COCO_like_dataset_testing']:
-            self.feed_data_COCO_like(batch, mode='val')
-        elif mode in self.opt['using_RAW_dataset_testing']:
-            self.feed_data_ISP(batch, mode='val')
+
+        self.feed_data_COCO_like(batch, mode='val')
 
 
-    def feed_data_ISP(self, batch, mode='train'):
-        if mode=='train':
-            self.real_H = batch['input_raw'].cuda()
-            self.label = batch['target_rgb'].cuda()
-            self.file_name = batch['file_name']
-            self.camera_white_balance = batch['camera_whitebalance'].cuda()
-            self.bayer_pattern = batch['bayer_pattern'].cuda()
-            self.camera_name = batch['camera_name']
-        else:
-            self.real_H_val = batch['input_raw'].cuda()
-            self.label_val = batch['target_rgb'].cuda()
-            self.file_name_val = batch['file_name']
-            self.camera_white_balance_val = batch['camera_whitebalance'].cuda()
-            self.bayer_pattern_val = batch['bayer_pattern'].cuda()
-            self.camera_name_val = batch['camera_name']
+
 
     def feed_data_COCO_like(self, batch, mode='train'):
         if mode == 'train':
@@ -217,25 +151,7 @@ class Modified_invISP(BaseModel):
 
     def optimize_parameters_router(self, mode, step=None):
         if mode == 0.0:
-            return self.get_protected_RAW_and_corresponding_images(step=step)
-        elif mode==1.0:
-            return self.predict(step=step)
-        elif mode==2.0:
-            return self.optimize_parameters_main(step=step)
-        elif mode==3.0:
-            return self.optimize_parameters_ablation_on_RAW(step=step)
-        elif mode==4.0:
-            return self.get_performance_of_OSN(step=step)
-        elif mode==5.0:
-            return self.train_ISP_using_rstormer(step=step)
-        elif mode==6.0:
-            return self.train_resfcn(step=step)
-        elif mode==7.0:
-            return self.main_test(step=step)
-        elif mode==8.0:
-            return self.invert_RGB_to_RAW(step=step)
-        elif mode==9.0:
-            return self.RAW_protection_on_CASIA(step=step)
+            return self.predict_IFA_with_reference(step=step)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
@@ -243,94 +159,10 @@ class Modified_invISP(BaseModel):
     # todo: MODE == 0
     # todo: get_protected_RAW_and_corresponding_images
     ####################################################################################################
-    def get_protected_RAW_and_corresponding_images(self, step=None):
+    def predict_IFA_with_reference(self, step=None):
         pass
 
-    ####################################################################################################
-    # todo: MODE == 1
-    # todo: get_predicted_mask (non virtual. used by mode 0 and mode 4)
-    ####################################################################################################
-    @torch.no_grad()
-    def get_predicted_mask(self, target_model=None, modified_input=None, masks_GT=None, save_image=True,
-                           do_attack=None, do_augment=None, quality_idx=None, step=None, filename_append=""):
 
-        if target_model is None:
-            target_model = self.discriminator_mask
-        target_model.eval()
-        # if modified_input is None:
-        #     modified_input = self.real_H
-        # if masks_GT is None:
-        #     masks_GT = self.canny_image
-        logs = {}
-        logs['lr'] = 0
-        batch_size, num_channels, height_width, _ = modified_input.shape
-
-        ###################################   ISP attack   #############################################################
-        if do_augment is not None:
-            modified_adjusted = self.data_augmentation_on_rendered_rgb(modified_input, index=do_augment)
-        else:
-            modified_adjusted = modified_input
-
-        attacked_forward = modified_adjusted
-
-        #####################################   Benign attacks   #######################################################
-        ### including JPEG compression Gaussian Blurring, Median blurring and resizing
-        if do_attack is not None:
-            if quality_idx is None:
-                quality_idx = self.get_quality_idx_by_iteration(index=self.global_step)
-
-            attacked_image, _, _ = self.benign_attacks(attacked_forward=attacked_forward,
-                                                 quality_idx=quality_idx, index=do_attack)
-        else:
-            attacked_image = attacked_forward
-
-        # ERROR = attacked_image-attacked_forward
-        error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(
-            attacked_forward)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-        logs['ERROR'] = error_l1
-
-        #########################   Image Manipulation Detection Network (Downstream task)   ###########################
-        # if "localizer" in self.opt['using_which_model_for_test']:
-        pred_resfcn, CE_resfcn = self.detector_predict(model=target_model,
-                                                       attacked_image=attacked_image.detach().contiguous(),
-                                                       opt_name='using_which_model_for_test',
-                                                       masks_GT=masks_GT)
-
-        logs['CE'] = CE_resfcn.item()
-
-        F1, RECALL, AUC, IoU = self.F1score(pred_resfcn, masks_GT, thresh=0.5, get_auc=True)
-        # F1_1, RECALL_1 = self.F1score(refined_resfcn_bn, masks_GT, thresh=0.5)
-        logs['F1'] = F1
-        # logs['F1_1'] = F1_1
-        logs['RECALL'] = RECALL
-        logs['AUC'] = AUC
-        logs['IoU'] = IoU
-        # logs['RECALL_1'] = RECALL_1
-
-        pred_resfcn_bn = torch.where(pred_resfcn > 0.5, 1.0, 0.0)
-
-        if save_image:
-            name = f"{self.out_space_storage}/test_predicted_masks/{self.task_name}"
-            print('saving sample ' + name)
-            for image_no in range(batch_size):
-                # self.print_this_image(modified_input[image_no],
-                #                       f"{name}/{str(step).zfill(5)}_{filename_append}tampered_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
-
-                self.print_this_image(pred_resfcn[image_no],
-                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}pred_ce_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
-                self.print_this_image(pred_resfcn_bn[image_no],
-                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}pred_cebn_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
-                # self.print_this_image(refined_resfcn[image_no],
-                #                       f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
-                # self.print_this_image(refined_resfcn_bn[image_no],
-                #                       f"{name}/{str(step).zfill(5)}_{filename_append}pred_L1bn_{self.model_path}_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
-                self.print_this_image(attacked_image[image_no],
-                                      f"{name}/{str(step).zfill(5)}_{image_no}_{filename_append}tamper_{str(do_attack)}_{str(quality_idx)}_{str(do_augment)}.png")
-                self.print_this_image(masks_GT[image_no],
-                                      f"{name}/{str(step).zfill(5)}_{image_no}_gt.png")
-                print("tampering localization saved at:{}".format(f"{name}/{str(step).zfill(5)}_{image_no}"))
-
-        return logs, (pred_resfcn), False
 
     def define_detector(self, *, opt_name):
 
@@ -360,17 +192,17 @@ class Modified_invISP(BaseModel):
 
         elif 'MVSS' in self.opt[opt_name]:
             _, pred_resfcn = self.MVSS_predict(model=model,
-                                              attacked_image=attacked_image)
+                                               attacked_image=attacked_image)
 
         elif 'Resfcn' in self.opt[opt_name] \
                 or 'Mantra' in self.opt[opt_name]:
             pred_resfcn = self.predict_with_sigmoid_eg_resfcn_mantra(model=model,
-                                              attacked_image=attacked_image)
+                                                                     attacked_image=attacked_image)
 
         elif "MPF" in self.opt[opt_name]:
             _, pred_resfcn = self.MPF_predict(model=model,
-                                           masks_GT=masks_GT,
-                                           attacked_image=attacked_image)
+                                              masks_GT=masks_GT,
+                                              attacked_image=attacked_image)
 
         elif "OSN" in self.opt[opt_name]:
             pred_resfcn = self.predict_with_NO_sigmoid(model=model,
@@ -414,7 +246,7 @@ class Modified_invISP(BaseModel):
 
         return pred_resfcn
 
-    def MPF_predict(self,  *, model, masks_GT, attacked_image):
+    def MPF_predict(self, *, model, masks_GT, attacked_image):
         attacked_cannied, _ = self.get_canny(attacked_image, masks_GT)
 
         pred_resfcn = model(attacked_image, canny=attacked_cannied)
@@ -425,124 +257,6 @@ class Modified_invISP(BaseModel):
 
         return pred_resfcn
 
-    ####################################################################################################
-    # todo: MODE == 2
-    # todo: optimize_parameters_main
-    ####################################################################################################
-    def optimize_parameters_main(self, step=None):
-        pass
-
-    def differentiable_ISP_gathering(self, *, model, modified_raw, tamper_source):
-        modified_input_0 = model(modified_raw)
-        if self.opt['use_gamma_correction']:
-            modified_input_0 = self.gamma_correction(modified_input_0)
-        ISP_L1_0 = self.l1_loss(input=modified_input_0, target=tamper_source)
-        ISP_SSIM_0 = - self.ssim_loss(modified_input_0, tamper_source)
-        # ISP_percept_0, ISP_style_0 = self.perceptual_loss(modified_input_0, tamper_source_0, with_gram=True)
-        modified_input_0 = self.clamp_with_grad(modified_input_0)
-
-        return modified_input_0, ISP_L1_0, ISP_SSIM_0
-
-    def pipeline_ISP_gathering(self, *, modified_raw_one_dim, file_name, gt_rgb, camera_name=None, using_rawpy=False):
-        ### 1029: replacing netG with conventional ISP
-        if using_rawpy:
-            ## rawpy
-            images = torch.zeros_like(gt_rgb)
-            for idx_pipeline in range(gt_rgb.shape[0]):
-                # [B C H W]->[H,W]
-                raw_1 = modified_raw_one_dim[idx_pipeline]
-                # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
-                #                                   output_stage='gamma')
-                numpy_rgb = rawpy_tensor2image(raw_image=raw_1, template=file_name[idx_pipeline][:-2],
-                                               camera_name=camera_name[idx_pipeline], patch_size=512) / 255
-
-                images[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
-                    np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-
-        else:
-            ## my own pipeline
-            batch_size = modified_raw_one_dim.shape[0]
-            images = torch.zeros_like(gt_rgb)
-            for idx_pipeline in range(batch_size):
-                metadata = self.val_set.metadata_list[file_name[idx_pipeline][:-2]]
-                # flip_val = metadata['flip_val']
-                # metadata = metadata['metadata']
-                # 在metadata中加入要用的flip_val和camera_name
-                # metadata['flip_val'] = flip_val
-                # metadata['camera_name'] = camera_name
-                # [B C H W]->[H,W]
-                raw_1 = modified_raw_one_dim[idx_pipeline].permute(1, 2, 0).squeeze(2)
-                # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
-                #                                   output_stage='gamma')
-
-                numpy_rgb = isp_tensor2image(raw_image=raw_1, metadata=metadata, file_name=file_name[:-6],
-                                             camera_name='',
-                                             input_stage='normalize')
-
-                images[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
-                    np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
-
-        return images
-
-    ####################################################################################################
-    # todo: MODE == 3
-    # todo: optimize_parameters_ablation_on_RAW
-    ####################################################################################################
-    def optimize_parameters_ablation_on_RAW(self, step=None):
-        pass
-
-    ####################################################################################################
-    # todo: MODE == 1
-    # todo: predict
-    ####################################################################################################
-    def predict(self, step):
-        pass
-
-
-    ####################################################################################################
-    # todo: MODE == 4
-    # todo: get_performance_of_OSN
-    ####################################################################################################
-    def get_performance_of_OSN(self, step):
-        pass
-
-    ####################################################################################################
-    # todo: MODE == 5
-    # todo: train_ISP_using_rstormer
-    ####################################################################################################
-    def train_ISP_using_rstormer(self, step=None):
-        pass
-
-    ####################################################################################################
-    # todo: MODE == 6
-    # todo: train_resfcn
-    ####################################################################################################
-    def train_resfcn(self, step=None):
-        pass
-
-    ####################################################################################################
-    # todo: MODE == 7
-    # todo: main_test
-    ####################################################################################################
-    def main_test(self, step=None):
-        pass
-
-    ####################################################################################################
-    # todo: MODE == 8
-    # todo: invert_RGB_to_RAW
-    ####################################################################################################
-    def invert_RGB_to_RAW(self, step=None):
-        pass
-
-    ####################################################################################################
-    # todo: MODE == 9
-    # todo: RAW_protection_on_CASIA
-    ####################################################################################################
-    def RAW_protection_on_CASIA(self, step=None):
-        pass
-
-    def CASIA_test(self,step=None):
-        pass
 
     ####################################################################################################
     # todo: define how to tamper the rendered RGB
@@ -555,11 +269,11 @@ class Modified_invISP(BaseModel):
         if index is None:
             index = self.global_step % self.amount_of_tampering
 
-        if index in self.opt['simulated_splicing_indices']: #self.using_splicing():
+        if index in self.opt['simulated_splicing_indices']:  # self.using_splicing():
             ### todo: splicing
             attacked_forward = self.splicing(forward_image=modified_input, masks=masks)
 
-        elif index in self.opt['simulated_copymove_indices']: #self.using_copy_move():
+        elif index in self.opt['simulated_copymove_indices']:  # self.using_copy_move():
             ### todo: copy-move
             attacked_forward, masks, masks_GT = self.copymove(forward_image=modified_input, masks=masks,
                                                               masks_GT=masks_GT,
@@ -568,12 +282,12 @@ class Modified_invISP(BaseModel):
             # del self.mask_shifted
             # torch.cuda.empty_cache()
 
-        elif index in self.opt['simulated_copysplicing_indices']: #self.using_simulated_inpainting:
+        elif index in self.opt['simulated_copysplicing_indices']:  # self.using_simulated_inpainting:
             ### todo: copy-splicing
             attacked_forward, masks, masks_GT = self.copysplicing(forward_image=modified_input, masks=masks,
                                                                   percent_range=percent_range,
                                                                   another_immunized=self.previous_protected)
-        elif index in self.opt['simulated_inpainting_indices']: #self.using_splicing():
+        elif index in self.opt['simulated_inpainting_indices']:  # self.using_splicing():
             ### todo: inpainting
             ## note! self.global_step_for_inpainting, not index, decides which inpainting model will be used
 
@@ -581,7 +295,8 @@ class Modified_invISP(BaseModel):
             if use_which_inpainting in self.opt['ideal_as_inpainting']:
 
                 ## ideal
-                attacked_forward_edgeconnect = self.inpainting_for_RAW(forward_image=modified_input, masks=masks, gt_rgb=gt_rgb)
+                attacked_forward_edgeconnect = self.inpainting_for_RAW(forward_image=modified_input, masks=masks,
+                                                                       gt_rgb=gt_rgb)
 
             elif use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
                 ## edgeconnect
@@ -589,8 +304,8 @@ class Modified_invISP(BaseModel):
             elif use_which_inpainting in self.opt['zits_as_inpainting']:
                 ## zits
                 attacked_forward_edgeconnect = self.inpainting_ZITS(forward_image=modified_input,
-                                                                           masks=masks_GT)
-            else: #if use_which_inpainting in self.opt['lama_as_inpainting']:
+                                                                    masks=masks_GT)
+            else:  # if use_which_inpainting in self.opt['lama_as_inpainting']:
                 ## lama
                 attacked_forward_edgeconnect = self.inpainting_lama(forward_image=modified_input,
                                                                     masks=masks_GT)
@@ -612,8 +327,8 @@ class Modified_invISP(BaseModel):
         from CATNet.model import get_model
         model = get_model().cuda()
         model = DistributedDataParallel(model,
-                                                 device_ids=[torch.cuda.current_device()],
-                                                 find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
 
     def define_restormer(self):
@@ -621,18 +336,17 @@ class Modified_invISP(BaseModel):
         from restormer.model_restormer import Restormer
         model = Restormer(dim=16, ).cuda()
         model = DistributedDataParallel(model,
-                                device_ids=[torch.cuda.current_device()],
-                                find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
-
 
     def define_my_own_elastic_as_detector(self):
         print("using MPF_net as detector")
         model = my_own_elastic(nin=3, nout=1, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
-                                                 use_norm_conv=True).cuda()
+                               use_norm_conv=True).cuda()
         model = DistributedDataParallel(model,
-                                                          device_ids=[torch.cuda.current_device()],
-                                                          find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
 
     def define_MantraNet_as_detector(self):
@@ -641,8 +355,8 @@ class Modified_invISP(BaseModel):
         model_path = './MantraNetv4.pt'
         model = pre_trained_model(model_path).cuda()
         model = DistributedDataParallel(model,
-                                                 device_ids=[torch.cuda.current_device()],
-                                                 find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
 
     def define_MVSS_as_detector(self):
@@ -660,8 +374,8 @@ class Modified_invISP(BaseModel):
         ckp = torch.load(model_path, map_location='cpu')
         model.load_state_dict(ckp, strict=True)
         model = DistributedDataParallel(model,
-                                                     device_ids=[torch.cuda.current_device()],
-                                                     find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
 
     def define_OSN_as_detector(self):
@@ -673,26 +387,26 @@ class Modified_invISP(BaseModel):
         model = get_model('/groupshare/ISP_results/models/').cuda()
 
         model = DistributedDataParallel(model,
-                                                 device_ids=[torch.cuda.current_device()],
-                                                 find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
 
     def define_RAW2RAW_network(self, n_channels=None):
         # if 'UNet' not in self.task_name:
         print("using my_own_elastic as KD_JPEG.")
         if n_channels is None:
-            n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4 # 36/48 12
-        self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48, num_blocks=self.opt['dtcwt_layers'],
+            n_channels = 3 if "ablation" in self.opt['task_name_KD_JPEG_model'] else 4  # 36/48 12
+        self.KD_JPEG = my_own_elastic(nin=n_channels, nout=n_channels, depth=4, nch=48,
+                                      num_blocks=self.opt['dtcwt_layers'],
                                       use_norm_conv=False).cuda()
         # else:
         #     self.KD_JPEG = HWMNet(in_chn=1, out_chn=1, wf=32, depth=4, subtask=0, style_control=False,
         #                           use_dwt=False).cuda()
-            # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
-            # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
+        # SPADE_UNet(in_channels=1, out_channels=1, residual_blocks=2).cuda()
+        # Inveritible_Decolorization_PAMI(dims_in=[[1, 64, 64]], block_num=[2, 2, 2], augment=False, ).cuda()
         # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda() HWMNet(in_chn=1, wf=32, depth=4).cuda() # UNetDiscriminator(in_channels=1,use_SRM=False).cuda()
         self.KD_JPEG = DistributedDataParallel(self.KD_JPEG, device_ids=[torch.cuda.current_device()],
                                                find_unused_parameters=True)
-
 
     def define_ISP_network_training(self):
         print("using two network-based networks")
@@ -703,26 +417,26 @@ class Modified_invISP(BaseModel):
     def define_invISP(self):
         print("using invISP as ISP")
         model = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
-                                        ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
+                                                ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
-                                                 find_unused_parameters=True)
+                                        find_unused_parameters=True)
         return model
 
     def define_UNet_as_ISP(self):
         print("using Unet as ISP")
         model = UNetDiscriminator(in_channels=3, out_channels=3, use_SRM=False).cuda()
         model = DistributedDataParallel(model,
-                                                          device_ids=[torch.cuda.current_device()],
-                                                          find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
 
     def define_MPF_as_ISP(self):
         print("using MPF as ISP")
         model = my_own_elastic(nin=3, nout=3, depth=4, nch=36, num_blocks=self.opt['dtcwt_layers'],
-                       use_norm_conv=False).cuda()
+                               use_norm_conv=False).cuda()
         # model = HWMNet(in_chn=3, wf=32, depth=4, use_dwt=True).cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
-                                            find_unused_parameters=True)
+                                        find_unused_parameters=True)
         return model
 
     def define_resfcn_as_detector(self):
@@ -732,8 +446,8 @@ class Modified_invISP(BaseModel):
         checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
         model.load_state_dict(checkpoint, strict=True)
         model = DistributedDataParallel(model,
-                                                          device_ids=[torch.cuda.current_device()],
-                                                          find_unused_parameters=True)
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         return model
 
     def define_inpainting_ZITS(self):
@@ -784,7 +498,6 @@ class Modified_invISP(BaseModel):
         # self.edgeconnect_model = DistributedDataParallel(self.edgeconnect_model,
         #                                               device_ids=[torch.cuda.current_device()],
         #                                               find_unused_parameters=True)
-
 
     def define_inpainting_lama(self):
         from saicinpainting.training.trainers import load_checkpoint
@@ -838,7 +551,8 @@ class Modified_invISP(BaseModel):
 
     @torch.no_grad()
     def inpainting_ZITS(self, *, forward_image, masks):
-        from ZITSinpainting.single_image_test import load_images_for_test, wf_inference_test, load_masked_position_encoding
+        from ZITSinpainting.single_image_test import load_images_for_test, wf_inference_test, \
+            load_masked_position_encoding
         sigma = 3.0
         valid_th = 0.85
         # items = load_images_for_test(src_img, mask_img, sigma=sigma)
@@ -849,14 +563,14 @@ class Modified_invISP(BaseModel):
             mode='bilinear')
         image_gray, image_canny = self.get_canny(input=image_256, sigma=sigma)
 
-        rel_pos, abs_pos, direct = None, None, None #torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long()
+        rel_pos, abs_pos, direct = None, None, None  # torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long(), torch.zeros_like(masks)[:,0].long()
         for i in range(forward_image.shape[0]):
-            mask_numpy = masks[i,0].mul(255).add_(0.5).clamp_(0, 255).contiguous().to('cpu', torch.uint8).numpy()
+            mask_numpy = masks[i, 0].mul(255).add_(0.5).clamp_(0, 255).contiguous().to('cpu', torch.uint8).numpy()
             rel_pos_single, abs_pos_single, direct_single = load_masked_position_encoding(mask_numpy)
             rel_pos_single = torch.LongTensor(rel_pos_single).unsqueeze(0).cuda()
             abs_pos_single = torch.LongTensor(abs_pos_single).unsqueeze(0).cuda()
             direct_single = torch.LongTensor(direct_single).unsqueeze(0).cuda()
-            rel_pos = rel_pos_single if rel_pos is None else torch.cat([rel_pos,rel_pos_single],dim=0)
+            rel_pos = rel_pos_single if rel_pos is None else torch.cat([rel_pos, rel_pos_single], dim=0)
             abs_pos = abs_pos_single if abs_pos is None else torch.cat([abs_pos, abs_pos_single], dim=0)
             direct = direct_single if direct is None else torch.cat([direct, direct_single], dim=0)
 
@@ -867,7 +581,7 @@ class Modified_invISP(BaseModel):
         batch['mask_256'] = torch.where(Functional.interpolate(
             masks.clone(),
             size=[256, 256],
-            mode='bilinear')>0, 1.0, 0.0).cuda()
+            mode='bilinear') > 0, 1.0, 0.0).cuda()
         batch['mask_512'] = masks.clone()
         batch['edge_256'] = image_canny
         batch['img_512'] = forward_image.clone()
@@ -886,8 +600,7 @@ class Modified_invISP(BaseModel):
         #         batch[k] = batch[k].cuda()
         merged_image = self.ZITS_model(batch)
 
-        return merged_image.clone().detach() * masks + forward_image * (1-masks)
-
+        return merged_image.clone().detach() * masks + forward_image * (1 - masks)
 
     ####################################################################################################
     # todo: settings for beginning training
@@ -899,34 +612,34 @@ class Modified_invISP(BaseModel):
         is_stronger = np.random.rand() > 0.5
         if index in self.opt['simulated_hue']:
             ## careful!
-            strength = np.random.rand() * (0.05 if is_stronger>0 else -0.05)
-            modified_adjusted = F.adjust_hue(modified_input, hue_factor=0+strength)  # 0.5 ave
+            strength = np.random.rand() * (0.05 if is_stronger > 0 else -0.05)
+            modified_adjusted = F.adjust_hue(modified_input, hue_factor=0 + strength)  # 0.5 ave
         elif index in self.opt['simulated_contrast']:
             strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
-            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1+strength)  # 1 ave
+            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1 + strength)  # 1 ave
         elif index in self.opt['simulated_gamma']:
             ## careful!
             strength = np.random.rand() * (0.05 if is_stronger > 0 else -0.05)
-            modified_adjusted = F.adjust_gamma(modified_input, gamma=1+strength) # 1 ave
+            modified_adjusted = F.adjust_gamma(modified_input, gamma=1 + strength)  # 1 ave
         elif index in self.opt['simulated_saturation']:
             strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
-            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1+strength)
+            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1 + strength)
         elif index in self.opt['simulated_brightness']:
             strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
             modified_adjusted = F.adjust_brightness(modified_input,
-                                                    brightness_factor=1+strength)  # 1 ave
+                                                    brightness_factor=1 + strength)  # 1 ave
         else:
             raise NotImplementedError("图像增强的index错误，请检查！")
         modified_adjusted = self.clamp_with_grad(modified_adjusted)
 
-        return modified_adjusted #modified_input + (modified_adjusted - modified_input).detach()
+        return modified_adjusted  # modified_input + (modified_adjusted - modified_input).detach()
 
     def gamma_correction(self, tensor, avg=4095, digit=2.2):
-    ## gamma correction
-    #             norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
-    #             input_raw_img = np.power(input_raw_img, 1 / 2.2)
+        ## gamma correction
+        #             norm_value = np.power(4095, 1 / 2.2) if self.camera_name == 'Canon_EOS_5D' else np.power(16383, 1 / 2.2)
+        #             input_raw_img = np.power(input_raw_img, 1 / 2.2)
         norm = math.pow(avg, 1 / digit)
-        tensor = torch.pow(tensor*avg, 1/digit)
+        tensor = torch.pow(tensor * avg, 1 / digit)
         tensor = tensor / norm
 
         return tensor
@@ -957,15 +670,15 @@ class Modified_invISP(BaseModel):
     # todo: RAW2RAW, baseline, ISP generation, localization
     ####################################################################################################
 
-    def RAW_protection_by_my_own_elastic(self,*,input_raw_one_dim):
+    def RAW_protection_by_my_own_elastic(self, *, input_raw_one_dim):
         input_psdown = self.psdown(input_raw_one_dim)
         modified_psdown = input_psdown + self.KD_JPEG(input_psdown)
         modified_raw_one_dim = self.psup(modified_psdown)
         return modified_raw_one_dim
 
     def render_image_using_ISP(self, *, input_raw, input_raw_one_dim, gt_rgb,
-                                     file_name, camera_name
-                                     ):
+                               file_name, camera_name
+                               ):
         ### gt_rgb is only loaded to read tensor size
 
         ### three networks used during training
@@ -1007,7 +720,7 @@ class Modified_invISP(BaseModel):
                 # numpy_rgb = pipeline_tensor2image(raw_image=raw_1, metadata=metadata, input_stage='normal',
                 #                                   output_stage='gamma')
                 numpy_rgb = rawpy_tensor2image(raw_image=raw_1, template=file_name[idx_pipeline],
-                                             camera_name=camera_name[idx_pipeline], patch_size=512) / 255
+                                               camera_name=camera_name[idx_pipeline], patch_size=512) / 255
 
                 non_tampered_image[idx_pipeline:idx_pipeline + 1] = torch.from_numpy(
                     np.ascontiguousarray(np.transpose(numpy_rgb, (2, 0, 1)))).contiguous().float()
@@ -1051,11 +764,10 @@ class Modified_invISP(BaseModel):
             else:  # if self.global_step % 6 == 5:
                 isp_model_0, isp_model_1 = self.netG, self.generator
 
-
             ### first
             if isinstance(isp_model_0, str):
                 modified_input_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim,
-                                                          file_name=file_name, gt_rgb=gt_rgb)
+                                                               file_name=file_name, gt_rgb=gt_rgb)
             else:
                 modified_input_0 = isp_model_0(input_raw)
             modified_input_0 = self.clamp_with_grad(modified_input_0)
@@ -1119,16 +831,17 @@ class Modified_invISP(BaseModel):
             # not (self.global_step%self.amount_of_benign_attack in self.opt['simulated_strong_JPEG_indices'] and quality_idx<16):
             logs["cropped"] = True
             locs, _, modified_cropped = self.cropping_mask_generation(forward_image=modified_input,
-                                                                      min_rate=self.opt['cropping_lower_bound'], max_rate=1.0)
+                                                                      min_rate=self.opt['cropping_lower_bound'],
+                                                                      max_rate=1.0)
             _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
             h_start, h_end, w_start, w_end = locs
             crop_rate = (h_end - h_start) / self.width_height * (w_end - w_start) / self.width_height
         else:
             logs["cropped"] = False
 
-
         percent_range = [0.05, 0.3] if self.global_step % self.amount_of_tampering in \
-                                    (self.opt['simulated_copymove_indices']+self.opt['simulated_inpainting_indices']) \
+                                       (self.opt['simulated_copymove_indices'] + self.opt[
+                                           'simulated_inpainting_indices']) \
             else [0.05, 0.2]
         index_for_postprocessing = self.global_step
 
@@ -1148,7 +861,7 @@ class Modified_invISP(BaseModel):
         )
 
         ###############   white-balance, gamma, tone mapping, etc.  ####################################################
-    
+
         # # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000],
         # white_balance_again_red = 0.7+0.6*torch.rand((batch_size,1)).cuda()
         # white_balance_again_green = torch.ones((batch_size, 1)).cuda()
@@ -1177,7 +890,6 @@ class Modified_invISP(BaseModel):
 
         return attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT
 
-
     ####################################################################################################
     # todo:  Momentum update of the key encoder
     # todo: param_k: momentum
@@ -1203,27 +915,28 @@ class Modified_invISP(BaseModel):
         for idx in range(batch_size):
 
             used_kernel = getattr(self, f"kernel_RAW_k{bayer_pattern[idx]}")
-            v_im = raw_to_raw_tensor[idx:idx+1].repeat(1,3,1,1) * used_kernel
+            v_im = raw_to_raw_tensor[idx:idx + 1].repeat(1, 3, 1, 1) * used_kernel
 
             if white_balance is not None:
                 # v_im (1,3,512,512) white_balance (1,3)
                 # print(white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3).shape)
                 # print(v_im.shape)
-                v_im = v_im * white_balance[idx:idx+1].unsqueeze(2).unsqueeze(3)
+                v_im = v_im * white_balance[idx:idx + 1].unsqueeze(2).unsqueeze(3)
 
             out_tensor = v_im if out_tensor is None else torch.cat((out_tensor, v_im), dim=0)
 
-        return out_tensor.float() #.half() if not eval else out_tensor
+        return out_tensor.float()  # .half() if not eval else out_tensor
 
     def pack_raw(self, raw_to_raw_tensor):
         # 两个相机都是RGGB
-        batch_size, num_channels, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[1], raw_to_raw_tensor.shape[2]
+        batch_size, num_channels, height_width = raw_to_raw_tensor.shape[0], raw_to_raw_tensor.shape[1], \
+                                                 raw_to_raw_tensor.shape[2]
 
         H, W = raw_to_raw_tensor.shape[2], raw_to_raw_tensor.shape[3]
-        R = raw_to_raw_tensor[:,:, 0:H:2, 0:W:2]
-        Gr = raw_to_raw_tensor[:,:, 0:H:2, 1:W:2]
-        Gb = raw_to_raw_tensor[:,:, 1:H:2, 0:W:2]
-        B = raw_to_raw_tensor[:,:, 1:H:2, 1:W:2]
+        R = raw_to_raw_tensor[:, :, 0:H:2, 0:W:2]
+        Gr = raw_to_raw_tensor[:, :, 0:H:2, 1:W:2]
+        Gb = raw_to_raw_tensor[:, :, 1:H:2, 0:W:2]
+        B = raw_to_raw_tensor[:, :, 1:H:2, 1:W:2]
         G_avg = (Gr + Gb) / 2
         out = torch.cat((R, G_avg, B), dim=1)
         print(out.shape)
@@ -1232,8 +945,6 @@ class Modified_invISP(BaseModel):
             size=[height_width, height_width],
             mode='bilinear')
         return out
-
-    
 
     def reload(self, pretrain, network_list=['netG', 'localizer'], strict=True):
         if 'netG' in network_list:

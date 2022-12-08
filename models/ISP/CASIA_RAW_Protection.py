@@ -237,69 +237,116 @@ class CASIA_RAW_Protection(Modified_invISP):
         return logs, debug_logs, did_val
 
 
-    def ISP_mixing_during_training(self, *, modified_raw, modified_raw_one_dim, input_raw_one_dim, stored_lists, file_name, gt_rgb, camera_name=None):
-        stored_image_generator, stored_image_qf_predict, stored_image_netG = stored_lists
-        # if self.global_step % 3 == 0:
-        isp_model_0, isp_model_1 = self.generator, self.qf_predict_network
-        stored_list_0, stored_list_1 = stored_image_generator, stored_image_qf_predict
-        # elif self.global_step % 3 == 1:
-        #     isp_model_0, isp_model_1 = self.netG, self.generator
-        #     stored_list_0, stored_list_1 = stored_image_netG, stored_image_generator
-        # else: #if self.global_step % 3 == 2:
-        #     isp_model_0, isp_model_1 = "pipeline", self.qf_predict_network
-        #     stored_list_0, stored_list_1 = None, stored_image_qf_predict
-        # elif self.global_step % 6 == 3:
-        #     isp_model_0, isp_model_1 = self.netG, self.qf_predict_network
-        #     stored_list_0, stored_list_1 = stored_image_netG, stored_image_qf_predict
-        # elif self.global_step % 6 == 4:
-        #     isp_model_0, isp_model_1 = "pipeline", self.netG
-        #     stored_list_0, stored_list_1 = None, stored_image_netG
-        # else: #if self.global_step % 6 == 5:
-        #     isp_model_0, isp_model_1 = self.netG, self.generator
-        #     stored_list_0, stored_list_1 = stored_image_netG, stored_image_generator
+    def CASIA_test(self, step=None):
+
+        logs, debug_logs = {}, []
+
+        if step is not None:
+            self.global_step = step
+
+        logs, debug_logs = {}, []
+        # self.real_H = self.clamp_with_grad(self.real_H)
+        lr = self.get_current_learning_rate()
+        logs['lr'] = lr
 
 
-        loss_terms = 0
-        ### first
-        if isinstance(isp_model_0, str):
-            modified_input_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=modified_raw_one_dim,
-                                                           file_name=file_name, gt_rgb=gt_rgb, camera_name=camera_name)
-            tamper_source_0 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim,
-                                                           file_name=file_name, gt_rgb=gt_rgb, camera_name=camera_name)
-            ISP_L1_0, ISP_SSIM_0 = 0,0
-        else:
-            tamper_source_0 = stored_list_0
-            modified_input_0, ISP_L1_0, ISP_SSIM_0 = self.differentiable_ISP_gathering(
-                model=isp_model_0,modified_raw=modified_raw,tamper_source=tamper_source_0)
-            loss_terms += 1
+        # self.real_H, self.canny_image
 
-        ### second
-        tamper_source_1 = stored_list_1
-        modified_input_1, ISP_L1_1, ISP_SSIM_1 = self.differentiable_ISP_gathering(
-            model=isp_model_1, modified_raw=modified_raw, tamper_source=tamper_source_1)
-        loss_terms += 1
+        with torch.no_grad():
 
-        ISP_L1, ISP_SSIM = (ISP_L1_0+ISP_L1_1)/loss_terms,  (ISP_SSIM_0+ISP_SSIM_1)/loss_terms
+            self.generator.eval()
+            # self.qf_predict_network.train()
+            self.KD_JPEG.eval()
+            self.discriminator_mask.eval()
+            gt_rgb = self.real_H_val
+            masks_GT = self.canny_image_val
 
-        ##################   doing mixup on the images   ###############################################
-        ### note: our goal is that the rendered rgb by the protected RAW should be close to that rendered by unprotected RAW
-        ### thus, we are not let the ISP network approaching the ground-truth RGB.
-        # skip_the_second = np.random.rand() > 0.8
-        alpha_0 = np.random.rand()
-        alpha_1 = 1 - alpha_0
+            ####### InvISP revert image into RAW ########################
 
-        modified_input = alpha_0 * modified_input_0
-        modified_input += alpha_1 * modified_input_1
-        tamper_source = alpha_0 * tamper_source_0
-        tamper_source += alpha_1 * tamper_source_1
-        tamper_source = tamper_source.detach()
+            raw_invisp, _ = self.generator(gt_rgb, rev=True)
+            raw_invisp = self.clamp_with_grad(raw_invisp)
 
-        # ISP_L1_sum = self.l1_loss(input=modified_input, target=tamper_source)
-        # ISP_SSIM_sum = - self.ssim_loss(modified_input, tamper_source)
+            modified_input = gt_rgb + self.KD_JPEG(gt_rgb)
 
-        ### collect the protected images ###
-        modified_input = self.clamp_with_grad(modified_input)
-        tamper_source = self.clamp_with_grad(tamper_source)
+            RAW_L1 = self.l1_loss(input=modified_input, target=gt_rgb)
+            RAW_SSIM = - self.ssim_loss(modified_input, gt_rgb)
+            # ISP_percept, ISP_style = self.perceptual_loss(modified_input, gt_rgb,
+            #                                                   with_gram=True)
 
-        ## return format: modified_input, tamper_source, semi_images, semi_sources, semi_losses
-        return modified_input, tamper_source, (modified_input_0, modified_input_1), (tamper_source_0, tamper_source_1), (ISP_L1, ISP_SSIM)
+            modified_input = self.clamp_with_grad(modified_input)
+
+            RAW_PSNR = self.psnr(self.postprocess(modified_input), self.postprocess(gt_rgb)).item()
+            logs['RAW_PSNR'] = RAW_PSNR
+            logs['RAW_L1'] = RAW_L1.item()
+
+            ############################    attack layer  ######################################################
+            attacked_forward = modified_input*(1-masks_GT)+gt_rgb*masks_GT
+
+            masks_stack = []
+            for index_for_postprocessing in range(7):
+
+                quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+                ## settings for attack
+                kernel = random.choice([3, 5, 7])  # 3,5,7
+                resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                                int(self.random_float(0.5, 2) * self.width_height))
+
+                skip_robust = index_for_postprocessing==6
+                if not skip_robust:
+
+                    attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_forward.clone().detach(),
+                                                                                         quality_idx=quality_idx,
+                                                                                         index=index_for_postprocessing,
+                                                                                         kernel_size=kernel,
+                                                                                         resize_ratio=resize_ratio
+                                                                                         )
+                else:
+                    attacked_image = attacked_image
+
+
+
+                ###################    Image Manipulation Detection Network (Downstream task)   ####################
+
+                ### UPDATE discriminator_mask AND LATER AFFECT THE MOMENTUM LOCALIZER
+
+                pred_resfcn, CE_resfcn = self.detector_predict(model=self.discriminator_mask,
+                                                               attacked_image=attacked_image.detach().contiguous(),
+                                                               opt_name='finetune_detector_name',
+                                                               masks_GT=masks_GT)
+                masks_stack += pred_resfcn
+                # logs['CE'] = CE_resfcn.item()
+
+                masks_GT = torch.where(masks_GT > 0.5, 1.0, 0.0)
+                F1, RECALL, AUC, IoU = self.F1score(pred_resfcn, masks_GT, thresh=0.5, get_auc=True)
+                # F1_1, RECALL_1 = self.F1score(refined_resfcn_bn, masks_GT, thresh=0.5)
+                logs[f'F1_{index_for_postprocessing}'] = F1
+                # logs['F1_1'] = F1_1
+                logs[f'RECALL_{index_for_postprocessing}'] = RECALL
+                logs[f'AUC_{index_for_postprocessing}'] = AUC
+                logs[f'IoU_{index_for_postprocessing}'] = IoU
+
+
+        if (self.global_step % 100 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(gt_rgb),
+                self.postprocess(raw_invisp),
+                self.postprocess(modified_input),
+                self.postprocess(10 * torch.abs(modified_input - gt_rgb)),
+                self.postprocess(masks_stack[0].unsqueeze(0)),
+                self.postprocess(masks_stack[1].unsqueeze(0)),
+                self.postprocess(masks_stack[2].unsqueeze(0)),
+                self.postprocess(masks_stack[3].unsqueeze(0)),
+                self.postprocess(masks_stack[4].unsqueeze(0)),
+                self.postprocess(masks_stack[5].unsqueeze(0)),
+                self.postprocess(masks_stack[6].unsqueeze(0)),
+                self.postprocess(masks_GT),
+                # self.postprocess(rendered_rgb_invISP),
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/isp_images/{self.task_name}/{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
+
+
+        return logs, debug_logs, True

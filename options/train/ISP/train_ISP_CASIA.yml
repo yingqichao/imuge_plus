@@ -14,16 +14,23 @@ finetune_detector_name: CAT
 # restormer: 77999
 load_origin_ISP_models: 43999
 load_ISP_models: 45999 #20999 # new: 43999 # canon: 16999
-load_RAW_models: 23999
-load_discriminator_models: 23999
+load_RAW_models: 23999 # 23999 19999
+load_discriminator_models: 23999 # 23999 19999
+
+simulated_resize_indices: [0]
+simulated_gblur_indices: [1]
+simulated_mblur_indices: [2]
+simulated_AWGN_indices: [3]
+simulated_strong_JPEG_indices: [4]
+simulated_weak_JPEG_indices: [5]
 
 
 #### general settings
 
 gpu_ids: [2,3]
 
-restart_step: 2000
-model_save_period: 2000
+restart_step: 100000
+model_save_period: 1000
 
 using_which_dataset_for_training: Raise #Canon_FiveK
 using_which_dataset_for_test: Raise

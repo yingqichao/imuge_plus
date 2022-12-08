@@ -55,7 +55,7 @@ def create_dataset(*, opt,args,rank,seed):
     elif "ISP" in opt['model'] and args.mode in [9]:
         print("dataset CASIA1")
         from data.CASIA_dataset import CASIA_dataset as D
-        train_set = D(opt, dataset_opt)
+        train_set = D(opt, dataset_opt, is_train=True)
     elif "ISP" in opt['model'] and args.mode in opt['using_RAW_dataset_training']:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total
@@ -152,7 +152,7 @@ def create_dataset(*, opt,args,rank,seed):
     elif "ISP" in opt['model'] and args.mode in [9]:
         print("dataset CASIA1")
         from data.CASIA_dataset import CASIA_dataset as D
-        val_set = D(opt, dataset_opt)
+        val_set = D(opt, dataset_opt, is_train=False)
     elif "ISP" in opt['model'] and args.mode in opt['using_RAW_dataset_testing']:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total
@@ -201,9 +201,8 @@ def create_dataset(*, opt,args,rank,seed):
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=False, num_workers=0,
                                              pin_memory=True)
 
-    if rank <= 0:
-        print('Number of val images: {:,d}, iters: {:,d}'.format(
-            len(val_set), val_size))
+    print('Number of val images: {:,d}, iters: {:,d}'.format(
+        len(val_set), val_size))
 
 
     return train_set, val_set, train_sampler, train_loader, val_loader

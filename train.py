@@ -177,9 +177,10 @@ def main(args,opt):
                         info_str = f'valid_idx:{valid_idx} '
                         for key in running_list:
                             info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
-                        with open('./test_result.txt', 'a') as f:
+                        with open('./test_result_CASIA.txt', 'a') as f:
                             f.write(info_str+'\n')
                         f.close()
+                        raise StopIteration() # CASIA
                         opt['inference_benign_attack_begin_idx'] = opt['inference_benign_attack_begin_idx'] + 1
                         if opt['inference_benign_attack_begin_idx'] >= 24:
                             raise StopIteration()
