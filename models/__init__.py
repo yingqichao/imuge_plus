@@ -13,12 +13,13 @@ def create_training_scripts_and_print_variables(*, opt, args, train_set=None, va
         model = M(opt, args)
     elif which_model == 'ICASSP_NOWAY':
         from models.CLRNet.IRNcrop_model import IRNcropModel as M
+        model = M(opt, args)
     elif which_model == 'CLRNet':
         from models.CLRNet.IRNclrNew_model import IRNclrModel as M
         model = M(opt, args)
     elif which_model == 'IFA':
         from models.IFA.RR_IFA import RR_IFA as M
-
+        model = M(opt, args, train_set, val_set)
     elif which_model == 'ISP':
         if args.mode==0:
             from models.ISP.Protected_Image_Generation import Protected_Image_Generation as M

@@ -3,7 +3,7 @@
 name: /groupshare/IFA_results
 model: IFA # CVPR
 
-model_save_period: 1000
+model_save_period: 5000
 restart_step: 1000
 
 train:

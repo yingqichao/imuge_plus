@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-from posencode import PositionEmbeddingSine
+from models.IFA.posencode import PositionEmbeddingSine
 
 
 class Transformer(nn.Module):

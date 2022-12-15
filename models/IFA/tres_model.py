@@ -50,12 +50,12 @@ class Net(nn.Module):
 
         network = 'resnet50'
         if network == 'resnet50':
-            from resnet_modify import resnet50 as resnet_modifyresnet
+            from models.IFA.resnet_modify import resnet50 as resnet_modifyresnet
             dim_modelt = 3840
             modelpretrain = models.resnet50(pretrained=True)
 
         elif network == 'resnet34':
-            from resnet_modify import resnet34 as resnet_modifyresnet
+            from models.IFA.resnet_modify import resnet34 as resnet_modifyresnet
             modelpretrain = models.resnet34(pretrained=True)
             dim_modelt = 960
             self.L2pooling_l1 = L2pooling(channels=64)
@@ -63,7 +63,7 @@ class Net(nn.Module):
             self.L2pooling_l3 = L2pooling(channels=256)
             self.L2pooling_l4 = L2pooling(channels=512)
         elif network == 'resnet18':
-            from resnet_modify import resnet18 as resnet_modifyresnet
+            from models.IFA.resnet_modify import resnet18 as resnet_modifyresnet
             modelpretrain = models.resnet18(pretrained=True)
             dim_modelt = 960
             self.L2pooling_l1 = L2pooling(channels=64)
@@ -73,14 +73,14 @@ class Net(nn.Module):
         else:
             raise NotImplementedError("Model not found.")
 
-        torch.save(modelpretrain.state_dict(), 'modelpretrain')
+        # torch.save(modelpretrain.state_dict(), 'modelpretrain')
 
         self.model = resnet_modifyresnet()
-        self.model.load_state_dict(torch.load('modelpretrain'), strict=True)
+        # self.model.load_state_dict(torch.load('modelpretrain'), strict=True)
 
         self.dim_modelt = dim_modelt
 
-        os.remove("modelpretrain")
+        # os.remove("modelpretrain")
 
         nheadt = 16 #cfg.nheadt
         num_encoder_layerst = 2 #cfg.num_encoder_layerst
@@ -171,6 +171,25 @@ class Net(nn.Module):
         # Quantize the latents
         quantized_latents = torch.matmul(encoding_one_hot, self.embedding.weight)  # [BHW, D]
         # quantized_latents = quantized_latents.view(latents_shape)  # [B x H x W x D]
+
+        # =============================================================================
+        # =============================================================================
+
+        # indexlabel = torch.argsort(dist)  # small--> large
+        # anchor1 = torch.unsqueeze(feat[indexlabel[0], ...].contiguous(), dim=0)  # d_min
+        # positive1 = torch.unsqueeze(self.embedding.weight[indexlabel[1], ...].contiguous(), dim=0)  # d'_min+
+        # negative1_1 = torch.unsqueeze(self.embedding.weight[indexlabel[-1], ...].contiguous(), dim=0)  # d_max+
+        #
+        # consistency = nn.L1Loss()
+        # triplet_loss1 = nn.TripletMarginLoss(margin=(label[indexlabel[-1]] - label[indexlabel[1]]),
+        #                                      p=1)  # d_min,d'_min,d_max
+        #
+        # tripletlosses = triplet_loss1(anchor1, positive1, negative1_1) + \
+        #                 triplet_loss2(anchor2, positive2, negative2_1)
+
+        # =============================================================================
+        # =============================================================================
+
 
         # Compute the VQ Losses
         commitment_loss = F.mse_loss(feat, quantized_latents.detach())

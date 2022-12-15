@@ -76,7 +76,7 @@ class RR_IFA(base_IFA):
 
     def define_IFA_net(self):
         from models.IFA.tres_model import Net
-        self.qf_predict_network = Net(num_embeddings=10).cuda()
+        self.qf_predict_network = Net(num_embeddings=256).cuda()
         self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
                                         device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
@@ -101,18 +101,37 @@ class RR_IFA(base_IFA):
         with torch.enable_grad():
 
             self.qf_predict_network.train()
-            gt_rgb = self.real_H
+            attacked_image = self.real_H
             masks_GT = self.canny_image
 
-            label = torch.mean(masks_GT,dim=[1,2,3]).float()
+            label = torch.mean(masks_GT,dim=[1,2,3]).float().unsqueeze(1)
+
+            index_for_postprocessing = self.global_step
+            quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+            ## settings for attack
+            kernel = random.choice([3, 5, 7])  # 3,5,7
+            resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                            int(self.random_float(0.5, 2) * self.width_height))
+
+            skip_robust = np.random.rand() > self.opt['skip_attack_probability']
+            if not skip_robust and self.opt['consider_robost']:
+
+                attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_image,
+                                                                                     quality_idx=quality_idx,
+                                                                                     index=index_for_postprocessing,
+                                                                                     kernel_size=kernel,
+                                                                                     resize_ratio=resize_ratio
+                                                                                     )
+            else:
+                attacked_image = attacked_image
 
             #######
-            predictionQA, feat, quan_loss = self.qf_predict_network(self.real_H)
+            predictionQA, feat, quan_loss = self.qf_predict_network(attacked_image)
 
 
-            l_class = self.bce_with_logit_loss(predictionQA, label)
+            l_class = self.l2_loss(predictionQA, label)
 
-            l_sum = quan_loss+l_class
+            l_sum = 0.1*quan_loss+l_class
             logs['CE'] = l_class.item()
             logs['Quan'] = quan_loss.item()
 

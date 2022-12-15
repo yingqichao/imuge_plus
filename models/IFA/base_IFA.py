@@ -121,7 +121,6 @@ class base_IFA(BaseModel):
         create_folder(self.out_space_storage + "/images")
         create_folder(self.out_space_storage + "/model/" + self.task_name)
         create_folder(self.out_space_storage + "/images/" + self.task_name)
-        create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
 
     def network_definitions(self):
         pass

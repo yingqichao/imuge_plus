@@ -2,14 +2,14 @@
 predictor_folder: /groupshare/IFA_results/model/RR_IFA/
 
 
-load_predictor_models: 0
+load_predictor_models: 119999
 
 #### general settings
 
 gpu_ids: [2,3]
 
-restart_step: 100000
-model_save_period: 1000
+restart_step: 1000
+model_save_period: 5000
 
 using_which_dataset_for_training: Raise #Canon_FiveK
 using_which_dataset_for_test: Raise
@@ -32,10 +32,10 @@ datasets:
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
 
     use_shuffle: true
-    n_workers: 2 # per GPU
+    n_workers: 4 # per GPU
 
-    batch_size: 4 # 4
-    GT_size: 512 # 608
+    batch_size: 32 # 4
+    GT_size: 224 # 608
 
     color: RGB
 
@@ -44,7 +44,7 @@ datasets:
     mode: LQGT
     dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0
     dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
-    GT_size: 512
+    GT_size: 224
 
 
 train:

@@ -102,7 +102,7 @@ def create_dataset(*, opt,args,rank,seed):
     # todo: Data loader
     # todo:
     ####################################################################################################
-    dataset_ratio = 200  # enlarge the size of each epoch
+    dataset_ratio = world_size #200  # enlarge the size of each epoch
     if opt['dist']:
         train_sampler = DistIterSampler(train_set, world_size, rank, dataset_ratio, seed=seed)
     else:

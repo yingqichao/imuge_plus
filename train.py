@@ -9,7 +9,7 @@ import options.options as option
 from utils import util
 from data import create_dataset
 from models import create_training_scripts_and_print_variables
-
+import time
 
 ####################################################################################################################
 # todo: Please notice, in order to apply this framework. Remember to customize the following:
@@ -109,180 +109,41 @@ def main(args,opt):
     train_set, val_set, train_sampler, train_loader, val_loader = create_dataset(opt=opt, args=args, rank=rank, seed=seed)
 
 
-
-
-    ####################################################################################################
-    # todo: Training script
-    ####################################################################################################
     which_model = opt['model']
     model, variables_list = create_training_scripts_and_print_variables(opt=opt,args=args, train_set=train_set, val_set=val_set)
 
-    import time
-    ####################################################################################################
-    # todo: FUNCTIONALITIES
-    # todo: we support a bunch of operations according to variables in val.
-    # todo: each instance must implement a feed_data and optimize_parameters
-    ####################################################################################################
+
     start_epoch, current_step = 0, 0
 
-    if 'ISP' in which_model or ('PAMI' in which_model and args.mode in [0.0,3.0]):
-        ####################################################################################################
-        # todo: Training
-        # todo: the training procedure should ONLY include progbar, feed_data and optimize_parameters so far
-        ####################################################################################################
-        total = len(train_set)
-        if rank<=0:
-            print('Start training from epoch: {:d}, iter: {:d}, total: {:d}'.format(start_epoch, current_step, total))
-        latest_values = None
-
-        print_step, restart_step = 40, opt['restart_step']
-        start = time.time()
-
-        # train_generator_1 = iter(train_loader_1)
-        val_generator = iter(val_loader)
-        val_item = next(val_generator)
-        model.feed_data_val_router(batch=val_item, mode=args.mode)
-        for epoch in range(50):
-            current_step = 0
-
-            # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
-            #                     'SIMUL','RECON','RealTime'
-            #                     'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
-            #                     'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
-            # if rank <= 0:
-            #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
-            running_list = {} #[0.0]*len(variables_list)
-            valid_idx = 0
-            # running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
-            if opt['dist']:
-                train_sampler.set_epoch(epoch)
-            for idx, train_data in enumerate(train_loader):
-                #### get item from another dataset
-                # try:
-                #     train_item_1 = next(train_generator_1)
-                # except StopIteration as e:
-                #     print("The end of val set is reached. Refreshing...")
-                #     train_generator_1 = iter(train_loader_1)
-                #     train_item_1 = next(train_generator_1)
-                #### training
-                model.feed_data_router(batch=train_data, mode=args.mode)
-
-                logs, debug_logs, did_val = model.optimize_parameters_router(mode=args.mode, step=current_step)
-                if did_val:
-                    try:
-                        val_item = next(val_generator)
-                    except StopIteration as e:
-                        print("The end of val set is reached. Refreshing...")
-
-                        info_str = f'valid_idx:{valid_idx} '
-                        for key in running_list:
-                            info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
-                        with open('./test_result_CASIA.txt', 'a') as f:
-                            f.write(info_str+'\n')
-                        f.close()
-                        raise StopIteration() # CASIA
-                        opt['inference_benign_attack_begin_idx'] = opt['inference_benign_attack_begin_idx'] + 1
-                        if opt['inference_benign_attack_begin_idx'] >= 24:
-                            raise StopIteration()
-                        current_step = 0
-                        running_list = {} #[0.0] * len(variables_list)
-                        valid_idx = 0
-                        val_generator = iter(val_loader)
-                        val_item = next(val_generator)
-                    model.feed_data_val_router(batch=val_item, mode=args.mode)
-
-                # if variables_list[0] in logs or variables_list[1] in logs or variables_list[2] in logs:
-                for key in logs:
-                    if key not in running_list:
-                        running_list[key] = 0
-                    running_list[key] += logs[key]
-                valid_idx += 1
-                # else:
-                #     ## which is kind of abnormal, print
-                #     print(variables_list)
-
-                if valid_idx>0 and (idx<10 or valid_idx % print_step == print_step - 1):  # print every 2000 mini-batches
-                    # print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
-                    #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.2f} '
-                    #       f'running_CE_mantra: {running_CE_mantra / print_step:.2f} '
-                    #       f'running_CE_resfcn: {running_CE_resfcn / print_step:.2f} '
-                    #       )
-                    end = time.time()
-                    lr = logs['lr']
-                    info_str = f'[{epoch + 1}, {valid_idx + 1} {idx*model.real_H.shape[0]} {rank} {lr}] '
-                    for key in running_list:
-                        info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
-                    info_str += f'time per sample {(end-start)/print_step/model.real_H.shape[0]:.4f} s'
-                    print(info_str)
-                    start = time.time()
-                    ## refresh the counter to see if the model behaves abnormaly.
-                    if valid_idx>=restart_step:
-                        running_list = {} #[0.0] * len(variables_list)
-                        valid_idx = 0
-
-                current_step += 1
-                # if rank <= 0:
-                #     progbar.add(len(model.real_H), values=logs)
-
-    elif which_model == 'PAMI' and args.mode==1.0:
-        ####################################################################################################
-        # todo: Eval
-        # todo: the evaluation procedure should ONLY include evaluate so far
-        ####################################################################################################
-        if rank<=0:
-            print('Start evaluating... ')
-            # if 'COCO' in opt['eval_dataset']:
-            #     root = '/groupshare/real_world_test_images'
-            # elif 'ILSVRC' in opt['eval_dataset']:
-            #     root = '/groupshare/real_world_test_images_ILSVRC'
-            # else:
-            #     root = '/groupshare/real_world_test_images_CelebA'
-
-            ### test on hand-crafted 3000 images.
-            # model.evaluate(
-            #     data_origin = os.path.join(root,opt['eval_kind'],'ori_COCO_0114'),
-            #     data_immunize = os.path.join(root,opt['eval_kind'],'immu_COCO_0114'),
-            #     data_tampered = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114'),
-            #     data_tampersource = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114'),
-            #     data_mask = os.path.join(root,opt['eval_kind'],'binary_masks_COCO_0114')
-            # )
-            ### test on minor modification
-            model.evaluate(
-               data_origin=opt['path']['data_origin'],
-               data_immunize=opt['path']['data_immunize'],
-               data_tampered=opt['path']['data_tampered'],
-               data_tampersource=opt['path']['data_tampersource'],
-               data_mask=opt['path']['data_mask']
-            )
-
-
+    if 'ISP' in which_model or \
+            ('IFA' in which_model and args.mode in [0.0]) or \
+            ('PAMI' in which_model and args.mode in [0.0,3.0]):
+        ## todo: general training with a validation iterator
+        from train_ISP import training_script_ISP
+        training_script_ISP(opt=opt, args=args, rank=rank, model=model,
+                            train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
     elif which_model == 'PAMI' and args.mode==2.0:
-        ####################################################################################################
-        # todo: Training the KD-JPEG
-        # todo: customized for PAMI, KD_JPEG_Generator_training
-        ####################################################################################################
-        if rank<=0:
-            print('Start training from epoch: {:d}, iter: {:d}'.format(start_epoch, current_step))
-        latest_values = None
-        total = len(train_set)
-        for epoch in range(start_epoch, 50):
-            # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','LOCAL','lr','APEXGT','empty',
-            #                     'SIMUL','RECON',
-            #                     'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
-            #                     'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
-            # if rank <= 0:
-            #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
-            if opt['dist']:
-                train_sampler.set_epoch(epoch)
-            for idx, train_data in enumerate(train_loader):
-                current_step += 1
-                #### training
-                model.feed_data(train_data)
+        ## todo: kd-jpeg training
+        from train_kdjpeg import training_script_kdjpeg
+        training_script_kdjpeg(opt=opt, args=args, rank=rank, model=model,
+                            train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
-                logs, debug_logs = model.KD_JPEG_Generator_training(current_step,latest_values)
-                # if rank <= 0:
-                #     progbar.add(len(model.real_H), values=logs)
+
+    ####################################################################################################
+    # todo: TESTING FUNCTIONALITIES
+    ####################################################################################################
+    elif which_model == 'PAMI' and args.mode == 1.0:
+        ## todo: PAMI inference
+        from inference_PAMI import inference_script_PAMI
+        inference_script_PAMI(opt=opt, args=args, rank=rank, model=model,
+                               train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
+
+
+    elif 'IFA' in which_model and args.mode in [1.0]:
+        from inference_RR_IFA import inference_script_RR_IFA
+        inference_script_RR_IFA(opt=opt, args=args, rank=rank, model=model,
+                              train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
     else:
         raise NotImplementedError('大神是不是搞错了？')
