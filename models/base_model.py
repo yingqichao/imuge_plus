@@ -168,6 +168,7 @@ class BaseModel():
             , [DiffJPEG(95, height=self.width_height, width=self.width_height).cuda(), ]
         ]
 
+        self.ce_loss = nn.CrossEntropyLoss().cuda()
         self.bce_loss = nn.BCELoss().cuda()
         self.bce_with_logit_loss = nn.BCEWithLogitsLoss().cuda()
         self.l1_loss = nn.SmoothL1Loss(beta=0.5).cuda()  # reduction="sum"
@@ -820,7 +821,6 @@ class BaseModel():
         return s, n
 
     def save_network(self, network, network_label, iter_label,save_dir=None, model_path=None):
-        # save_dir = '../experiments/pretrained_models/'
         if model_path == None:
             model_path = self.opt['path']['models']
         if save_dir is None:

@@ -1,32 +1,25 @@
 import time
 
 def inference_script_RR_IFA(*, opt, args, rank, model, train_loader, val_loader, train_sampler):
+    # total = len(train_set)
     ####################################################################################################
-    # todo: Eval
-    # todo: the evaluation procedure should ONLY include evaluate so far
+    # todo: Evaluating RR-IFA
     ####################################################################################################
-    if rank <= 0:
-        print('Start evaluating... ')
-        # if 'COCO' in opt['eval_dataset']:
-        #     root = '/groupshare/real_world_test_images'
-        # elif 'ILSVRC' in opt['eval_dataset']:
-        #     root = '/groupshare/real_world_test_images_ILSVRC'
-        # else:
-        #     root = '/groupshare/real_world_test_images_CelebA'
 
-        ### test on hand-crafted 3000 images.
-        # model.evaluate(
-        #     data_origin = os.path.join(root,opt['eval_kind'],'ori_COCO_0114'),
-        #     data_immunize = os.path.join(root,opt['eval_kind'],'immu_COCO_0114'),
-        #     data_tampered = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114'),
-        #     data_tampersource = os.path.join(root,opt['eval_kind'],'tamper_COCO_0114'),
-        #     data_mask = os.path.join(root,opt['eval_kind'],'binary_masks_COCO_0114')
-        # )
-        ### test on minor modification
-        model.evaluate(
-            data_origin=opt['path']['data_origin'],
-            data_immunize=opt['path']['data_immunize'],
-            data_tampered=opt['path']['data_tampered'],
-            data_tampersource=opt['path']['data_tampersource'],
-            data_mask=opt['path']['data_mask']
-        )
+    if rank <= 0:
+        print('Start evaluating ...')
+    # latest_values = None
+
+    print_step, restart_step = 40, 10000000
+    start = time.time()
+
+    current_step = 0
+
+    running_list = {}  # [0.0]*len(variables_list)
+    valid_idx = 0
+    # running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
+    if opt['dist']:
+        train_sampler.set_epoch(0)
+
+    model.inference_RR_IFA(val_loader=val_loader)
+

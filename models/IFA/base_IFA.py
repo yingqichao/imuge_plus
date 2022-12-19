@@ -77,10 +77,32 @@ class base_IFA(BaseModel):
         super(base_IFA, self).__init__(opt, args, train_set, val_set)
         ### todo: options
         self.default_detection_networks_for_training = ['qf_predict_network']
+        self.global_step_for_inpainting = 0
 
+        self.amount_of_augmentation = len(
+            self.opt['simulated_hue'] +
+            self.opt['simulated_contrast'] +
+            self.opt['simulated_saturation'] +
+            self.opt['simulated_brightness'] +
+            self.opt['simulated_gamma']
+        )
+
+        # self.amount_of_detectors = len(
+        #     self.opt['detector_using_MPF_indices'] +
+        #     self.opt['detector_using_MVSS_indices'] +
+        #     self.opt['detector_using_OSN_indices']
+        # )
+
+        self.amount_of_inpainting = len(
+            self.opt['zits_as_inpainting'] +
+            self.opt['edgeconnect_as_inpainting'] +
+            self.opt['lama_as_inpainting'] +
+            self.opt['ideal_as_inpainting']
+        )
 
         self.mode_dict = {
             0: 'RR IFA',
+            1: 'val RR IFA',
         }
         print(f"network list:{self.network_list}")
         print(f"Current mode: {self.args.mode}")
@@ -145,8 +167,6 @@ class base_IFA(BaseModel):
         self.feed_data_COCO_like(batch, mode='val')
 
 
-
-
     def feed_data_COCO_like(self, batch, mode='train'):
         if mode == 'train':
             img, mask = batch
@@ -169,6 +189,7 @@ class base_IFA(BaseModel):
     ####################################################################################################
     def predict_IFA_with_reference(self, step=None):
         pass
+
 
 
 
@@ -269,7 +290,7 @@ class base_IFA(BaseModel):
     ####################################################################################################
     # todo: define how to tamper the rendered RGB
     ####################################################################################################
-    def tampering_RAW(self, *, masks, masks_GT, gt_rgb, modified_input, percent_range, index=None):
+    def tampering_RAW(self, *, masks, masks_GT, modified_input, percent_range, index=None):
         batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
         ####### Tamper ###############
         # attacked_forward = torch.zeros_like(modified_input)
@@ -300,13 +321,8 @@ class base_IFA(BaseModel):
             ## note! self.global_step_for_inpainting, not index, decides which inpainting model will be used
 
             use_which_inpainting = self.global_step_for_inpainting % self.amount_of_inpainting
-            if use_which_inpainting in self.opt['ideal_as_inpainting']:
 
-                ## ideal
-                attacked_forward_edgeconnect = self.inpainting_for_RAW(forward_image=modified_input, masks=masks,
-                                                                       gt_rgb=gt_rgb)
-
-            elif use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
+            if use_which_inpainting in self.opt['edgeconnect_as_inpainting']:
                 ## edgeconnect
                 attacked_forward_edgeconnect = self.inpainting_edgeconnect(forward_image=modified_input, masks=masks_GT)
             elif use_which_inpainting in self.opt['zits_as_inpainting']:
@@ -825,7 +841,7 @@ class base_IFA(BaseModel):
 
         return modified_input_generator, ISP_loss
 
-    def standard_attack_layer(self, *, modified_input, gt_rgb, logs, tamper_index=None):
+    def standard_attack_layer(self, *, modified_input, tamper_index=None):
         ##############    cropping   ###################################################################################
 
         ## settings for attack
@@ -834,23 +850,24 @@ class base_IFA(BaseModel):
                         int(self.random_float(0.5, 2) * self.width_height))
 
         modified_cropped, locs = modified_input, None
-        if self.global_step % 10 in self.opt['crop_indices']:
-            # not (self.global_step%self.amount_of_benign_attack in (self.opt['simulated_gblur_indices'] + self.opt['simulated_mblur_indices'])) and \
-            # not (self.global_step%self.amount_of_benign_attack in self.opt['simulated_strong_JPEG_indices'] and quality_idx<16):
-            logs["cropped"] = True
-            locs, _, modified_cropped = self.cropping_mask_generation(forward_image=modified_input,
-                                                                      min_rate=self.opt['cropping_lower_bound'],
-                                                                      max_rate=1.0)
-            _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
-            h_start, h_end, w_start, w_end = locs
-            crop_rate = (h_end - h_start) / self.width_height * (w_end - w_start) / self.width_height
-        else:
-            logs["cropped"] = False
+        # if self.global_step % 10 in self.opt['crop_indices']:
+        #     # not (self.global_step%self.amount_of_benign_attack in (self.opt['simulated_gblur_indices'] + self.opt['simulated_mblur_indices'])) and \
+        #     # not (self.global_step%self.amount_of_benign_attack in self.opt['simulated_strong_JPEG_indices'] and quality_idx<16):
+        #     logs["cropped"] = True
+        #     locs, _, modified_cropped = self.cropping_mask_generation(forward_image=modified_input,
+        #                                                               min_rate=self.opt['cropping_lower_bound'],
+        #                                                               max_rate=1.0)
+        #     _, _, gt_rgb = self.cropping_mask_generation(forward_image=gt_rgb, locs=locs)
+        #     h_start, h_end, w_start, w_end = locs
+        #     crop_rate = (h_end - h_start) / self.width_height * (w_end - w_start) / self.width_height
+        # else:
+        #     logs["cropped"] = False
 
-        percent_range = [0.05, 0.3] if self.global_step % self.amount_of_tampering in \
-                                       (self.opt['simulated_copymove_indices'] + self.opt[
-                                           'simulated_inpainting_indices']) \
-            else [0.05, 0.2]
+        percent_range = [0.00, 0.25]
+            # if self.global_step % self.amount_of_tampering not in \
+            #                            (self.opt['simulated_copymove_indices'] + self.opt[
+            #                                'simulated_inpainting_indices']) \
+            # else [0.00, 0.2]
         index_for_postprocessing = self.global_step
 
         quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
@@ -864,19 +881,11 @@ class base_IFA(BaseModel):
 
         # attacked_forward = tamper_source_cropped
         attacked_forward, masks, masks_GT = self.tampering_RAW(
-            masks=masks, masks_GT=masks_GT, gt_rgb=gt_rgb,
+            masks=masks, masks_GT=masks_GT,
             modified_input=modified_cropped, percent_range=percent_range, index=tamper_index
         )
 
         ###############   white-balance, gamma, tone mapping, etc.  ####################################################
-
-        # # [tensor([2.1602, 1.5434], dtype=torch.float64), tensor([1., 1.], dtype=torch.float64), tensor([1.3457, 2.0000],
-        # white_balance_again_red = 0.7+0.6*torch.rand((batch_size,1)).cuda()
-        # white_balance_again_green = torch.ones((batch_size, 1)).cuda()
-        # white_balance_again_blue = 0.7+0.6* torch.rand((batch_size, 1)).cuda()
-        # white_balance_again = torch.cat((white_balance_again_red,white_balance_again_green,white_balance_again_blue),dim=1).unsqueeze(2).unsqueeze(3)
-        # modified_wb = white_balance_again * modified_input
-        # modified_gamma = modified_wb ** (1.0 / (0.7+0.6*np.random.rand()))
         skip_augment = np.random.rand() > self.opt['skip_aug_probability']
         if not skip_augment and self.opt['conduct_augmentation']:
             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
@@ -896,7 +905,7 @@ class base_IFA(BaseModel):
         else:
             attacked_image = attacked_adjusted
 
-        return attacked_image, attacked_adjusted, attacked_forward, masks, masks_GT
+        return attacked_image, attacked_adjusted, masks, masks_GT
 
     ####################################################################################################
     # todo:  Momentum update of the key encoder

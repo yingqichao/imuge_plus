@@ -70,10 +70,11 @@ class block(nn.Module):
 import numpy as np
 
 class ResNet(nn.Module):
-    def __init__(self, block, layers, image_channels, num_classes, use_SRM=False):
+    def __init__(self, block, layers, image_channels, num_classes, use_SRM=False, feat_concat=False):
         super(ResNet, self).__init__()
         self.in_channels = 64
         self.use_SRM = use_SRM
+        self.feat_concat = feat_concat # num of external features: 256
         if self.use_SRM:
             ## bayar conv
             self.BayarConv2D = nn.Conv2d(image_channels, 3, 5, 1, padding=2, bias=False)
@@ -93,7 +94,8 @@ class ResNet(nn.Module):
             self.relu = nn.ELU()
             # image_channels = 12
 
-        self.conv1 = nn.Conv2d(image_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1 = nn.Conv2d(image_channels*2 if self.use_SRM else image_channels,
+                               64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -113,9 +115,9 @@ class ResNet(nn.Module):
         )
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * 4, num_classes)
+        self.fc = nn.Linear(512 * 4 if not self.feat_concat else 512 * 4 + 256, num_classes)
 
-    def forward(self, x):
+    def forward(self, x, mid_feats_from_recovery=None):
         if self.use_SRM:
             self.BayarConv2D.weight.data *= self.bayar_mask
             self.BayarConv2D.weight.data *= torch.pow(self.BayarConv2D.weight.data.sum(axis=(2, 3)).view(3, 3, 1, 1),-1)
@@ -124,7 +126,7 @@ class ResNet(nn.Module):
             # conv_srm = self.SRMConv2D(x)
 
             # x = torch.cat((conv_srm, conv_bayar), dim=1)
-            x = self.relu(x)
+            x = torch.cat([x,self.relu(x)],dim=1)
 
         x = self.conv1(x)
         x = self.bn1(x)
@@ -137,6 +139,8 @@ class ResNet(nn.Module):
 
         x = self.avgpool(x)
         x = x.reshape(x.shape[0], -1)
+        if mid_feats_from_recovery is not None:
+            x = torch.cat([x,mid_feats_from_recovery], dim=1)
         x = self.fc(x)
 
         return x
@@ -176,8 +180,8 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
 
-def ResNet50(img_channel=3, num_classes=1000, use_SRM=False):
-    return ResNet(block, [3, 4, 6, 3], img_channel, num_classes, use_SRM)
+def ResNet50(img_channel=3, num_classes=1000, use_SRM=False, feat_concat=False):
+    return ResNet(block, [3, 4, 6, 3], img_channel, num_classes, use_SRM, feat_concat)
 
 
 def ResNet101(img_channel=3, num_classes=1000):
@@ -194,4 +198,4 @@ def test():
     print(y.size())
 
 
-test()
+# test()

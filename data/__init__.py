@@ -48,12 +48,15 @@ def create_dataset(*, opt,args,rank,seed):
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         train_set = D(opt, dataset_opt)
+    elif "IFA" in opt['model']:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        train_set = D(opt, dataset_opt, load_mask=False)
     elif "ISP" in opt['model'] and args.mode in [3]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         train_set = D(opt, dataset_opt, load_mask=False)
-    elif ("ISP" in opt['model'] and args.mode in [9]) or \
-            ("IFA" in opt['model']):
+    elif ("ISP" in opt['model'] and args.mode in [9]):
         print("dataset Defacto")
         from data.CASIA_dataset import CASIA_dataset as D
         train_set = D(opt, dataset_opt, is_train=True, dataset="Defacto", attack_list={0,1,2})
@@ -137,21 +140,19 @@ def create_dataset(*, opt,args,rank,seed):
         print("dataset with canny")
         from data.LQGT_dataset import LQGTDataset as D
         val_set = D(opt, dataset_opt, is_train=False)
-    # elif "ICASSP_RHI" in opt['model']:
-    #     print("dataset with jpeg")
-    #     from data.tianchi_dataset import LQGTDataset as D
-    #     val_set = D()
-    #     # train_set = D(opt, dataset_opt)
     elif "ISP" in opt['model'] and args.mode in [1]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         val_set = D(opt, dataset_opt)
+    elif "IFA" in opt['model']:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        val_set = D(opt, dataset_opt,load_mask=False)
     elif "ISP" in opt['model'] and args.mode in [3]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
         val_set = D(opt, dataset_opt, load_mask=False)
-    elif "ISP" in opt['model'] and args.mode in [9] or \
-            ("IFA" in opt['model']):
+    elif "ISP" in opt['model'] and args.mode in [9]:
         print("dataset CASIA1")
         from data.CASIA_dataset import CASIA_dataset as D
         val_set = D(opt, dataset_opt, is_train=False, dataset="Defacto", attack_list={0,1,2})

@@ -1,8 +1,7 @@
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/RR_IFA/
 
-
-load_predictor_models: 119999
+load_predictor_models: 0
 
 #### general settings
 
@@ -23,28 +22,28 @@ datasets:
 #    dataroot_GT: /groupshare//Places/data_256                                        # Places
 #    dataroot_GT: /groupshare/CelebA/img/img_celeba_200                                          # CelebA
 #    dataroot_GT: /groupshare/paris_street_view/paris_train                            # ParisStreetView
-    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0                                   # COCO
+    dataroot_GT: /groupshare/COCOdataset/train2017                                   # COCO
 #    dataroot_GT: /groupshare//Flickr1024/train                                 # Flicker
 #    dataroot_GT: /groupshare//DIV2K_valid                                # DIV2K
 #    dataroot_GT: /groupshare//VOC2012/JPEGImages
 #    dataroot_GT: /groupshare//UCID_color/images                                                 # UCID
 #    dataroot_GT: /groupshare//ILSVRC2012_img_val                                      # ImageNet
-    dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
+    dataroot_LQ: ~
 
     use_shuffle: true
     n_workers: 4 # per GPU
 
-    batch_size: 32 # 4
-    GT_size: 224 # 608
+    batch_size: 16 # 4
+    GT_size: 512 # 608
 
     color: RGB
 
   val:
     name: val_DIV2K
     mode: LQGT
-    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0
-    dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
-    GT_size: 224
+    dataroot_GT: /groupshare/COCOdataset/val2017
+    dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
+    GT_size: 512
 
 
 train:

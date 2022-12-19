@@ -8,7 +8,7 @@ Loader, Dumper = OrderedYaml()
 default_attack_opt = {
     'ISP': 'options/train/attack_layer_setting/ISP_attack_layer.yml',
     'PAMI': 'options/train/attack_layer_setting/PAMI_attack_layer.yml',
-    'IFA': 'options/train/attack_layer_setting/ISP_attack_layer.yml',
+    'IFA': 'options/train/attack_layer_setting/IFA_attack_layer.yml',
 }
 
 default_base_opt = {

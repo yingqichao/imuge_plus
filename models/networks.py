@@ -663,15 +663,17 @@ class Localizer(BaseNetwork):
 
 class UNetDiscriminator(BaseNetwork):
     def __init__(self, in_channels=3, out_channels=1, residual_blocks=4, init_weights=True, use_spectral_norm=True,
-                 use_SRM=True, with_attn=False, dim=16, use_sigmoid=False, subtask=0):
+                 use_SRM=True, dim=16, use_sigmoid=False, output_middle_feature=False):
         super(UNetDiscriminator, self).__init__()
         # dim = 32
         self.use_SRM = use_SRM
         self.use_sigmoid = use_sigmoid
-        self.with_attn = with_attn
         self.clock = 1
         self.in_channels = in_channels
-        self.subtask = subtask
+
+        self.output_middle_feature = output_middle_feature
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        # self.subtask = subtask
         # if self.use_SRM:
 
         # self.SRMConv2D = nn.Conv2d(in_channels, 9, 5, 1, padding=2, bias=False)
@@ -771,15 +773,15 @@ class UNetDiscriminator(BaseNetwork):
             nn.ELU(inplace=True),
         )
 
-        if self.subtask!=0:
-            self.mlp_subtask = sequential(
-                torch.nn.AdaptiveAvgPool2d((1, 1)),
-                torch.nn.Flatten(),
-                torch.nn.Linear(dim * 2, dim * 2),
-                nn.ReLU(),
-                torch.nn.Linear(dim * 2, self.subtask),
-                # nn.Sigmoid()
-            )
+        # if self.subtask!=0:
+        #     self.mlp_subtask = sequential(
+        #         torch.nn.AdaptiveAvgPool2d((1, 1)),
+        #         torch.nn.Flatten(),
+        #         torch.nn.Linear(dim * 2, dim * 2),
+        #         nn.ReLU(),
+        #         torch.nn.Linear(dim * 2, self.subtask),
+        #         # nn.Sigmoid()
+        #     )
 
         self.decoder_0 = nn.Sequential(
             # spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim, kernel_size=3, padding=1),
@@ -830,6 +832,9 @@ class UNetDiscriminator(BaseNetwork):
         # e3 = e3_add  # self.clock * e2_add + (1 - self.clock) * e2
 
         m = self.middle(e3)
+        if self.output_middle_feature:
+            middle_feat = self.avgpool(m)
+            middle_feat = middle_feat.reshape(middle_feat.shape[0], -1)
 
         d3 = self.decoder_3(torch.cat((e3, m), dim=1))
         # d3_add = self.decoder_3_add(d3)
@@ -847,9 +852,8 @@ class UNetDiscriminator(BaseNetwork):
         if self.use_sigmoid:
             x = torch.sigmoid(x)
 
-        if self.subtask != 0:
-            pred = self.mlp_subtask(d0_concat)
-            return x, pred
+        if self.output_middle_feature:
+            return x, middle_feat
         else:
             return x
 

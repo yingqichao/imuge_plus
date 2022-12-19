@@ -58,30 +58,138 @@ class RR_IFA(base_IFA):
         ### todo: options
 
         ### todo: constants
+        self.history_accuracy = 0.1
 
 
     def network_definitions(self):
         ### mode=8: InvISP to bi-directionally convert RGB and RAW,
-        self.network_list = ['qf_predict_network']
-        self.save_network_list = ['qf_predict_network']
-        self.training_network_list = ['qf_predict_network']
+        self.network_list = ['qf_predict_network','generator']
+        self.save_network_list = ['qf_predict_network','generator']
+        self.training_network_list = ['qf_predict_network','generator']
 
-        ### network
+        ### todo: network
+        from models.networks import UNetDiscriminator
+        self.generator = UNetDiscriminator(in_channels=3, out_channels=1, use_SRM=False, use_sigmoid=False,
+                                           residual_blocks=8,dim=32, output_middle_feature=True).cuda()
+        self.generator = DistributedDataParallel(self.generator,
+                                                        device_ids=[torch.cuda.current_device()],
+                                                        find_unused_parameters=True)
+        if self.opt['load_predictor_models'] > 0:
+            self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
+                                    network_lists=["generator"], strict=True)
 
-        self.generator = self.define_IFA_net()
-        # self.qf_predict_network = self.define_UNet_as_ISP()
-        self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
-                                network_lists=["qf_predict_network"], strict=True)
+        from CNN_architectures.pytorch_resnet import ResNet50
+        # self.vgg_net = ResNet50(img_channel=3, num_classes=self.unified_dim, use_SRM=True).cuda()
+        # from CNN_architectures.pytorch_inceptionet import GoogLeNet
+        self.qf_predict_network = ResNet50(img_channel=4, num_classes=7, use_SRM=False, feat_concat=True).cuda()
+        if self.opt['load_predictor_models'] > 0:
+            self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
+                                    network_lists=["qf_predict_network"], strict=True)
+
+        # self.generator = self.define_IFA_net()
+        # # self.qf_predict_network = self.define_UNet_as_ISP()
+        # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
+        #                         network_lists=["qf_predict_network"], strict=True)
+
+        ### todo: inpainting model
+        self.define_inpainting_edgeconnect()
+        self.define_inpainting_ZITS()
+        self.define_inpainting_lama()
 
 
     def define_IFA_net(self):
         from models.IFA.tres_model import Net
-        self.qf_predict_network = Net(num_embeddings=256).cuda()
+        self.qf_predict_network = Net(num_embeddings=1024).cuda()
         self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
                                         device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
 
-    def predict_IFA_with_reference(self, step=None):
+    def predict_IFA_with_reference(self,step=None):
+        ## received: real_H, canny_image
+        self.generator.train()
+        self.qf_predict_network.train()
+        if step is not None:
+            self.global_step = step
+        logs = {}
+        lr = self.get_current_learning_rate()
+        logs['lr'] = lr
+
+        modified_input = self.real_H
+        # masks_GT = self.canny_image
+
+        ###### auto-generated tampering and post-processing
+        attacked_image, attacked_forward, masks, masks_GT = self.standard_attack_layer(
+            modified_input=modified_input
+        )
+
+        error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(
+            attacked_forward)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+        logs['ERROR'] = error_l1
+        attacked_image = attacked_image.detach().contiguous()
+
+        ## todo: label is 0-5, representing 0-5% 5%-10% 10%-15% 15%-20% 25%-30% >30%
+        label = 20*torch.mean(masks_GT, dim=[1, 2, 3])
+        self.label = torch.where(label>6*torch.ones_like(label), 6*torch.ones_like(label), label).long()
+
+
+        ## todo: first step: reference recovery
+        estimated_mask, mid_feats = self.generator(attacked_image)
+        loss_aux = self.bce_with_logit_loss(estimated_mask, masks_GT)
+
+        output = self.qf_predict_network(torch.cat([attacked_image, estimated_mask.detach()], dim=1),
+                                      mid_feats_from_recovery=mid_feats)
+        loss_ce = self.ce_loss(output, self.label)
+
+        # loss = emd_loss(labels, outputs)
+
+        loss = loss_ce + loss_aux
+        loss.backward()
+        nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+        nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+        self.optimizer_qf.step()
+        self.optimizer_generator.step()
+        self.optimizer_qf.zero_grad()
+        self.optimizer_generator.zero_grad()
+
+        acc = (output.argmax(dim=1) == self.label).float().mean()
+        logs['epoch_accuracy'] = acc
+        logs['loss_ce'] = loss_ce
+        logs['loss_aux'] = loss_aux
+
+        if (self.global_step % 1000 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.real_H),
+                self.postprocess(attacked_image),
+                self.postprocess(masks_GT),
+                self.postprocess(estimated_mask),
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
+
+        ######## Finally ####################
+        for scheduler in self.schedulers:
+            scheduler.step()
+
+        if self.global_step % (self.opt['model_save_period']) == (
+                self.opt['model_save_period'] - 1) or self.global_step == 9:
+            if self.rank == 0:
+                print('Saving models and training states.')
+                self.save(self.global_step, folder='model', network_list=self.save_network_list)
+
+        if self.real_H is not None:
+            if self.previous_images is not None:
+                self.previous_previous_images = self.previous_images.clone().detach()
+            self.previous_images = self.real_H
+
+        self.global_step = self.global_step + 1
+
+        return logs, None, False
+
+
+    def train_regression(self, step=None):
         ####################  Image Manipulation Detection Network (Downstream task)  ##################
         ### mantranet: localizer mvssnet: netG resfcn: discriminator
 
@@ -101,29 +209,39 @@ class RR_IFA(base_IFA):
         with torch.enable_grad():
 
             self.qf_predict_network.train()
-            attacked_image = self.real_H
-            masks_GT = self.canny_image
+            modified_input = self.real_H
+            # masks_GT = self.canny_image
 
-            label = torch.mean(masks_GT,dim=[1,2,3]).float().unsqueeze(1)
+            ###### auto-generated tampering and post-processing
+            attacked_image, attacked_forward, masks, masks_GT = self.standard_attack_layer(
+                modified_input=modified_input
+            )
 
-            index_for_postprocessing = self.global_step
-            quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
-            ## settings for attack
-            kernel = random.choice([3, 5, 7])  # 3,5,7
-            resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
-                            int(self.random_float(0.5, 2) * self.width_height))
+            error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(
+                attacked_forward)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+            logs['ERROR'] = error_l1
 
-            skip_robust = np.random.rand() > self.opt['skip_attack_probability']
-            if not skip_robust and self.opt['consider_robost']:
 
-                attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_image,
-                                                                                     quality_idx=quality_idx,
-                                                                                     index=index_for_postprocessing,
-                                                                                     kernel_size=kernel,
-                                                                                     resize_ratio=resize_ratio
-                                                                                     )
-            else:
-                attacked_image = attacked_image
+            label = torch.mean(masks_GT, dim=[1, 2, 3]).float().unsqueeze(1)
+
+            ###### just post-processing
+            # index_for_postprocessing = self.global_step
+            # quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+            # ## settings for attack
+            # kernel = random.choice([3, 5, 7])  # 3,5,7
+            # resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+            #                 int(self.random_float(0.5, 2) * self.width_height))
+            # skip_robust = np.random.rand() > self.opt['skip_attack_probability']
+            # if not skip_robust and self.opt['consider_robost']:
+            #
+            #     attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_image,
+            #                                                                          quality_idx=quality_idx,
+            #                                                                          index=index_for_postprocessing,
+            #                                                                          kernel_size=kernel,
+            #                                                                          resize_ratio=resize_ratio
+            #                                                                          )
+            # else:
+            #     attacked_image = attacked_image
 
             #######
             predictionQA, feat, quan_loss = self.qf_predict_network(attacked_image)
@@ -143,21 +261,18 @@ class RR_IFA(base_IFA):
             self.optimizer_qf.zero_grad()
 
 
-        # if (self.global_step % 1000 == 3 or self.global_step <= 10):
-        #     images = stitch_images(
-        #         self.postprocess(gt_rgb),
-        #         self.postprocess(raw_invisp),
-        #         self.postprocess(modified_input),
-        #         self.postprocess(10 * torch.abs(modified_input - gt_rgb)),
-        #         self.postprocess(pred_resfcn),
-        #         self.postprocess(masks_GT),
-        #         # self.postprocess(rendered_rgb_invISP),
-        #         img_per_row=1
-        #     )
-        #
-        #     name = f"{self.out_space_storage}/isp_images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-        #            f"_{str(self.rank)}.png"
-        #     images.save(name)
+        if (self.global_step % 1000 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.real_H),
+                self.postprocess(attacked_forward),
+                self.postprocess(attacked_image),
+                self.postprocess(10 * torch.abs(attacked_image - attacked_forward)),
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
 
         ######## Finally ####################
         for scheduler in self.schedulers:
@@ -168,6 +283,76 @@ class RR_IFA(base_IFA):
                 print('Saving models and training states.')
                 self.save(self.global_step, folder='model', network_list=self.save_network_list)
 
+        if self.real_H is not None:
+            if self.previous_images is not None:
+                self.previous_previous_images = self.previous_images.clone().detach()
+            self.previous_images = self.real_H
+
         self.global_step = self.global_step + 1
 
         return logs, debug_logs, did_val
+
+    def inference_RR_IFA(self, val_loader):
+        epoch_loss = 0
+        epoch_accuracy = 0
+        self.qf_predict_network.eval()
+        with torch.no_grad():
+            for idx, batch in enumerate(val_loader):
+                self.real_H, _ = batch
+                self.real_H = self.real_H.cuda()
+
+                ###### auto-generated tampering and post-processing
+                attacked_image, attacked_forward, masks, masks_GT = self.standard_attack_layer(
+                    modified_input=self.real_H
+                )
+
+                # error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(
+                #     attacked_forward)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
+                # logs['ERROR'] = error_l1
+
+                label = torch.mean(masks_GT, dim=[1, 2, 3]).float().unsqueeze(1)
+
+                # masks_GT = masks_GT.unsqueeze(1).cuda()
+
+                # label = torch.mean(masks_GT, dim=[1, 2, 3]).float().unsqueeze(1)
+
+                # index_for_postprocessing = self.global_step
+                # quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+                # ## settings for attack
+                # kernel = random.choice([3, 5, 7])  # 3,5,7
+                # resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                #                 int(self.random_float(0.5, 2) * self.width_height))
+                #
+                # skip_robust = np.random.rand() > self.opt['skip_attack_probability']
+                # if not skip_robust and self.opt['consider_robost']:
+                #
+                #     attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_image,
+                #                                                                          quality_idx=quality_idx,
+                #                                                                          index=index_for_postprocessing,
+                #                                                                          kernel_size=kernel,
+                #                                                                          resize_ratio=resize_ratio
+                #                                                                          )
+                # else:
+                #     attacked_image = attacked_image
+
+                #######
+                predictionQA, feat, quan_loss = self.qf_predict_network(attacked_image)
+                l_class = self.l2_loss(predictionQA, label)
+                l_sum = 0.1 * quan_loss + l_class
+
+                label_int = (20*label).int()
+                predictionQA_int = (20*predictionQA).int()
+
+                acc = (predictionQA_int == label_int).float().mean()
+                epoch_accuracy += acc.item() / len(val_loader)
+                epoch_loss += l_sum.item() / len(val_loader)
+                print(f"[{idx}] digit: pred {predictionQA.item()} gt {label.item()} | class: pred {predictionQA_int.item()} gt {label_int.item()}]")
+
+            print(f"loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} \n")
+
+            if epoch_accuracy > self.history_accuracy:
+                print(f'Saving models and training states.')
+                # self.model_save(path='checkpoint/latest', epochs=self.global_step)
+                self.save(self.global_step, folder='model', network_list=self.save_network_list)
+                self.history_accuracy = epoch_accuracy
+
