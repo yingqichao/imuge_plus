@@ -116,11 +116,16 @@ def main(args,opt):
     start_epoch, current_step = 0, 0
 
     if 'ISP' in which_model or \
-            ('IFA' in which_model and args.mode in [0.0]) or \
             ('PAMI' in which_model and args.mode in [0.0,3.0]):
-        ## todo: general training with a validation iterator
+        ## todo: general training with a validation iterator for PAMI/DRAW
         from train_ISP import training_script_ISP
         training_script_ISP(opt=opt, args=args, rank=rank, model=model,
+                            train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
+
+    elif 'IFA' in which_model and args.mode in [0.0]:
+        ## todo: training of RR-IFA
+        from train_IFA import training_script_IFA
+        training_script_IFA(opt=opt, args=args, rank=rank, model=model,
                             train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
     elif which_model == 'PAMI' and args.mode==2.0:

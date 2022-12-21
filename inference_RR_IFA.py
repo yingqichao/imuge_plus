@@ -1,6 +1,6 @@
 import time
 
-def inference_script_RR_IFA(*, opt, args, rank, model, train_loader, val_loader, train_sampler):
+def inference_script_RR_IFA(*, opt, args, rank, model, train_loader, val_loader, train_sampler, num_images=None):
     # total = len(train_set)
     ####################################################################################################
     # todo: Evaluating RR-IFA
@@ -21,5 +21,5 @@ def inference_script_RR_IFA(*, opt, args, rank, model, train_loader, val_loader,
     if opt['dist']:
         train_sampler.set_epoch(0)
 
-    model.inference_RR_IFA(val_loader=val_loader)
+    model.inference_RR_IFA(val_loader=val_loader, num_images=num_images)
 

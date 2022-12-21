@@ -177,9 +177,9 @@ class base_IFA(BaseModel):
             self.real_H_val = img.cuda()
             self.canny_image_val = mask.unsqueeze(1).cuda()
 
-    def optimize_parameters_router(self, mode, step=None):
+    def optimize_parameters_router(self, mode, step=None, epoch=None):
         if mode == 0.0:
-            return self.predict_IFA_with_reference(step=step)
+            return self.predict_IFA_with_reference(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
@@ -187,7 +187,7 @@ class base_IFA(BaseModel):
     # todo: MODE == 0
     # todo: get_protected_RAW_and_corresponding_images
     ####################################################################################################
-    def predict_IFA_with_reference(self, step=None):
+    def predict_IFA_with_reference(self, step=None, epoch=None):
         pass
 
 
@@ -841,7 +841,8 @@ class base_IFA(BaseModel):
 
         return modified_input_generator, ISP_loss
 
-    def standard_attack_layer(self, *, modified_input, tamper_index=None):
+    def standard_attack_layer(self, *, modified_input, tamper_index=None,
+                              skip_tamper=False, skip_augment=None, skip_robust=None):
         ##############    cropping   ###################################################################################
 
         ## settings for attack
@@ -873,27 +874,31 @@ class base_IFA(BaseModel):
         quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
 
         ###############   TAMPERING   ##################################################################################
-        rate_mask, masks, masks_GT = 0, None, None
+        # rate_mask, masks, masks_GT = 0, None, None
         # while rate_mask < 0.05 or rate_mask >= 0.33:  # prevent too small or too big
         masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
                                                               percent_range=percent_range, index=self.global_step)
-        rate_mask = torch.mean(masks_GT)
+        # rate_mask = torch.mean(masks_GT)
 
-        # attacked_forward = tamper_source_cropped
-        attacked_forward, masks, masks_GT = self.tampering_RAW(
-            masks=masks, masks_GT=masks_GT,
-            modified_input=modified_cropped, percent_range=percent_range, index=tamper_index
-        )
+        if not skip_tamper:
+            attacked_forward, masks, masks_GT = self.tampering_RAW(
+                masks=masks, masks_GT=masks_GT,
+                modified_input=modified_cropped, percent_range=percent_range, index=tamper_index
+            )
+        else:
+            attacked_forward = modified_cropped
 
         ###############   white-balance, gamma, tone mapping, etc.  ####################################################
-        skip_augment = np.random.rand() > self.opt['skip_aug_probability']
+        if skip_augment is None:
+            skip_augment = np.random.rand() > self.opt['skip_aug_probability']
         if not skip_augment and self.opt['conduct_augmentation']:
             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_forward)
         else:
             attacked_adjusted = attacked_forward
 
         ###########################    Benign attacks   ################################################################
-        skip_robust = np.random.rand() > self.opt['skip_attack_probability']
+        if skip_robust is None:
+            skip_robust = np.random.rand() > self.opt['skip_attack_probability']
         if not skip_robust and self.opt['consider_robost']:
 
             attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_adjusted,

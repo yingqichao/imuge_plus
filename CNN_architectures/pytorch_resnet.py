@@ -70,10 +70,12 @@ class block(nn.Module):
 import numpy as np
 
 class ResNet(nn.Module):
-    def __init__(self, block, layers, image_channels, num_classes, use_SRM=False, feat_concat=False):
+    def __init__(self, block, layers, image_channels, num_classes, use_SRM=False, feat_concat=False,
+                 just_feat_extract=False):
         super(ResNet, self).__init__()
         self.in_channels = 64
         self.use_SRM = use_SRM
+        self.just_feat_extract = just_feat_extract
         self.feat_concat = feat_concat # num of external features: 256
         if self.use_SRM:
             ## bayar conv
@@ -115,7 +117,12 @@ class ResNet(nn.Module):
         )
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.triplet_loss = nn.TripletMarginLoss(margin=1.0, p=1)
         self.fc = nn.Linear(512 * 4 if not self.feat_concat else 512 * 4 + 256, num_classes)
+
+        if self.just_feat_extract:
+            self.fc_feat_extract = nn.Linear(512*4, 1024)
+            self.embedding = nn.Embedding(1,1024)
 
     def forward(self, x, mid_feats_from_recovery=None):
         if self.use_SRM:
@@ -139,6 +146,9 @@ class ResNet(nn.Module):
 
         x = self.avgpool(x)
         x = x.reshape(x.shape[0], -1)
+        if self.just_feat_extract:
+            return self.fc_feat_extract(x)
+
         if mid_feats_from_recovery is not None:
             x = torch.cat([x,mid_feats_from_recovery], dim=1)
         x = self.fc(x)
@@ -180,8 +190,8 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
 
-def ResNet50(img_channel=3, num_classes=1000, use_SRM=False, feat_concat=False):
-    return ResNet(block, [3, 4, 6, 3], img_channel, num_classes, use_SRM, feat_concat)
+def ResNet50(img_channel=3, num_classes=1000, use_SRM=False, feat_concat=False, just_feat_extract=False):
+    return ResNet(block, [3, 4, 6, 3], img_channel, num_classes, use_SRM, feat_concat, just_feat_extract=just_feat_extract)
 
 
 def ResNet101(img_channel=3, num_classes=1000):

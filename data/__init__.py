@@ -37,7 +37,6 @@ def create_dataset(*, opt,args,rank,seed):
     ####################################################################################################
     # for phase, dataset_opt in opt['datasets'].items():
     dataset_opt = opt['datasets']['train']
-    GT_size = opt['datasets']['train']['GT_size']
     print("#################################### train set ####################################")
     print(dataset_opt)
     if "PAMI" in opt['model'] or "CLR" in opt['model']:
@@ -133,29 +132,29 @@ def create_dataset(*, opt,args,rank,seed):
     # todo: Define the testing set
     ####################################################################################################
     # for phase, dataset_opt in opt['datasets'].items():
-    dataset_opt = opt['datasets']['val']
+    val_dataset_opt = opt['datasets']['val']
     print('#################################### val set ####################################')
-    print(dataset_opt)
+    print(val_dataset_opt)
     if "PAMI" in opt['model'] or "CLR" in opt['model']:
         print("dataset with canny")
         from data.LQGT_dataset import LQGTDataset as D
-        val_set = D(opt, dataset_opt, is_train=False)
+        val_set = D(opt, val_dataset_opt, is_train=False)
     elif "ISP" in opt['model'] and args.mode in [1]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
-        val_set = D(opt, dataset_opt)
+        val_set = D(opt, val_dataset_opt)
     elif "IFA" in opt['model']:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
-        val_set = D(opt, dataset_opt,load_mask=False)
+        val_set = D(opt, val_dataset_opt,load_mask=False)
     elif "ISP" in opt['model'] and args.mode in [3]:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
-        val_set = D(opt, dataset_opt, load_mask=False)
+        val_set = D(opt, val_dataset_opt, load_mask=False)
     elif "ISP" in opt['model'] and args.mode in [9]:
         print("dataset CASIA1")
         from data.CASIA_dataset import CASIA_dataset as D
-        val_set = D(opt, dataset_opt, is_train=False, dataset="Defacto", attack_list={0,1,2})
+        val_set = D(opt, val_dataset_opt, is_train=False, dataset="Defacto", attack_list={0,1,2})
     elif "ISP" in opt['model'] and args.mode in opt['using_RAW_dataset_testing']:
         # print("dataset with ISP")
         # from data.fivek_dataset import FiveKDataset_total
@@ -195,13 +194,15 @@ def create_dataset(*, opt,args,rank,seed):
         # val_set = SrRaw(data_root)
 
         # from data.LQGT_dataset import LQGTDataset as D
-        # val_set = D(opt, dataset_opt)
+        # val_set = D(opt, val_dataset_opt)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 
     val_size = int(math.ceil(len(val_set) / 1))
     # val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
-    val_loader = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=False, num_workers=0,
+    val_batch_size = 1 if 'batch_size' not in val_dataset_opt else val_dataset_opt['batch_size'] // world_size
+    val_num_workers = 1 if 'batch_size' not in val_dataset_opt else num_workers
+    val_loader = torch.utils.data.DataLoader(val_set, batch_size=val_batch_size, shuffle=False, num_workers=val_num_workers,
                                              pin_memory=True)
 
     print('Number of val images: {:,d}, iters: {:,d}'.format(

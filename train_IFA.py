@@ -1,6 +1,6 @@
 import time
 
-def training_script_ISP(*, opt, args, rank, model, train_loader, val_loader, train_sampler):
+def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, train_sampler):
     # total = len(train_set)
     ####################################################################################################
     # todo: TRAINING FUNCTIONALITIES
@@ -43,28 +43,6 @@ def training_script_ISP(*, opt, args, rank, model, train_loader, val_loader, tra
             model.feed_data_router(batch=train_data, mode=args.mode)
 
             logs, debug_logs, did_val = model.optimize_parameters_router(mode=args.mode, step=current_step, epoch=epoch)
-            if did_val:
-                try:
-                    val_item = next(val_generator)
-                except StopIteration as e:
-                    print("The end of val set is reached. Refreshing...")
-
-                    info_str = f'valid_idx:{valid_idx} '
-                    for key in running_list:
-                        info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
-                    with open('./test_result_CASIA.txt', 'a') as f:
-                        f.write(info_str + '\n')
-                    f.close()
-                    raise StopIteration()
-                    # opt['inference_benign_attack_begin_idx'] = opt['inference_benign_attack_begin_idx'] + 1
-                    # if opt['inference_benign_attack_begin_idx'] >= 24:
-                    #     raise StopIteration()
-                    # current_step = 0
-                    # running_list = {} #[0.0] * len(variables_list)
-                    # valid_idx = 0
-                    # val_generator = iter(val_loader)
-                    # val_item = next(val_generator)
-                model.feed_data_val_router(batch=val_item, mode=args.mode)
 
             # if variables_list[0] in logs or variables_list[1] in logs or variables_list[2] in logs:
             for key in logs:
