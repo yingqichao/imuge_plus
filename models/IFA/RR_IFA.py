@@ -57,7 +57,7 @@ class RR_IFA(base_IFA):
         self.training_network_list = ['qf_predict_network']
 
         ### todo: network
-        from CNN_architectures.resnet_feat_extract import ResNet_feat_extract
+        from network.CNN_architectures.resnet_feat_extract import ResNet_feat_extract
         # self.vgg_net = ResNet50(img_channel=3, num_classes=self.unified_dim, use_SRM=True).cuda()
         # from CNN_architectures.pytorch_inceptionet import GoogLeNet
         # self.qf_predict_network = ResNet50(img_channel=4, num_classes=7, use_SRM=False, feat_concat=True).cuda()

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from CNN_architectures.pytorch_resnet import block
-import numpy as np
+from network.CNN_architectures.pytorch_resnet import block
+
 
 class ResNet_feat_extract(nn.Module):
     def __init__(self, block=block, layers=[3, 4, 6, 3], image_channels=3):

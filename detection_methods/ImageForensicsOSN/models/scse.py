@@ -1,15 +1,13 @@
 import os
 import sys
-import numpy as np
 from functools import partial
-import cv2
 
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 from torch.utils import model_zoo
-from ImageForensicsOSN.models.senet import SCSEModule, senet154
+from detection_methods.ImageForensicsOSN.models.senet import SCSEModule, senet154
 
 
 encoder_params = {

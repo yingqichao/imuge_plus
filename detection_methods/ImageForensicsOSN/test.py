@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from sklearn.metrics import roc_auc_score
-from ImageForensicsOSN.models.scse import SCSEUnet
+from detection_methods.ImageForensicsOSN.models.scse import SCSEUnet
 
 # gpu_ids = '2'
 # os.environ['CUDA_VISIBLE_DEVICES'] = gpu_ids

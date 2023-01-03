@@ -660,7 +660,7 @@ class Modified_invISP(BaseModel):
 
     def define_OSN_as_detector(self):
         print("using OSN as detector")
-        from ImageForensicsOSN.test import get_model
+        from detection_methods.ImageForensicsOSN.test import get_model
         # self.localizer = #HWMNet(in_chn=3, wf=32, depth=4, use_dwt=False).cuda()
         # self.localizer = DistributedDataParallel(self.localizer, device_ids=[torch.cuda.current_device()],
         #                                     find_unused_parameters=True)
