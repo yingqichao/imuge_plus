@@ -1,18 +1,12 @@
-import math
 import os
 
-import cv2
-import torch
 import torch.nn as nn
 # from cycleisp_models.cycleisp import Raw2Rgb
 # from MVSS.models.mvssnet import get_mvss
 # from MVSS.models.resfcn import ResFCN
 # from data.pipeline import pipeline_tensor2image
 # import matlab.engine
-import torch.nn.functional as Functional
-import torchvision.transforms.functional as F
 from torch.nn.parallel import DistributedDataParallel
-from data.pipeline import isp_tensor2image
 # from data.pipeline import rawpy_tensor2image
 # print("Starting MATLAB engine...")
 # engine = matlab.engine.start_matlab()
@@ -29,11 +23,7 @@ from data.pipeline import isp_tensor2image
 # # get all coco class labels
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
-from MantraNet.mantranet import pre_trained_model
 # from .networks import SPADE_UNet
-from lama_models.HWMNet import HWMNet
-from lama_models.my_own_elastic_dtcwt import my_own_elastic
-from models.base_model import BaseModel
 # from .invertible_net import Inveritible_Decolorization_PAMI
 # from models.networks import UNetDiscriminator
 # from loss import PerceptualLoss, StyleLoss
@@ -41,12 +31,9 @@ from models.base_model import BaseModel
 # from lama_models.HWMNet import HWMNet
 # import contextual_loss as cl
 # import contextual_loss.functional as F
-from models.invertible_net import Inveritible_Decolorization_PAMI
-from models.networks import UNetDiscriminator
 from noise_layers import *
 from utils import stitch_images
 from models.IFA.base_IFA import base_IFA
-import pickle
 
 
 class RR_IFA(base_IFA):
@@ -76,29 +63,28 @@ class RR_IFA(base_IFA):
         # self.qf_predict_network = ResNet50(img_channel=4, num_classes=7, use_SRM=False, feat_concat=True).cuda()
         self.qf_predict_network = ResNet_feat_extract().cuda()
 
-        if self.opt['load_predictor_models'] > 0:
+        if self.opt['load_predictor_models'] is not None:
             # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
             #                         network_lists=["qf_predict_network"], strict=False)
             load_detector_storage = self.opt['predictor_folder']
             model_path = str(self.opt['load_predictor_models'])  # last time: 10999
-            load_models = self.opt['load_predictor_models'] > 0
-            if load_models:
-                print(f"loading models: {self.network_list}")
-                pretrain = load_detector_storage + model_path
-                load_path_G = pretrain+"_qf_predict.pth"
 
-                print('Loading model for class [{:s}] ...'.format(load_path_G))
-                if os.path.exists(load_path_G):
-                    self.load_network(load_path_G, self.qf_predict_network, strict=False)
+            print(f"loading models: {self.network_list}")
+            pretrain = load_detector_storage + model_path
+            load_path_G = pretrain+"_qf_predict.pth"
 
-                    # pkl_path = f'{self.out_space_storage}/model/{self.task_name}/{model_path}_qf_predict.pkl'
-                    # with open(pkl_path, 'rb') as f:
-                    #     data = pickle.load(f)
-                    #     self.qf_predict_network.embedding = data['embedding']
-                    #     print("Pickle loaded to: {}".format(pkl_path))
+            print('Loading model for class [{:s}] ...'.format(load_path_G))
+            if os.path.exists(load_path_G):
+                self.load_network(load_path_G, self.qf_predict_network, strict=False)
 
-                else:
-                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
+                # pkl_path = f'{self.out_space_storage}/model/{self.task_name}/{model_path}_qf_predict.pkl'
+                # with open(pkl_path, 'rb') as f:
+                #     data = pickle.load(f)
+                #     self.qf_predict_network.embedding = data['embedding']
+                #     print("Pickle loaded to: {}".format(pkl_path))
+
+            else:
+                print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
         self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
                                                           device_ids=[torch.cuda.current_device()],
@@ -153,14 +139,14 @@ class RR_IFA(base_IFA):
         logs = {}
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
-        batch_size = self.real_H.shape[0]//2
+        # batch_size = self.real_H.shape[0]//2
         positive_examples, negative_examples = self.real_H[:].clone(), self.real_H[:].clone()
 
         attacked_positive, _, _, _ = self.standard_attack_layer(
             modified_input=positive_examples, skip_tamper=True
         )
         attacked_tampered_negative, _, _, _ = self.standard_attack_layer(
-            modified_input=negative_examples, skip_tamper=False
+            modified_input=negative_examples, skip_tamper=False, percent_range=[0.00, 0.33]
         )
 
         # anchor = self.qf_predict_network.module.embedding.weight
@@ -168,21 +154,21 @@ class RR_IFA(base_IFA):
         # feat_negative = self.qf_predict_network(attacked_tampered_negative)
         # loss = self.triplet_loss(anchor, feat_positive, feat_negative)
         losses, feats = self.qf_predict_network(attacked_positive=attacked_positive,attacked_tampered_negative=attacked_tampered_negative)
-        loss, loss_triplet, loss_class = losses
-        anchor, feat_positive, feat_negative = feats
-        l1_pos = self.l2_loss(feat_positive, anchor)
-        l1_neg = self.l2_loss(feat_negative, anchor)
+        loss, pos_similarity, neg_similarity = losses
+        feat_positive, feat_pos_anchor, feat_negative, feat_neg_anchor = feats
+        # l1_pos = self.l2_loss(feat_positive, anchor)
+        # l1_neg = self.l2_loss(feat_negative, anchor)
         loss.backward()
         nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
         self.optimizer_qf.step()
         self.optimizer_qf.zero_grad()
 
         logs['sum_loss'] = loss.item()
-        logs['triplet_loss'] = loss.item()
-        logs['class_loss'] = loss_class.item()
-        logs['embedding'] = self.qf_predict_network.module.embedding.mean().item()
-        logs['pos'] = l1_pos.item()
-        logs['neg'] = l1_neg.item()
+        logs['feat_pos_anchor'] = torch.mean(feat_pos_anchor).item()
+        logs['feat_neg_anchor'] = torch.mean(feat_neg_anchor).item()
+        # logs['embedding'] = self.qf_predict_network.module.embedding.mean().item()
+        logs['pos'] = torch.mean(pos_similarity).item()
+        logs['neg'] = torch.mean(neg_similarity).item()
 
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             images = stitch_images(
@@ -414,27 +400,30 @@ class RR_IFA(base_IFA):
     def inference_RR_IFA(self, val_loader, num_images=None):
         self.qf_predict_network.eval()
         epoch_pos, epoch_neg, epoch_loss = 0, 0, 0
+        self.global_step = 0
         with torch.no_grad():
             for idx, batch in enumerate(val_loader):
                 self.real_H, _ = batch
                 self.real_H = self.real_H.cuda()
-                batch_size = self.real_H.shape[0] // 2
-                positive_examples, negative_examples = self.real_H[:batch_size], self.real_H[batch_size:]
+                positive_examples, negative_examples = self.real_H[:].clone(), self.real_H[:].clone()
 
                 attacked_positive, _, _, _ = self.standard_attack_layer(
                     modified_input=positive_examples, skip_tamper=True
                 )
                 attacked_tampered_negative, _, _, _ = self.standard_attack_layer(
-                    modified_input=negative_examples, skip_tamper=False
+                    modified_input=negative_examples, skip_tamper=False, percent_range=[0.00, 0.33]
                 )
 
-                loss, feats = self.qf_predict_network(attacked_positive=attacked_positive,
-                                               attacked_tampered_negative=attacked_tampered_negative)
-                anchor,feat_positive,feat_negative = feats
-                l1_pos = self.l1_loss(feat_positive,0.5*torch.ones_like(feat_positive))
-                l1_neg = self.l1_loss(feat_negative,1.5*torch.ones_like(feat_positive))
-                epoch_pos += l1_pos.item()
-                epoch_neg += l1_neg.item()
+                # anchor = self.qf_predict_network.module.embedding.weight
+                # feat_positive = self.qf_predict_network(attacked_positive)
+                # feat_negative = self.qf_predict_network(attacked_tampered_negative)
+                # loss = self.triplet_loss(anchor, feat_positive, feat_negative)
+                losses, feats = self.qf_predict_network(attacked_positive=attacked_positive, attacked_tampered_negative=attacked_tampered_negative)
+                loss, pos_similarity, neg_similarity = losses
+                feat_positive, feat_pos_anchor, feat_negative, feat_neg_anchor = feats
+
+                epoch_pos += torch.mean(pos_similarity).item()
+                epoch_neg += torch.mean(neg_similarity).item()
                 epoch_loss += loss.item()
                 print(
                     f"[{idx}] digit: pos {epoch_pos/(idx+1)} neg {epoch_neg/(idx+1)} loss {epoch_loss/(idx+1)}")
@@ -452,7 +441,13 @@ class RR_IFA(base_IFA):
                            f"_{str(self.rank)}_val.png"
                     images.save(name)
 
-                if num_images is not None and num_images>=idx:
+                if self.real_H is not None:
+                    if self.previous_images is not None:
+                        self.previous_previous_images = self.previous_images.clone().detach()
+                    self.previous_images = positive_examples
+
+                self.global_step += 1
+                if num_images is not None and idx>=num_images:
                     break
 
             # print(f"loss : {epoch_loss:.4f} - acc: {epoch_accuracy:.4f} \n")

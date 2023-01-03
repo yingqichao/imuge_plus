@@ -1,9 +1,6 @@
 import math
 import os
 
-import cv2
-import torch
-import torch.nn as nn
 # from cycleisp_models.cycleisp import Raw2Rgb
 # from MVSS.models.mvssnet import get_mvss
 # from MVSS.models.resfcn import ResFCN
@@ -12,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as Functional
 import torchvision.transforms.functional as F
 from torch.nn.parallel import DistributedDataParallel
-from data.pipeline import isp_tensor2image, pipeline_tensor2image, rawpy_tensor2image
 from omegaconf import OmegaConf
 import yaml
 # from data.pipeline import rawpy_tensor2image
@@ -32,8 +28,7 @@ import yaml
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
 # from .networks import SPADE_UNet
-from lama_models.HWMNet import HWMNet
-from lama_models.my_own_elastic_dtcwt import my_own_elastic
+from inpainting_methods.lama_models import my_own_elastic
 from models.base_model import BaseModel
 # from .invertible_net import Inveritible_Decolorization_PAMI
 # from models.networks import UNetDiscriminator
@@ -45,8 +40,6 @@ from models.base_model import BaseModel
 from models.invertible_net import Inveritible_Decolorization_PAMI
 from models.networks import UNetDiscriminator
 from noise_layers import *
-from utils import stitch_images
-import torch.nn.functional as F2
 
 
 # import matlab.engine
@@ -348,7 +341,7 @@ class base_IFA(BaseModel):
 
     def define_CATNET(self):
         print("using CATnet")
-        from CATNet.model import get_model
+        from detection_methods.CATNet.model import get_model
         model = get_model().cuda()
         model = DistributedDataParallel(model,
                                         device_ids=[torch.cuda.current_device()],
@@ -357,7 +350,7 @@ class base_IFA(BaseModel):
 
     def define_restormer(self):
         print("using restormer as testing ISP...")
-        from restormer.model_restormer import Restormer
+        from restoration_methods.restormer.model_restormer import Restormer
         model = Restormer(dim=16, ).cuda()
         model = DistributedDataParallel(model,
                                         device_ids=[torch.cuda.current_device()],
@@ -375,7 +368,7 @@ class base_IFA(BaseModel):
 
     def define_MantraNet_as_detector(self):
         print("using mantranet as detector")
-        from MantraNet.mantranet import pre_trained_model
+        from detection_methods.MantraNet.mantranet import pre_trained_model
         model_path = './MantraNetv4.pt'
         model = pre_trained_model(model_path).cuda()
         model = DistributedDataParallel(model,
@@ -386,7 +379,7 @@ class base_IFA(BaseModel):
     def define_MVSS_as_detector(self):
         print("using MVSS as detector")
         model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
-        from MVSS.models.mvssnet import get_mvss
+        from detection_methods.MVSS.models.mvssnet import get_mvss
         model = get_mvss(
             backbone='resnet50',
             pretrained_base=True,
@@ -475,11 +468,10 @@ class base_IFA(BaseModel):
         return model
 
     def define_inpainting_ZITS(self):
-        from ZITSinpainting.src.FTR_trainer import ZITSModel
+        from inpainting_methods.ZITSinpainting.src.FTR_trainer import ZITSModel
         from shutil import copyfile
-        from ZITSinpainting.src.config import Config
+        from inpainting_methods.ZITSinpainting.src.config import Config
         print("Building ZITS...........please wait...")
-        from PIL import Image
         model_path = '/groupshare/ckpt/zits_places2_hr'
         config_path = os.path.join(model_path, 'config.yml')
 
@@ -500,8 +492,8 @@ class base_IFA(BaseModel):
         self.ZITS_model.eval()
 
     def define_inpainting_edgeconnect(self):
-        from edgeconnect.main import get_model, load_config
-        from edgeconnect.src.models import EdgeModel, InpaintingModel
+        from inpainting_methods.edgeconnect.main import load_config
+        from inpainting_methods.edgeconnect.src import EdgeModel, InpaintingModel
         print("Building edgeconnect...........please wait...")
         config = load_config(mode=2)
         self.edge_model = EdgeModel(config)
@@ -524,7 +516,7 @@ class base_IFA(BaseModel):
         #                                               find_unused_parameters=True)
 
     def define_inpainting_lama(self):
-        from saicinpainting.training.trainers import load_checkpoint
+        from inpainting_methods.saicinpainting.training.trainers import load_checkpoint
         print("Building LAMA...........please wait...")
         checkpoint_path = './big-lama/models/best.ckpt'
         train_config_path = './big-lama/config.yaml'
@@ -575,7 +567,7 @@ class base_IFA(BaseModel):
 
     @torch.no_grad()
     def inpainting_ZITS(self, *, forward_image, masks):
-        from ZITSinpainting.single_image_test import load_images_for_test, wf_inference_test, \
+        from inpainting_methods.ZITSinpainting.single_image_test import wf_inference_test, \
             load_masked_position_encoding
         sigma = 3.0
         valid_th = 0.85
@@ -842,7 +834,8 @@ class base_IFA(BaseModel):
         return modified_input_generator, ISP_loss
 
     def standard_attack_layer(self, *, modified_input, tamper_index=None,
-                              skip_tamper=False, skip_augment=None, skip_robust=None):
+                              skip_tamper=False, skip_augment=None, skip_robust=None,
+                              percent_range=[0.00, 0.25]):
         ##############    cropping   ###################################################################################
 
         ## settings for attack
@@ -864,7 +857,7 @@ class base_IFA(BaseModel):
         # else:
         #     logs["cropped"] = False
 
-        percent_range = [0.00, 0.25]
+        # percent_range = [0.00, 0.25]
             # if self.global_step % self.amount_of_tampering not in \
             #                            (self.opt['simulated_copymove_indices'] + self.opt[
             #                                'simulated_inpainting_indices']) \

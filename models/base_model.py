@@ -3,8 +3,6 @@ import copy
 import os
 from collections import OrderedDict
 
-import numpy as np
-import torch
 from skimage.feature import canny
 import cv2
 import torch.distributed as dist
@@ -36,7 +34,7 @@ import pytorch_ssim
 # # get all coco class labels
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
-from MantraNet.mantranet import pre_trained_model
+from detection_methods.MantraNet.mantranet import pre_trained_model
 # from .invertible_net import Inveritible_Decolorization_PAMI
 # from models.networks import UNetDiscriminator
 # from loss import PerceptualLoss, StyleLoss
