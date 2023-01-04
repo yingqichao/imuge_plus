@@ -58,7 +58,7 @@ class LQDataset(data.Dataset):
 
         # img_GT = util.read_img(GT_path)
         img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
-        img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
 
         img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
 

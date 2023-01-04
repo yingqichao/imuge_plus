@@ -3,6 +3,7 @@ import torch.utils.data
 from data.data_sampler import DistIterSampler
 import math
 
+print("package data.PAMI initialized")
 
 def create_dataset(*, opt, args):
     ####################################################################################################

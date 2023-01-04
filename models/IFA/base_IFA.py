@@ -438,13 +438,14 @@ class base_IFA(BaseModel):
         self.qf_predict_network = self.define_UNet_as_ISP()
         self.netG = self.define_MPF_as_ISP()
 
-    def define_invISP(self):
+    def define_invISP(self, block_num=[2, 2, 2]):
         print("using invISP as ISP")
-        model = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=[2, 2, 2], augment=False,
+        model = Inveritible_Decolorization_PAMI(dims_in=[[3, 64, 64]], block_num=block_num, augment=False,
                                                 ).cuda()  # InvISPNet(channel_in=3, channel_out=3, block_num=4, network="ResNet").cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
         return model
+
 
     def define_UNet_as_ISP(self):
         print("using Unet as ISP")

@@ -1,6 +1,6 @@
 ### 无参函数放在这里
 
-print("package models.ISP initialized")
+print("package models.IFA initialized")
 
 def create_training_scripts_and_print_variables(*, opt, args, train_set=None, val_set=None):
     which_model = opt['model']

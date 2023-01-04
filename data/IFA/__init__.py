@@ -3,6 +3,8 @@ import torch.utils.data
 from data.data_sampler import DistIterSampler
 import math
 
+print("package data.IFA initialized")
+
 def create_dataset(*, opt, args):
     ####################################################################################################
     # todo: TRAINING DATASET DEFINITION

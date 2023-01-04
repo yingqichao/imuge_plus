@@ -1,6 +1,6 @@
 import torch.nn as nn
 import pywt
-import losses.pytorch_wavelets.dwt.lowlevel as lowlevel
+import pytorch_wavelets.dwt.lowlevel as lowlevel
 import torch
 
 
@@ -205,7 +205,7 @@ class SWTForward(nn.Module):
         filts = (self.h0_col, self.h1_col, self.h0_row, self.h1_row)
         for j in range(self.J):
             # Do 1 level of the transform
-            y = lowlevel.afb2d_atrous(ll, filts, self.mode, 2**j)
+            y = lowlevel.afb2d_atrous(ll, filts, self.mode, 2 ** j)
             coeffs.append(y)
             ll = y[:,:,0]
 

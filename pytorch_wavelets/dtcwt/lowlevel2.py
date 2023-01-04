@@ -6,12 +6,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from losses.pytorch_wavelets.dwt import roll, mypad
+from pytorch_wavelets.dwt import roll, mypad
 import pywt
-from losses.pytorch_wavelets.dwt import DWTForward, DWTInverse
-from losses.pytorch_wavelets.dwt import afb2d, sfb2d_nonsep as sfb2d
-from losses.pytorch_wavelets.dwt import prep_filt_afb2d, prep_filt_sfb2d_nonsep as prep_filt_sfb2d
-from pytorch_wavelets.dtcwt.coeffs import level1 as _level1, qshift as _qshift, biort as _biort
+from pytorch_wavelets.dwt import DWTForward, DWTInverse
+from pytorch_wavelets.dwt import afb2d, sfb2d_nonsep as sfb2d
+from pytorch_wavelets.dwt import prep_filt_afb2d, prep_filt_sfb2d_nonsep as prep_filt_sfb2d
+from pytorch_wavelets.dtcwt.coeffs import level1 as _level1, qshift as _qshift
 
 
 class DTCWTForward2(nn.Module):

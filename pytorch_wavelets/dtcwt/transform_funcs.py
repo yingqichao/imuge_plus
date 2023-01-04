@@ -4,7 +4,7 @@ from torch.autograd import Function
 from pytorch_wavelets.dtcwt.lowlevel import colfilter, rowfilter
 from pytorch_wavelets.dtcwt.lowlevel import coldfilt, rowdfilt
 from pytorch_wavelets.dtcwt.lowlevel import colifilt, rowifilt, q2c, c2q
-from losses.pytorch_wavelets.dwt import int_to_mode
+from pytorch_wavelets.dwt import int_to_mode
 
 
 def get_dimensions5(o_dim, ri_dim):

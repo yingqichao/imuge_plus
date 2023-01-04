@@ -1,5 +1,6 @@
 
 do_evaluate: false
+restoration_model: invisp
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/RR_IFA/
@@ -8,7 +9,7 @@ load_predictor_models: ~ #0_13999
 
 #### general settings
 
-gpu_ids: [2]
+gpu_ids: [4]
 
 restart_step: 1000
 model_save_period: 4000
@@ -34,7 +35,7 @@ datasets:
     use_shuffle: true
     n_workers: 1 # per GPU
 
-    batch_size: 4 # 4
+    batch_size: 8 # 4
     GT_size: 256 # 608
 
     color: RGB
@@ -47,9 +48,12 @@ datasets:
     GT_size: 256
     batch_size: 1
 
+    color: RGB
+
 
 train:
   lr_scratch: !!float 1e-4
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
+#  weight_decay_G: !!float 1e-5

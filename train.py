@@ -1,7 +1,5 @@
 import os
-# os.environ['CUDA_VISIBLE_DEVICES'] = "3,4"
 import argparse
-from utils import Progbar
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -105,6 +103,7 @@ def main(args,opt):
     # todo: DATASET AND NETWORK DEFINITION
     ####################################################################################################
     which_model = opt['model']
+    print(f"Model name: {which_model}")
     from data import create_dataset_and_loader
     from models import create_models
     train_set, val_set, train_sampler, train_loader, val_loader = create_dataset_and_loader(opt=opt, args=args, rank=rank, seed=seed)
@@ -117,19 +116,19 @@ def main(args,opt):
     if 'ISP' in which_model or \
             ('PAMI' in which_model and args.mode in [0.0,3.0]):
         ## todo: general training with a validation iterator for PAMI/DRAW
-        from train_ISP import training_script_ISP
+        from train_and_test_scripts.train_ISP import training_script_ISP
         training_script_ISP(opt=opt, args=args, rank=rank, model=model,
                             train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
-    elif 'IFA' in which_model and args.mode in [0.0]:
+    elif 'IFA' in which_model and args.mode in [0.0, 1.0]:
         ## todo: training of RR-IFA
-        from train_IFA import training_script_IFA
+        from train_and_test_scripts.train_IFA import training_script_IFA
         training_script_IFA(opt=opt, args=args, rank=rank, model=model,
                             train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
     elif which_model == 'PAMI' and args.mode==2.0:
         ## todo: kd-jpeg training
-        from train_kdjpeg import training_script_kdjpeg
+        from train_and_test_scripts.train_kdjpeg import training_script_kdjpeg
         training_script_kdjpeg(opt=opt, args=args, rank=rank, model=model,
                             train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
@@ -139,13 +138,13 @@ def main(args,opt):
     ####################################################################################################
     elif which_model == 'PAMI' and args.mode == 1.0:
         ## todo: PAMI inference
-        from inference_PAMI import inference_script_PAMI
+        from train_and_test_scripts.inference_PAMI import inference_script_PAMI
         inference_script_PAMI(opt=opt, args=args, rank=rank, model=model,
                                train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
 
-    elif 'IFA' in which_model and args.mode in [1.0]:
-        from inference_RR_IFA import inference_script_RR_IFA
+    elif 'IFA' in which_model and args.mode in [2.0]:
+        from train_and_test_scripts.inference_RR_IFA import inference_script_RR_IFA
         inference_script_RR_IFA(opt=opt, args=args, rank=rank, model=model,
                               train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 

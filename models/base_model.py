@@ -61,7 +61,7 @@ class BaseModel():
     def __init__(self, opt,  args, train_set=None, val_set=None):
         ### todo: options
         self.opt = opt
-        self.is_train = opt['is_train']
+        # self.is_train = opt['is_train']
         self.schedulers = []
         self.optimizers = []
 
@@ -71,7 +71,7 @@ class BaseModel():
         self.opt = opt
         self.args = args
         self.train_opt = opt['train']
-        self.test_opt = opt['test']
+        # self.test_opt = opt['test']
 
         self.task_name = args.task_name
         print("Task Name: {}".format(self.task_name))
@@ -211,7 +211,7 @@ class BaseModel():
         pass
 
     def define_optimizers(self):
-        wd_G = self.train_opt['weight_decay_G'] if self.train_opt['weight_decay_G'] else 0
+        wd_G = self.train_opt['weight_decay_G'] if 'weight_decay_G' in self.train_opt else 0
 
         if 'netG' in self.network_list:
             lr = 'lr_scratch'

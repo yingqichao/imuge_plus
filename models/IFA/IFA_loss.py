@@ -48,6 +48,17 @@ class IFA_loss(base_IFA):
         ### todo: constants
         self.history_accuracy = 0.1
 
+    def define_ddpm_unet_network(self):
+        from network.CNN_architectures.ddpm_lucidrains import Unet
+        # input = torch.ones((3, 3, 128, 128)).cuda()
+        # output = model(input, torch.zeros((1)).cuda())
+
+        print("using ddpm_unet")
+        model = Unet().cuda()
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
+
 
     def network_definitions(self):
 
@@ -56,8 +67,12 @@ class IFA_loss(base_IFA):
         self.training_network_list = ['qf_predict_network']
 
         ### todo: network
-        self.qf_predict_network = self.define_restormer()
-
+        if 'restormer' in self.opt['restoration_model'].lower():
+            self.qf_predict_network = self.define_restormer()
+        elif 'unet' in self.opt['restoration_model'].lower():
+            self.qf_predict_network = self.define_ddpm_unet_network()
+        elif 'invisp' in self.opt['restoration_model'].lower():
+            self.qf_predict_network = self.define_invISP(block_num=[4,4,4])
 
         if self.opt['load_predictor_models'] is not None:
             # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
@@ -95,9 +110,19 @@ class IFA_loss(base_IFA):
         # batch_size = self.real_H.shape[0]//2
         degrade = self.benign_attacks_without_simulation(forward_image=self.real_H)
 
-        predicted = self.qf_predict_network(degrade)
+        if 'unet' in self.opt['restoration_model'].lower():
+            predicted = self.qf_predict_network(degrade, torch.zeros((1)).cuda())
+            loss = self.l1_loss(predicted, self.real_H)
+        elif 'invisp' in self.opt['restoration_model'].lower():
+            predicted = self.qf_predict_network(degrade)
+            # reverted, _ = self.qf_predict_network(degrade, rev=True)
+            loss = self.l1_loss(predicted, self.real_H) # + self.l1_loss(reverted, degrade.clone().detach())
+        else:
+            predicted = self.qf_predict_network(degrade)
+            loss = self.l1_loss(predicted, self.real_H)
 
-        loss = self.l1_loss(predicted, self.real_H)
+
+
 
         loss.backward()
         nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)

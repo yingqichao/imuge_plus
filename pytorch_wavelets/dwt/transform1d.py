@@ -1,6 +1,6 @@
 import torch.nn as nn
 import pywt
-import losses.pytorch_wavelets.dwt.lowlevel as lowlevel
+import pytorch_wavelets.dwt.lowlevel as lowlevel
 import torch
 
 

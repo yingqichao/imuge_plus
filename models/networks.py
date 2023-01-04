@@ -661,9 +661,129 @@ class Localizer(BaseNetwork):
         return x
 
 
+class UnetResBlock(BaseNetwork):
+    def __init__(self, in_channels=3, out_channels=3, residual_blocks=8, init_weights=True, use_spectral_norm=True,
+                 dim=32, use_sigmoid=False):
+        super(UnetResBlock, self).__init__()
+
+        self.use_sigmoid = use_sigmoid
+
+        self.in_channels = in_channels
+
+        self.init_conv = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=self.in_channels, out_channels=dim, kernel_size=3, stride=1, padding=1), use_spectral_norm),
+            nn.ELU(inplace=True),
+        )
+
+        blocks = []
+        blocks.append(
+            spectral_norm(nn.Conv2d(in_channels=dim, out_channels=dim * 2, kernel_size=4, stride=2, padding=1),
+                          use_spectral_norm))
+        blocks.append(nn.ELU(inplace=True))
+        for _ in range(residual_blocks):  # residual_blocks
+            block = ResnetBlock(dim * 2, dilation=1, use_spectral_norm=use_spectral_norm)
+            blocks.append(block)
+        self.encoder_1 = nn.Sequential(*blocks)
+
+        blocks = []
+        blocks.append(
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 4, kernel_size=4, stride=2, padding=1),
+                          use_spectral_norm))
+        blocks.append(nn.ELU(inplace=True))
+        for _ in range(residual_blocks):  # residual_blocks
+            block = ResnetBlock(dim * 4, dilation=1, use_spectral_norm=use_spectral_norm)
+            blocks.append(block)
+        self.encoder_2 = nn.Sequential(*blocks)
+
+        blocks = []
+        blocks.append(
+            spectral_norm(nn.Conv2d(in_channels=dim * 4, out_channels=dim * 8, kernel_size=4, stride=2, padding=1),
+                          use_spectral_norm))
+        blocks.append(nn.ELU(inplace=True))
+        for _ in range(residual_blocks):  # residual_blocks
+            block = ResnetBlock(dim * 8, dilation=1, use_spectral_norm=use_spectral_norm)
+            blocks.append(block)
+        self.encoder_3 = nn.Sequential(*blocks)
+
+        blocks = []
+        blocks.append(
+            spectral_norm(nn.ConvTranspose2d(in_channels=dim * 8 * 2, out_channels=dim * 4, kernel_size=4, stride=2, padding=1),
+                          use_spectral_norm))
+        blocks.append(nn.ELU(inplace=True))
+        for _ in range(residual_blocks):  # residual_blocks
+            block = ResnetBlock(dim * 4, dilation=1, use_spectral_norm=use_spectral_norm)
+            blocks.append(block)
+        self.decoder_3 = nn.Sequential(*blocks)
+
+        blocks = []
+        blocks.append(
+            spectral_norm(
+                nn.ConvTranspose2d(in_channels=dim * 4 * 2, out_channels=dim * 2, kernel_size=4, stride=2, padding=1),
+                use_spectral_norm))
+        blocks.append(nn.ELU(inplace=True))
+        for _ in range(residual_blocks):  # residual_blocks
+            block = ResnetBlock(dim * 2, dilation=1, use_spectral_norm=use_spectral_norm)
+            blocks.append(block)
+        self.decoder_2 = nn.Sequential(*blocks)
+
+        blocks = []
+        blocks.append(
+            spectral_norm(
+                nn.ConvTranspose2d(in_channels=dim * 2 * 2, out_channels=dim, kernel_size=4, stride=2, padding=1),
+                use_spectral_norm))
+        blocks.append(nn.ELU(inplace=True))
+        for _ in range(residual_blocks):  # residual_blocks
+            block = ResnetBlock(dim, dilation=1, use_spectral_norm=use_spectral_norm)
+            blocks.append(block)
+        self.decoder_1 = nn.Sequential(*blocks)
+
+        self.decoder_0 = nn.Sequential(
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, stride=1, padding=1),
+                          use_spectral_norm),
+            nn.ELU(inplace=True),
+            spectral_norm(nn.Conv2d(in_channels=dim * 2, out_channels=dim * 2, kernel_size=3, stride=1, padding=1),
+                          use_spectral_norm),
+            nn.ELU(inplace=True),
+            nn.Conv2d(in_channels=dim * 2, out_channels=out_channels, kernel_size=1, padding=0),
+        )
+
+        if init_weights:
+            self.init_weights()
+
+    def forward(self, x):
+
+        e0 = self.init_conv(x)
+
+        e1 = self.encoder_1(e0)
+
+        e2 = self.encoder_2(e1)
+
+        e3 = self.encoder_3(e2)
+
+        d3 = self.decoder_3(torch.cat((e3, m), dim=1))
+        # d3_add = self.decoder_3_add(d3)
+        # d3 = d3_add #self.clock * d2_add + (1 - self.clock) * d2
+        d2 = self.decoder_2(torch.cat((e2, d3), dim=1))
+        # d2_add = self.decoder_2_add(d2)
+        # d2 = d2_add #self.clock * d2_add + (1 - self.clock) * d2
+        d1 = self.decoder_1(torch.cat((e1, d2), dim=1))
+        # d1_add = self.decoder_1_add(d1)
+        # d1 = d1_add #self.clock * d1_add + (1 - self.clock) * d1
+
+        d0_concat = torch.cat((e0, d1), dim=1)
+
+        x = self.decoder_0(d0_concat)
+        if self.use_sigmoid:
+            x = torch.sigmoid(x)
+
+        if self.output_middle_feature:
+            return x, middle_feat
+        else:
+            return x
+
 class UNetDiscriminator(BaseNetwork):
     def __init__(self, in_channels=3, out_channels=1, residual_blocks=4, init_weights=True, use_spectral_norm=True,
-                 use_SRM=True, dim=16, use_sigmoid=False, output_middle_feature=False):
+                 use_SRM=True, dim=32, use_sigmoid=False, output_middle_feature=False):
         super(UNetDiscriminator, self).__init__()
         # dim = 32
         self.use_SRM = use_SRM
