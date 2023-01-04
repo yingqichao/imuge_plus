@@ -1,18 +1,17 @@
 
-do_evaluate: true
+do_evaluate: false
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/RR_IFA/
 
 load_predictor_models: ~ #0_13999
-consider_mask_prediction: false
 
 #### general settings
 
-gpu_ids: [1,2]
+gpu_ids: [2]
 
 restart_step: 1000
-model_save_period: 2000
+model_save_period: 4000
 
 
 
@@ -33,10 +32,10 @@ datasets:
     dataroot_LQ: ~
 
     use_shuffle: true
-    n_workers: 4 # per GPU
+    n_workers: 1 # per GPU
 
-    batch_size: 16 # 4
-    GT_size: 512 # 608
+    batch_size: 4 # 4
+    GT_size: 256 # 608
 
     color: RGB
 
@@ -45,8 +44,8 @@ datasets:
     mode: LQGT
     dataroot_GT: /groupshare/COCOdataset/val2017
     dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
-    GT_size: 512
-    batch_size: 16
+    GT_size: 256
+    batch_size: 1
 
 
 train:

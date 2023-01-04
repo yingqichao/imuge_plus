@@ -1,22 +1,17 @@
 import torch
 import torchvision.models as models
-import torchvision
 import torch.nn.functional as F
-from torch import nn, Tensor
+from torch import nn
 
 import numpy as np
 from scipy import stats
 from tqdm import tqdm
-import os
-import math
 import csv
-import copy
 import json
-from typing import Optional, List
 
 # import data_loader
-from models.IFA.transformers import Transformer
-from models.IFA.posencode import PositionEmbeddingSine
+from models.IFA.network.transformers import Transformer
+from models.IFA.network.posencode import PositionEmbeddingSine
 
 
 class L2pooling(nn.Module):
@@ -50,12 +45,12 @@ class Net(nn.Module):
 
         network = 'resnet50'
         if network == 'resnet50':
-            from models.IFA.resnet_modify import resnet50 as resnet_modifyresnet
+            from models.IFA.network.resnet_modify import resnet50 as resnet_modifyresnet
             dim_modelt = 3840
             modelpretrain = models.resnet50(pretrained=True)
 
         elif network == 'resnet34':
-            from models.IFA.resnet_modify import resnet34 as resnet_modifyresnet
+            from models.IFA.network.resnet_modify import resnet34 as resnet_modifyresnet
             modelpretrain = models.resnet34(pretrained=True)
             dim_modelt = 960
             self.L2pooling_l1 = L2pooling(channels=64)
@@ -63,7 +58,7 @@ class Net(nn.Module):
             self.L2pooling_l3 = L2pooling(channels=256)
             self.L2pooling_l4 = L2pooling(channels=512)
         elif network == 'resnet18':
-            from models.IFA.resnet_modify import resnet18 as resnet_modifyresnet
+            from models.IFA.network.resnet_modify import resnet18 as resnet_modifyresnet
             modelpretrain = models.resnet18(pretrained=True)
             dim_modelt = 960
             self.L2pooling_l1 = L2pooling(channels=64)

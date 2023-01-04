@@ -7,8 +7,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import options.options as option
 from utils import util
-from data import create_dataset
-from models import create_training_scripts_and_print_variables
+
 import time
 
 ####################################################################################################################
@@ -55,10 +54,10 @@ def main(args,opt):
     world_size, rank = init_dist()
 
     #### mkdir and loggers
-
+    # import logging
     # util.mkdirs((path for key, path in opt['path'].items() if not key == 'experiments_root'
     #              and 'pretrain_model' not in key and 'resume' not in key))
-    # 
+    #
     # # config loggers. Before it, the log will not work
     # util.setup_logger('base', opt['path']['log'], 'train_' + opt['name'], level=logging.INFO,
     #                   screen=True, tofile=True)
@@ -66,7 +65,7 @@ def main(args,opt):
     #                   screen=True, tofile=True)
     # logger = logging.getLogger('base')
     # print(option.dict2str(opt))
-    # tensorboard logger
+    # # tensorboard logger
     # if opt['use_tb_logger'] and 'debug' not in opt['name']:
     #     version = float(torch.__version__[0:3])
     #     if version >= 1.1:  # PyTorch 1.1
@@ -76,11 +75,11 @@ def main(args,opt):
     #         #     'You are using PyTorch {}. Tensorboard will use [tensorboardX]'.format(version))
     #         from tensorboardX import SummaryWriter
     #     tb_logger = SummaryWriter(log_dir='../tb_logger/' + opt['name'])
-
-    # convert to NoneDict, which returns None for missing keys
-    opt = option.dict_to_nonedict(opt)
-    # if dist.get_rank()==0:
-    # print(opt)
+    #
+    # # convert to NoneDict, which returns None for missing keys
+    # opt = option.dict_to_nonedict(opt)
+    # # if dist.get_rank()==0:
+    # # print(opt)
 
     ####################################################################################################
     # todo: SEED SELECTION
@@ -103,18 +102,18 @@ def main(args,opt):
     
 
     ####################################################################################################
-    # todo: TRAINING DATASET DEFINITION
-    # todo: Define the training set
+    # todo: DATASET AND NETWORK DEFINITION
     ####################################################################################################
-    train_set, val_set, train_sampler, train_loader, val_loader = create_dataset(opt=opt, args=args, rank=rank, seed=seed)
-
-
     which_model = opt['model']
-    model, variables_list = create_training_scripts_and_print_variables(opt=opt,args=args, train_set=train_set, val_set=val_set)
+    from data import create_dataset_and_loader
+    from models import create_models
+    train_set, val_set, train_sampler, train_loader, val_loader = create_dataset_and_loader(opt=opt, args=args, rank=rank, seed=seed)
+    model = create_models(opt=opt,args=args, train_set=train_set, val_set=val_set)
 
-
+    ####################################################################################################
+    # todo: TRAINING FUNCTIONALITIES
+    ####################################################################################################
     start_epoch, current_step = 0, 0
-
     if 'ISP' in which_model or \
             ('PAMI' in which_model and args.mode in [0.0,3.0]):
         ## todo: general training with a validation iterator for PAMI/DRAW

@@ -16,7 +16,7 @@ import math
 import torch
 from torch import nn
 
-from models.IFA.misc import NestedTensor
+from models.IFA.network.misc import NestedTensor
 
 
 class PositionEmbeddingSine(nn.Module):

@@ -119,7 +119,7 @@ class RR_IFA(base_IFA):
 
 
     def define_IFA_net(self):
-        from models.IFA.tres_model import Net
+        from models.IFA.network.tres_model import Net
         self.qf_predict_network = Net(num_embeddings=1024).cuda()
         self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
                                         device_ids=[torch.cuda.current_device()],

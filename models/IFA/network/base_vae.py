@@ -1,4 +1,4 @@
-from models.IFA.types_ import *
+from models.IFA.network.types_ import *
 from torch import nn
 from abc import abstractmethod
 

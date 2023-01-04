@@ -54,7 +54,7 @@ def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, tra
             #     ## which is kind of abnormal, print
             #     print(variables_list)
 
-            if valid_idx > 0 and (
+            if opt['do_evaluate'] and valid_idx > 0 and (
                     idx < 10 or valid_idx % print_step == print_step - 1):  # print every 2000 mini-batches
                 # print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
                 #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.2f} '

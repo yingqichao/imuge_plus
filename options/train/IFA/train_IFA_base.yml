@@ -1,4 +1,5 @@
 
+do_evaluate: false
 
 name: /groupshare/IFA_results
 model: IFA # CVPR

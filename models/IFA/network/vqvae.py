@@ -1,5 +1,5 @@
 import torch
-from models.IFA.base_vae import BaseVAE
+from models.IFA.network.base_vae import BaseVAE
 from torch import nn
 from torch.nn import functional as F
 from .types_ import *

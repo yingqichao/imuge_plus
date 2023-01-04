@@ -28,7 +28,7 @@ import yaml
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
 # from .networks import SPADE_UNet
-from inpainting_methods.lama_models import my_own_elastic
+from inpainting_methods.lama_models.my_own_elastic import my_own_elastic
 from models.base_model import BaseModel
 # from .invertible_net import Inveritible_Decolorization_PAMI
 # from models.networks import UNetDiscriminator
@@ -173,6 +173,8 @@ class base_IFA(BaseModel):
     def optimize_parameters_router(self, mode, step=None, epoch=None):
         if mode == 0.0:
             return self.predict_IFA_with_reference(step=step, epoch=epoch)
+        elif mode == 1.0:
+            return self.pretrain_restormer_restoration(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
@@ -183,7 +185,12 @@ class base_IFA(BaseModel):
     def predict_IFA_with_reference(self, step=None, epoch=None):
         pass
 
-
+    ####################################################################################################
+    # todo: MODE == 1
+    # todo: get_protected_RAW_and_corresponding_images
+    ####################################################################################################
+    def pretrain_restormer_restoration(self, step=None, epoch=None):
+        pass
 
 
     def define_detector(self, *, opt_name):
@@ -458,7 +465,7 @@ class base_IFA(BaseModel):
 
     def define_resfcn_as_detector(self):
         print("using ResFCN as detector")
-        from MVSS.models.resfcn import ResFCN
+        from detection_methods.MVSS.models.resfcn import ResFCN
         model = ResFCN().cuda()
         checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
         model.load_state_dict(checkpoint, strict=True)
@@ -493,7 +500,7 @@ class base_IFA(BaseModel):
 
     def define_inpainting_edgeconnect(self):
         from inpainting_methods.edgeconnect.main import load_config
-        from inpainting_methods.edgeconnect.src import EdgeModel, InpaintingModel
+        from inpainting_methods.edgeconnect.src.models import EdgeModel, InpaintingModel
         print("Building edgeconnect...........please wait...")
         config = load_config(mode=2)
         self.edge_model = EdgeModel(config)
@@ -834,7 +841,7 @@ class base_IFA(BaseModel):
         return modified_input_generator, ISP_loss
 
     def standard_attack_layer(self, *, modified_input, tamper_index=None,
-                              skip_tamper=False, skip_augment=None, skip_robust=None,
+                              skip_tamper=False, skip_augment=None, skip_robust=None, skip_mask=False,
                               percent_range=[0.00, 0.25]):
         ##############    cropping   ###################################################################################
 
@@ -842,6 +849,9 @@ class base_IFA(BaseModel):
         kernel = random.choice([3, 5, 7])  # 3,5,7
         resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
                         int(self.random_float(0.5, 2) * self.width_height))
+        index_for_postprocessing = self.global_step
+
+        quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
 
         modified_cropped, locs = modified_input, None
         # if self.global_step % 10 in self.opt['crop_indices']:
@@ -862,15 +872,12 @@ class base_IFA(BaseModel):
             #                            (self.opt['simulated_copymove_indices'] + self.opt[
             #                                'simulated_inpainting_indices']) \
             # else [0.00, 0.2]
-        index_for_postprocessing = self.global_step
 
-        quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
-
-        ###############   TAMPERING   ##################################################################################
-        # rate_mask, masks, masks_GT = 0, None, None
-        # while rate_mask < 0.05 or rate_mask >= 0.33:  # prevent too small or too big
-        masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
-                                                              percent_range=percent_range, index=self.global_step)
+        if not skip_mask:
+            masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
+                                                                  percent_range=percent_range, index=self.global_step)
+        else:
+            masks, masks_GT = None, None
         # rate_mask = torch.mean(masks_GT)
 
         if not skip_tamper:

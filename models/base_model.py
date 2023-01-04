@@ -590,14 +590,21 @@ class BaseModel():
         # logs.append(('SCRATCH', l_scratch.item()))
         return attacked_image, attacked_real_jpeg_simulate, (kernel_size, quality_idx, resize_ratio)
 
-    def benign_attacks_without_simulation(self, *, forward_image, quality_idx, kernel_size,
-                                                         resize_ratio, index=None):
+    def benign_attacks_without_simulation(self, *, forward_image, quality_idx=None, kernel_size=None,
+                                                         resize_ratio=None, index=None):
         '''
             real-world attack, whose setting should be fed.
         '''
+        if quality_idx is None:
+            kernel_size = random.choice([3, 5, 7])  # 3,5,7
+            resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                            int(self.random_float(0.5, 2) * self.width_height))
+            index_for_postprocessing = self.global_step
+
+            quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
+
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
         attacked_real_jpeg = torch.empty_like(forward_image).cuda()
-
         quality = int(quality_idx * 5)
 
         for idx_atkimg in range(batch_size):

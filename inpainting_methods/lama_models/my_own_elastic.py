@@ -342,7 +342,7 @@ def sequential(*args):
     return nn.Sequential(*modules)
 
 
-from pytorch_wavelets import DTCWTForward, DTCWTInverse
+from losses.pytorch_wavelets import DTCWTForward, DTCWTInverse
 class my_own_elastic(nn.Module):
     def __init__(self, nin, nch=16, depth=4, nout=None, num_blocks=8, use_norm_conv=False):
         super(my_own_elastic, self).__init__()

@@ -50,18 +50,14 @@ class IFA_loss(base_IFA):
 
 
     def network_definitions(self):
-        self.consider_mask_prediction = self.opt['consider_mask_prediction']
-        ### mode=8: InvISP to bi-directionally convert RGB and RAW,
+
         self.network_list = ['qf_predict_network']
         self.save_network_list = ['qf_predict_network']
         self.training_network_list = ['qf_predict_network']
 
         ### todo: network
-        from network.CNN_architectures.resnet_feat_extract import ResNet_feat_extract
-        # self.vgg_net = ResNet50(img_channel=3, num_classes=self.unified_dim, use_SRM=True).cuda()
-        # from CNN_architectures.pytorch_inceptionet import GoogLeNet
-        # self.qf_predict_network = ResNet50(img_channel=4, num_classes=7, use_SRM=False, feat_concat=True).cuda()
-        self.qf_predict_network = ResNet_feat_extract().cuda()
+        self.qf_predict_network = self.define_restormer()
+
 
         if self.opt['load_predictor_models'] is not None:
             # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
@@ -86,44 +82,67 @@ class IFA_loss(base_IFA):
             else:
                 print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
-        self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
-                                                          device_ids=[torch.cuda.current_device()],
-                                                          find_unused_parameters=True)
-
-        # self.generator = self.define_IFA_net()
-        # # self.qf_predict_network = self.define_UNet_as_ISP()
-        # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
-        #                         network_lists=["qf_predict_network"], strict=True)
-
-        ### todo: recovery network
-        if self.consider_mask_prediction:
-            self.network_list += ['generator']
-            self.save_network_list += ['generator']
-            self.training_network_list += ['generator']
-            from models.networks import UNetDiscriminator
-            self.generator = UNetDiscriminator(in_channels=3, out_channels=1, use_SRM=False, use_sigmoid=False,
-                                               residual_blocks=8,dim=32, output_middle_feature=True).cuda()
-            self.generator = DistributedDataParallel(self.generator,
-                                                            device_ids=[torch.cuda.current_device()],
-                                                            find_unused_parameters=True)
-            if self.opt['load_predictor_models'] > 0:
-                self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
-                                        network_lists=["generator"], strict=True)
-
-        ### todo: inpainting model
-        self.define_inpainting_edgeconnect()
-        self.define_inpainting_ZITS()
-        self.define_inpainting_lama()
-
-        self.triplet_loss = nn.TripletMarginLoss(margin=1.0, p=1).cuda()
 
 
-    def define_IFA_net(self):
-        from models.IFA.tres_model import Net
-        self.qf_predict_network = Net(num_embeddings=1024).cuda()
-        self.qf_predict_network = DistributedDataParallel(self.qf_predict_network,
-                                        device_ids=[torch.cuda.current_device()],
-                                        find_unused_parameters=True)
+    def pretrain_restormer_restoration(self, step=None, epoch=None):
+        ### todo: the first half of the batch is reserved as positive example, and the rest are modified as negative ones.
+        self.qf_predict_network.train()
+        if step is not None:
+            self.global_step = step
+        logs = {}
+        lr = self.get_current_learning_rate()
+        logs['lr'] = lr
+        # batch_size = self.real_H.shape[0]//2
+        degrade = self.benign_attacks_without_simulation(forward_image=self.real_H)
+
+        predicted = self.qf_predict_network(degrade)
+
+        loss = self.l1_loss(predicted, self.real_H)
+
+        loss.backward()
+        nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+        self.optimizer_qf.step()
+        self.optimizer_qf.zero_grad()
+
+        logs['sum_loss'] = loss.item()
+        PSNR = self.psnr(self.postprocess(predicted),
+                               self.postprocess(self.real_H)).item()
+        logs['PSNR'] = PSNR
+
+        if (self.global_step % 1000 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.real_H),
+                self.postprocess(degrade),
+                self.postprocess(predicted),
+                self.postprocess(10 * torch.abs(self.real_H - degrade)),
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
+
+        ######## Finally ####################
+        for scheduler in self.schedulers:
+            scheduler.step()
+
+        if self.global_step % (self.opt['model_save_period']) == (
+                self.opt['model_save_period'] - 1) or self.global_step == 9:
+            if self.rank == 0:
+                print('Saving models and training states.')
+                # self.save(self.global_step, folder='model', network_list=self.save_network_list)
+                self.save_network(self.qf_predict_network, 'qf_predict', f"{epoch}_{self.global_step}",
+                                  model_path=self.out_space_storage + f'/model/{self.task_name}/')
+                # pkl_path = f'{self.out_space_storage}/model/{self.task_name}/{self.global_step}_qf_predict.pkl'
+                # with open(pkl_path, 'wb') as f:
+                #     pickle.dump({'embedding': self.qf_predict_network.module.embedding}, f)
+                #     print("Pickle saved to: {}".format(pkl_path))
+
+
+        self.global_step = self.global_step + 1
+
+        return logs, None, False
+
 
     def predict_IFA_loss(self, step=None, epoch=None):
         """
@@ -208,195 +227,9 @@ class IFA_loss(base_IFA):
 
         return logs, None, False
 
-    def predict_IFA_with_mask_prediction(self,step=None):
-        ## received: real_H, canny_image
-        self.generator.train()
-        self.qf_predict_network.train()
-        if step is not None:
-            self.global_step = step
-        logs = {}
-        lr = self.get_current_learning_rate()
-        logs['lr'] = lr
-
-        modified_input = self.real_H
-        # masks_GT = self.canny_image
-
-        ###### auto-generated tampering and post-processing
-        attacked_image, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-            modified_input=modified_input
-        )
-
-        error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(
-            attacked_forward)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-        logs['ERROR'] = error_l1
-        attacked_image = attacked_image.detach().contiguous()
-
-        ## todo: label is 0-5, representing 0-5% 5%-10% 10%-15% 15%-20% 25%-30% >30%
-        label = 20*torch.mean(masks_GT, dim=[1, 2, 3])
-        self.label = torch.where(label>6*torch.ones_like(label), 6*torch.ones_like(label), label).long()
 
 
-        ## todo: first step: reference recovery
-        estimated_mask, mid_feats = self.generator(attacked_image)
-        loss_aux = self.bce_with_logit_loss(estimated_mask, masks_GT)
-
-        output = self.qf_predict_network(torch.cat([attacked_image, estimated_mask.detach()], dim=1),
-                                      mid_feats_from_recovery=mid_feats)
-        loss_ce = self.ce_loss(output, self.label)
-
-        # loss = emd_loss(labels, outputs)
-
-        loss = loss_ce + loss_aux
-        loss.backward()
-        nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-        nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-        self.optimizer_qf.step()
-        self.optimizer_generator.step()
-        self.optimizer_qf.zero_grad()
-        self.optimizer_generator.zero_grad()
-
-        acc = (output.argmax(dim=1) == self.label).float().mean()
-        logs['epoch_accuracy'] = acc
-        logs['loss_ce'] = loss_ce
-        logs['loss_aux'] = loss_aux
-
-        if (self.global_step % 1000 == 3 or self.global_step <= 10):
-            images = stitch_images(
-                self.postprocess(self.real_H),
-                self.postprocess(attacked_image),
-                self.postprocess(masks_GT),
-                self.postprocess(estimated_mask),
-                img_per_row=1
-            )
-
-            name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-                   f"_{str(self.rank)}.png"
-            images.save(name)
-
-        ######## Finally ####################
-        for scheduler in self.schedulers:
-            scheduler.step()
-
-        if self.global_step % (self.opt['model_save_period']) == (
-                self.opt['model_save_period'] - 1) or self.global_step == 9:
-            if self.rank == 0:
-                print('Saving models and training states.')
-                self.save(self.global_step, folder='model', network_list=self.save_network_list)
-
-        if self.real_H is not None:
-            if self.previous_images is not None:
-                self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.real_H
-
-        self.global_step = self.global_step + 1
-
-        return logs, None, False
-
-
-    def train_regression(self, step=None):
-        ####################  Image Manipulation Detection Network (Downstream task)  ##################
-        ### mantranet: localizer mvssnet: netG resfcn: discriminator
-
-        #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
-        did_val = False
-        if step is not None:
-            self.global_step = step
-
-        logs, debug_logs = {}, []
-        # self.real_H = self.clamp_with_grad(self.real_H)
-        lr = self.get_current_learning_rate()
-        logs['lr'] = lr
-
-
-        # self.real_H, self.canny_image
-
-        with torch.enable_grad():
-
-            self.qf_predict_network.train()
-            modified_input = self.real_H
-            # masks_GT = self.canny_image
-
-            ###### auto-generated tampering and post-processing
-            attacked_image, attacked_forward, masks, masks_GT = self.standard_attack_layer(
-                modified_input=modified_input
-            )
-
-            error_l1 = self.psnr(self.postprocess(attacked_image), self.postprocess(
-                attacked_forward)).item()  # self.l1_loss(input=ERROR, target=torch.zeros_like(ERROR))
-            logs['ERROR'] = error_l1
-
-
-            label = torch.mean(masks_GT, dim=[1, 2, 3]).float().unsqueeze(1)
-
-            ###### just post-processing
-            # index_for_postprocessing = self.global_step
-            # quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
-            # ## settings for attack
-            # kernel = random.choice([3, 5, 7])  # 3,5,7
-            # resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
-            #                 int(self.random_float(0.5, 2) * self.width_height))
-            # skip_robust = np.random.rand() > self.opt['skip_attack_probability']
-            # if not skip_robust and self.opt['consider_robost']:
-            #
-            #     attacked_image, attacked_real_jpeg_simulate, _ = self.benign_attacks(attacked_forward=attacked_image,
-            #                                                                          quality_idx=quality_idx,
-            #                                                                          index=index_for_postprocessing,
-            #                                                                          kernel_size=kernel,
-            #                                                                          resize_ratio=resize_ratio
-            #                                                                          )
-            # else:
-            #     attacked_image = attacked_image
-
-            #######
-            predictionQA, feat, quan_loss = self.qf_predict_network(attacked_image)
-
-
-            l_class = self.l2_loss(predictionQA, label)
-
-            l_sum = 0.1*quan_loss+l_class
-            logs['CE'] = l_class.item()
-            logs['Quan'] = quan_loss.item()
-
-            l_sum.backward()
-
-            if self.train_opt['gradient_clipping']:
-                nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-            self.optimizer_qf.step()
-            self.optimizer_qf.zero_grad()
-
-
-        if (self.global_step % 1000 == 3 or self.global_step <= 10):
-            images = stitch_images(
-                self.postprocess(self.real_H),
-                self.postprocess(attacked_forward),
-                self.postprocess(attacked_image),
-                self.postprocess(10 * torch.abs(attacked_image - attacked_forward)),
-                img_per_row=1
-            )
-
-            name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
-                   f"_{str(self.rank)}.png"
-            images.save(name)
-
-        ######## Finally ####################
-        for scheduler in self.schedulers:
-            scheduler.step()
-
-        if self.global_step % (self.opt['model_save_period']) == (self.opt['model_save_period']-1) or self.global_step == 9:
-            if self.rank == 0:
-                print('Saving models and training states.')
-                self.save(self.global_step, folder='model', network_list=self.save_network_list)
-
-        if self.real_H is not None:
-            if self.previous_images is not None:
-                self.previous_previous_images = self.previous_images.clone().detach()
-            self.previous_images = self.real_H
-
-        self.global_step = self.global_step + 1
-
-        return logs, debug_logs, did_val
-
-    def inference_RR_IFA(self, val_loader, num_images=None):
+    def inference_IFA_loss(self, val_loader, num_images=None):
         self.qf_predict_network.eval()
         epoch_pos, epoch_neg, epoch_loss = 0, 0, 0
         self.global_step = 0

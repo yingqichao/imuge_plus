@@ -8,13 +8,13 @@ Objective:
 
 
 import copy
-from typing import Optional, List
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-from models.IFA.posencode import PositionEmbeddingSine
+from models.IFA.network.posencode import PositionEmbeddingSine
 
 
 class Transformer(nn.Module):
