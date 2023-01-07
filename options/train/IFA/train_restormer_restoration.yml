@@ -1,15 +1,24 @@
 
 do_evaluate: false
-restoration_model: invisp
+restoration_model: unet
+predict_PSNR_model: cmt
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/RR_IFA/
 
 load_predictor_models: ~ #0_13999
+minimum_PSNR_caused_by_attack: 20
+
+#### model path for MODE 2: ESTIMATING PSNR
+load_restormer_models: 15_3999_qf_predict.pth
+load_unet_models: 31_7999_qf_predict.pth
+load_invisp_models: 10_7999_qf_predict.pth
+
+
 
 #### general settings
 
-gpu_ids: [4]
+gpu_ids: [1,2]
 
 restart_step: 1000
 model_save_period: 4000
@@ -33,9 +42,9 @@ datasets:
     dataroot_LQ: ~
 
     use_shuffle: true
-    n_workers: 1 # per GPU
+    n_workers: 2 # per GPU
 
-    batch_size: 8 # 4
+    batch_size: 32 # 4
     GT_size: 256 # 608
 
     color: RGB

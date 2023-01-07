@@ -595,16 +595,19 @@ class BaseModel():
         '''
             real-world attack, whose setting should be fed.
         '''
+        ## note: create tensor directly on device:
+        ## torch.ones((1,1),device=a.get_device())
+
         if quality_idx is None:
             kernel_size = random.choice([3, 5, 7])  # 3,5,7
             resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
                             int(self.random_float(0.5, 2) * self.width_height))
-            index_for_postprocessing = self.global_step
+            index_for_postprocessing = index #self.global_step
 
             quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
 
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
-        attacked_real_jpeg = torch.empty_like(forward_image).cuda()
+        attacked_real_jpeg = torch.empty_like(forward_image)
         quality = int(quality_idx * 5)
 
         for idx_atkimg in range(batch_size):
@@ -614,7 +617,28 @@ class BaseModel():
                                                                     resize_ratio=resize_ratio)
             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
-        return attacked_real_jpeg
+        return attacked_real_jpeg.cuda()
+
+    def to_jpeg(self, *, forward_image):
+        batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
+        attacked_real_jpeg = torch.empty_like(forward_image)
+
+        for idx_atkimg in range(batch_size):
+            grid = forward_image[idx_atkimg]
+            ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).contiguous().to('cpu', torch.uint8).numpy()
+
+            _, realworld_attack = cv2.imencode('.jpeg', ndarr,
+                                               (int(cv2.IMWRITE_JPEG_QUALITY), 100))
+            realworld_attack = cv2.imdecode(realworld_attack, cv2.IMREAD_UNCHANGED)
+
+            realworld_attack = realworld_attack.astype(np.float32) / 255.
+            realworld_attack = torch.from_numpy(
+                np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).contiguous().float()
+            realworld_attack = realworld_attack.unsqueeze(0)
+
+            attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
+
+        return attacked_real_jpeg.cuda()
 
     def real_world_attacking_on_ndarray(self, *,  grid, qf_after_blur, kernel, resize_ratio, index=None):
         # batch_size, height_width = self.real_H.shape[0], self.real_H.shape[2]
@@ -681,7 +705,7 @@ class BaseModel():
         realworld_attack = realworld_attack.astype(np.float32) / 255.
         realworld_attack = torch.from_numpy(
             np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).contiguous().float()
-        realworld_attack = realworld_attack.unsqueeze(0).cuda()
+        realworld_attack = realworld_attack.unsqueeze(0)
         return realworld_attack
 
     ### todo: trivial stuffs

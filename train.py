@@ -109,47 +109,9 @@ def main(args,opt):
     train_set, val_set, train_sampler, train_loader, val_loader = create_dataset_and_loader(opt=opt, args=args, rank=rank, seed=seed)
     model = create_models(opt=opt,args=args, train_set=train_set, val_set=val_set)
 
-    ####################################################################################################
-    # todo: TRAINING FUNCTIONALITIES
-    ####################################################################################################
-    start_epoch, current_step = 0, 0
-    if 'ISP' in which_model or \
-            ('PAMI' in which_model and args.mode in [0.0,3.0]):
-        ## todo: general training with a validation iterator for PAMI/DRAW
-        from train_and_test_scripts.train_ISP import training_script_ISP
-        training_script_ISP(opt=opt, args=args, rank=rank, model=model,
-                            train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
-
-    elif 'IFA' in which_model and args.mode in [0.0, 1.0]:
-        ## todo: training of RR-IFA
-        from train_and_test_scripts.train_IFA import training_script_IFA
-        training_script_IFA(opt=opt, args=args, rank=rank, model=model,
-                            train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
-
-    elif which_model == 'PAMI' and args.mode==2.0:
-        ## todo: kd-jpeg training
-        from train_and_test_scripts.train_kdjpeg import training_script_kdjpeg
-        training_script_kdjpeg(opt=opt, args=args, rank=rank, model=model,
-                            train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
-
-
-    ####################################################################################################
-    # todo: TESTING FUNCTIONALITIES
-    ####################################################################################################
-    elif which_model == 'PAMI' and args.mode == 1.0:
-        ## todo: PAMI inference
-        from train_and_test_scripts.inference_PAMI import inference_script_PAMI
-        inference_script_PAMI(opt=opt, args=args, rank=rank, model=model,
-                               train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
-
-
-    elif 'IFA' in which_model and args.mode in [2.0]:
-        from train_and_test_scripts.inference_RR_IFA import inference_script_RR_IFA
-        inference_script_RR_IFA(opt=opt, args=args, rank=rank, model=model,
+    from train_and_test_scripts import scripts_router
+    scripts_router(which_model=which_model, opt=opt, args=args, rank=rank, model=model,
                               train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
-
-    else:
-        raise NotImplementedError('大神是不是搞错了？')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

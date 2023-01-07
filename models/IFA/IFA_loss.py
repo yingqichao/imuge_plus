@@ -1,5 +1,6 @@
 import os
 
+import torch
 import torch.nn as nn
 # from cycleisp_models.cycleisp import Raw2Rgb
 # from MVSS.models.mvssnet import get_mvss
@@ -67,36 +68,180 @@ class IFA_loss(base_IFA):
         self.training_network_list = ['qf_predict_network']
 
         ### todo: network
+        if self.args.mode == 1:
+            self.network_definitions_pretrain()
+        elif self.args.mode == 2:
+            self.network_definitions_predict_PSNR()
+        else:
+            raise NotImplementedError('大神ISP的模式是不是搞错了？')
+
+        if self.opt['load_predictor_models'] is not None:
+            # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
+            #                         network_lists=["qf_predict_network"], strict=False)
+            load_detector_storage = f'{self.out_space_storage}/model/{self.task_name}/'  # self.opt['predictor_folder']
+            model_path = str(self.opt['load_predictor_models'])  # last time: 10999
+
+            print(f"loading models: {self.network_list}")
+            pretrain = load_detector_storage + model_path
+            load_path_G = pretrain  # +"_qf_predict.pth"
+
+            print('Loading model for class [{:s}] ...'.format(load_path_G))
+            if os.path.exists(load_path_G):
+                self.load_network(load_path_G, self.qf_predict_network, strict=False)
+            else:
+                print('Did not find model for class [{:s}] ...'.format(load_path_G))
+
+
+    def network_definitions_predict_PSNR(self):
+        ### todo: network
+        if 'cmt' in self.opt['predict_PSNR_model'].lower():
+            self.qf_predict_network = self.define_CMT()
+        else:
+            raise NotImplementedError('用作qf_predict的网络名字是不是搞错了？')
+
+        self.restore_restormer = self.define_restormer()
+        self.restore_unet = self.define_ddpm_unet_network()
+        self.restore_invisp = self.define_invISP(block_num=[4, 4, 4])
+
+        model_paths = [
+            str(self.opt['load_restormer_models']),
+            str(self.opt['load_unet_models']),
+            str(self.opt['load_invisp_models']),
+        ]
+        models = [
+            self.restore_restormer, self.restore_unet, self.restore_invisp
+        ]
+        folders = [
+            'Restormer_restoration', 'Unet_restoration', 'Invisp_restoration'
+        ]
+
+        print(f"loading pretrained restoration models")
+        for idx, model_path in enumerate(model_paths):
+            model = models[idx]
+            pretrain = f'{self.out_space_storage}/model/{folders[idx]}/' + model_path
+            load_path_G = pretrain
+
+            print('Loading model for class [{:s}] ...'.format(load_path_G))
+            if os.path.exists(load_path_G):
+                self.load_network(load_path_G, model, strict=False)
+            else:
+                print('Did not find model for class [{:s}] ...'.format(load_path_G))
+
+
+    def network_definitions_pretrain(self):
         if 'restormer' in self.opt['restoration_model'].lower():
             self.qf_predict_network = self.define_restormer()
         elif 'unet' in self.opt['restoration_model'].lower():
             self.qf_predict_network = self.define_ddpm_unet_network()
         elif 'invisp' in self.opt['restoration_model'].lower():
-            self.qf_predict_network = self.define_invISP(block_num=[4,4,4])
+            self.qf_predict_network = self.define_invISP(block_num=[4, 4, 4])
+        else:
+            raise NotImplementedError('用作qf_predict的网络名字是不是搞错了？')
 
-        if self.opt['load_predictor_models'] is not None:
-            # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
-            #                         network_lists=["qf_predict_network"], strict=False)
-            load_detector_storage = self.opt['predictor_folder']
-            model_path = str(self.opt['load_predictor_models'])  # last time: 10999
 
-            print(f"loading models: {self.network_list}")
-            pretrain = load_detector_storage + model_path
-            load_path_G = pretrain+"_qf_predict.pth"
+    def predict_PSNR(self, step=None, epoch=None):
+        ### todo: downgrade model include n/2 real-world examples and n/2 restored examples
+        self.qf_predict_network.train()
+        self.restore_restormer.eval()
+        self.restore_unet.eval()
+        self.restore_invisp.eval()
+        if step is not None:
+            self.global_step = step
+        logs = {}
+        lr = self.get_current_learning_rate()
+        logs['lr'] = lr
+        batch_size = self.real_H.shape[0]
+        degrade = self.real_H
+        degrade_time = np.random.randint(1, 3)
+        for i in range(degrade_time):
+            degrade_index = np.random.randint(1, 1000)
+            degrade = self.benign_attacks_without_simulation(forward_image=degrade, index=degrade_index)
 
-            print('Loading model for class [{:s}] ...'.format(load_path_G))
-            if os.path.exists(load_path_G):
-                self.load_network(load_path_G, self.qf_predict_network, strict=False)
+        ## first half: synthesized downgraded images
+        degrade_synthesize, degrade_input = degrade[:batch_size//2], degrade[batch_size//2:]
+        predicted = None
 
-                # pkl_path = f'{self.out_space_storage}/model/{self.task_name}/{model_path}_qf_predict.pkl'
-                # with open(pkl_path, 'rb') as f:
-                #     data = pickle.load(f)
-                #     self.qf_predict_network.embedding = data['embedding']
-                #     print("Pickle loaded to: {}".format(pkl_path))
+        with torch.no_grad():
+            ## second half: restored downgraded images
+            if self.global_step%3==0: #'unet' in self.opt['restoration_model'].lower():
+                predicted = self.restore_unet(degrade_input, torch.zeros((1)).cuda())
+                predicted = self.clamp_with_grad(predicted)
+                # loss = self.l1_loss(predicted, self.real_H)
+            elif self.global_step%3==1: #'invisp' in self.opt['restoration_model'].lower():
+                predicted = self.restore_invisp(degrade_input)
+                predicted = self.clamp_with_grad(predicted)
+                # reverted, _ = self.qf_predict_network(degrade, rev=True)
+                # loss = self.l1_loss(predicted, self.real_H)  # + self.l1_loss(reverted, degrade.clone().detach())
+            else: # restormer
+                predicted = self.restore_restormer(degrade_input)
+                predicted = self.clamp_with_grad(predicted)
+                # loss = self.l1_loss(predicted, self.real_H)
 
-            else:
-                print('Did not find model for class [{:s}] ...'.format(load_path_G))
+            predicted = self.to_jpeg(forward_image=predicted)
 
+            degrade_sum = torch.cat([degrade_synthesize,predicted.detach()],dim=0)
+            ## ground-truth: PSNR between degrade_sum and original image
+            PSNR = torch.zeros((batch_size,1)).cuda()
+            for i in range(batch_size):
+                this_psnr = self.psnr(self.postprocess(degrade_sum[i:i+1]),
+                                 self.postprocess(self.real_H[i:i+1])).item()
+                if this_psnr==0:
+                    raise NotImplementedError("PSNR作为标签不可以等于0！")
+                PSNR[i, :] = this_psnr
+
+            PSNR_mean = torch.mean(PSNR).item()
+            PSNR_syn = torch.mean(PSNR[:batch_size//2]).item()
+            PSNR_restore = torch.mean(PSNR[batch_size//2:]).item()
+
+        with torch.enable_grad():
+            ## predict PSNR given degrade_sum
+            PSNR_predicted = self.qf_predict_network(degrade_sum)
+            PSNR_mean_predict = torch.mean(PSNR_predicted).item()
+            PSNR_mean_predict_syn = torch.mean(PSNR_predicted[:batch_size//2]).item()
+            PSNR_mean_predict_restore = torch.mean(PSNR_predicted[batch_size//2:]).item()
+            loss = self.l1_loss(PSNR_predicted, PSNR)
+
+            loss.backward()
+            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+            self.optimizer_qf.step()
+            self.optimizer_qf.zero_grad()
+
+            logs['sum_loss'] = loss.item()
+
+            logs['PSNR'] = PSNR_mean
+            logs['PSNR_syn'] = PSNR_syn
+            logs['PSNR_res'] = PSNR_restore
+            logs['PSNR_predict'] = PSNR_mean_predict
+            logs['PSNR_predict_syn'] = PSNR_mean_predict_syn
+            logs['PSNR_predict_res'] = PSNR_mean_predict_restore
+
+        if (self.global_step % 1000 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.real_H),
+                self.postprocess(degrade_sum),
+                self.postprocess(10 * torch.abs(self.real_H - degrade_sum)),
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
+
+        ######## Finally ####################
+        for scheduler in self.schedulers:
+            scheduler.step()
+
+        if self.global_step % (self.opt['model_save_period']) == (
+                self.opt['model_save_period'] - 1) or self.global_step == 9:
+            if self.rank == 0:
+                print('Saving models and training states.')
+                # self.save(self.global_step, folder='model', network_list=self.save_network_list)
+                self.save_network(self.qf_predict_network, 'qf_predict', f"{epoch}_{self.global_step}",
+                                  model_path=f'{self.out_space_storage}/model/{self.task_name}/')
+
+        self.global_step = self.global_step + 1
+
+        return logs, None, False
 
 
     def pretrain_restormer_restoration(self, step=None, epoch=None):
@@ -108,17 +253,24 @@ class IFA_loss(base_IFA):
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
         # batch_size = self.real_H.shape[0]//2
-        degrade = self.benign_attacks_without_simulation(forward_image=self.real_H)
+        degrade = self.real_H
+        degrade_time = np.random.randint(1,3)
+        for i in range(degrade_time):
+            degrade_index = np.random.randint(1,1000)
+            degrade = self.benign_attacks_without_simulation(forward_image=degrade, index=degrade_index)
 
         if 'unet' in self.opt['restoration_model'].lower():
             predicted = self.qf_predict_network(degrade, torch.zeros((1)).cuda())
+            predicted = self.clamp_with_grad(predicted)
             loss = self.l1_loss(predicted, self.real_H)
         elif 'invisp' in self.opt['restoration_model'].lower():
             predicted = self.qf_predict_network(degrade)
+            predicted = self.clamp_with_grad(predicted)
             # reverted, _ = self.qf_predict_network(degrade, rev=True)
             loss = self.l1_loss(predicted, self.real_H) # + self.l1_loss(reverted, degrade.clone().detach())
         else:
             predicted = self.qf_predict_network(degrade)
+            predicted = self.clamp_with_grad(predicted)
             loss = self.l1_loss(predicted, self.real_H)
 
 
@@ -138,12 +290,14 @@ class IFA_loss(base_IFA):
             images = stitch_images(
                 self.postprocess(self.real_H),
                 self.postprocess(degrade),
-                self.postprocess(predicted),
                 self.postprocess(10 * torch.abs(self.real_H - degrade)),
+                self.postprocess(predicted),
+                self.postprocess(10 * torch.abs(predicted - degrade)),
+                self.postprocess(10 * torch.abs(predicted - self.real_H)),
                 img_per_row=1
             )
 
-            name = f"{self.out_space_storage}/images/{self.task_name}/{str(self.global_step).zfill(5)}" \
+            name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
                    f"_{str(self.rank)}.png"
             images.save(name)
 
@@ -157,12 +311,7 @@ class IFA_loss(base_IFA):
                 print('Saving models and training states.')
                 # self.save(self.global_step, folder='model', network_list=self.save_network_list)
                 self.save_network(self.qf_predict_network, 'qf_predict', f"{epoch}_{self.global_step}",
-                                  model_path=self.out_space_storage + f'/model/{self.task_name}/')
-                # pkl_path = f'{self.out_space_storage}/model/{self.task_name}/{self.global_step}_qf_predict.pkl'
-                # with open(pkl_path, 'wb') as f:
-                #     pickle.dump({'embedding': self.qf_predict_network.module.embedding}, f)
-                #     print("Pickle saved to: {}".format(pkl_path))
-
+                                  model_path=f'{self.out_space_storage}/model/{self.task_name}/')
 
         self.global_step = self.global_step + 1
 

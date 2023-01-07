@@ -77,7 +77,7 @@ def create_dataset_and_loader(*, opt,args,rank,seed):
 
 
     # val_loader = create_dataloader(val_set, dataset_opt, opt, val_sampler)
-    val_batch_size = 1 if 'batch_size' not in val_dataset_opt else val_dataset_opt['batch_size'] // world_size
+    val_batch_size = 1 if 'batch_size' not in val_dataset_opt else val_dataset_opt['batch_size'] # // world_size
     val_num_workers = 1 if 'batch_size' not in val_dataset_opt else num_workers
     val_size = int(math.ceil(len(val_set) / val_batch_size))
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=val_batch_size, shuffle=False, num_workers=val_num_workers,

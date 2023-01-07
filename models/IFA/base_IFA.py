@@ -93,13 +93,13 @@ class base_IFA(BaseModel):
             self.opt['ideal_as_inpainting']
         )
 
-        self.mode_dict = {
-            0: 'RR IFA',
-            1: 'val RR IFA',
-        }
+        # self.mode_dict = {
+        #     0: 'RR IFA',
+        #     1: 'val RR IFA',
+        # }
         print(f"network list:{self.network_list}")
         print(f"Current mode: {self.args.mode}")
-        print(f"Function: {self.mode_dict[self.args.mode]}")
+        # print(f"Function: {self.mode_dict[self.args.mode]}")
 
 
         self.out_space_storage = f"{self.opt['name']}"
@@ -175,14 +175,23 @@ class base_IFA(BaseModel):
             return self.predict_IFA_with_reference(step=step, epoch=epoch)
         elif mode == 1.0:
             return self.pretrain_restormer_restoration(step=step, epoch=epoch)
+        elif mode == 2.0:
+            return self.predict_PSNR(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
     ####################################################################################################
-    # todo: MODE == 0
-    # todo: get_protected_RAW_and_corresponding_images
+    # todo: MODE == 1
+    # todo: train restoration models (restormer, unet and invisp)
     ####################################################################################################
     def predict_IFA_with_reference(self, step=None, epoch=None):
+        pass
+
+    ####################################################################################################
+    # todo: MODE == 2
+    # todo: predict PSNR using CMT
+    ####################################################################################################
+    def predict_PSNR(self, step=None, epoch=None):
         pass
 
     ####################################################################################################
@@ -359,6 +368,15 @@ class base_IFA(BaseModel):
         print("using restormer as testing ISP...")
         from restoration_methods.restormer.model_restormer import Restormer
         model = Restormer(dim=16, ).cuda()
+        model = DistributedDataParallel(model,
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
+
+    def define_CMT(self):
+        print("using CMT as hybrid CNN+transformer model")
+        from network.advanced_transformers.cmt import CMT, cmt_b
+        model = cmt_b(img_size=self.width_height,num_classes=1).cuda()
         model = DistributedDataParallel(model,
                                         device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
