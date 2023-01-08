@@ -373,6 +373,15 @@ class base_IFA(BaseModel):
                                         find_unused_parameters=True)
         return model
 
+    def define_convnext(self, num_classes=1000):
+        print("using convnext")
+        from network.CNN_architectures.convnext_official import convnext_base
+        model = convnext_base(num_classes=num_classes).cuda()
+        model = DistributedDataParallel(model,
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
+
     def define_CMT(self):
         print("using CMT as hybrid CNN+transformer model")
         from network.advanced_transformers.cmt import CMT, cmt_b

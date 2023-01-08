@@ -1,7 +1,7 @@
 
 do_evaluate: false
 restoration_model: unet
-predict_PSNR_model: cmt
+predict_PSNR_model: resnet # cmt or resnet
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/RR_IFA/
@@ -18,7 +18,7 @@ load_invisp_models: 10_7999_qf_predict.pth
 
 #### general settings
 
-gpu_ids: [1,2]
+gpu_ids: [3]
 
 restart_step: 1000
 model_save_period: 4000

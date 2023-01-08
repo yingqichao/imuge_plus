@@ -96,6 +96,8 @@ class IFA_loss(base_IFA):
         ### todo: network
         if 'cmt' in self.opt['predict_PSNR_model'].lower():
             self.qf_predict_network = self.define_CMT()
+        elif 'resnet' in self.opt['predict_PSNR_model'].lower():
+            self.qf_predict_network = self.define_convnext(num_classes=1)
         else:
             raise NotImplementedError('用作qf_predict的网络名字是不是搞错了？')
 
