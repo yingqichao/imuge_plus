@@ -23,7 +23,7 @@ class CASIA_dataset(data.Dataset):
     The pair is ensured by 'sorted' function, so please check the name convention.
     '''
 
-    def __init__(self, opt, dataset_opt, is_train=True, dataset="CASIA1",attack_list=None, with_au=False, with_mask=True):
+    def __init__(self, opt, dataset_opt, is_train=True, dataset: list =["CASIA1"],attack_list=None, with_au=False, with_mask=True):
         super(CASIA_dataset, self).__init__()
         self.is_train = is_train
         self.opt = opt
@@ -34,6 +34,8 @@ class CASIA_dataset(data.Dataset):
         self.dataset_name = dataset
         self.with_au = with_au
         self.with_mask = with_mask
+
+        print(f"Using {dataset} with_au {with_au} with_mask {with_mask} is_train {is_train}")
 
         self.transform_just_resize = A.Compose(
             [
@@ -70,39 +72,39 @@ class CASIA_dataset(data.Dataset):
 
 
         self.paths_GT = []
-        GT_items = self.GT_folder[self.dataset_name]
-
-        # attack_list = {0,1,2}
-        for idx in range(len(GT_items)):
-            if attack_list is None or idx in attack_list:
-                GT_path, _ = util.get_image_paths(GT_items[idx])
-                # GT_path = sorted(GT_path)
-                # mask_path = sorted(mask_path)
-                dataset_len = len(GT_path)
-                print(f"len image {dataset_len}")
-                num_train_val_split = int(dataset_len*0.85)
-                self.paths_GT += (GT_path[:num_train_val_split] if self.is_train else GT_path[num_train_val_split:])
+        for i, this_dataset in enumerate(self.dataset_name):
+            GT_items = self.GT_folder[this_dataset]
+            for idx in range(len(GT_items)):
+                if attack_list is None or idx in attack_list:
+                    GT_path, _ = util.get_image_paths(GT_items[idx])
+                    # GT_path = sorted(GT_path)
+                    # mask_path = sorted(mask_path)
+                    dataset_len = len(GT_path)
+                    print(f"len image {dataset_len}")
+                    num_train_val_split = int(dataset_len*0.85)
+                    self.paths_GT += (GT_path[:num_train_val_split] if self.is_train else GT_path[num_train_val_split:])
 
         if self.with_mask:
             self.paths_mask = []
-            mask_items = self.mask_folder[self.dataset_name]
-            for idx in range(len(GT_items)):
-                if attack_list is None or idx in attack_list:
-                    mask_path, _ = util.get_image_paths(mask_items[idx])
-                    # GT_path = sorted(GT_path)
-                    # mask_path = sorted(mask_path)
-                    dataset_mask_len = len(mask_path)
-                    print(f"len mask {dataset_mask_len}")
-                    num_train_val_split = int(dataset_mask_len * 0.85)
-                    self.paths_mask += (
-                        mask_path[:num_train_val_split] if self.is_train else mask_path[num_train_val_split:])
+            for i, this_dataset in enumerate(self.dataset_name):
+                mask_items = self.mask_folder[this_dataset]
+                for idx in range(len(GT_items)):
+                    if attack_list is None or idx in attack_list:
+                        mask_path, _ = util.get_image_paths(mask_items[idx])
+                        # GT_path = sorted(GT_path)
+                        # mask_path = sorted(mask_path)
+                        dataset_mask_len = len(mask_path)
+                        print(f"len mask {dataset_mask_len}")
+                        num_train_val_split = int(dataset_mask_len * 0.85)
+                        self.paths_mask += (
+                            mask_path[:num_train_val_split] if self.is_train else mask_path[num_train_val_split:])
 
             assert len(self.paths_GT)==len(self.paths_mask), 'Mask和Image的总数不匹配！请检查'
 
         if self.with_au:
             self.au_folder = {
                 'CASIA1': [
-                    '/groupshare/CASIA1/CASIA 1.0 dataset/Au'
+                    '/groupshare/CASIA1/CASIA 1.0 dataset/Au/Au'
                 ],
                 'CASIA2': [
                     '/groupshare/CASIA2/Au'
@@ -115,15 +117,16 @@ class CASIA_dataset(data.Dataset):
             }
 
             ### au folder
-            au_items = self.au_folder[self.dataset_name]
             self.au_GT = []
-            for idx in range(len(au_items)):
-                au_path, _ = util.get_image_paths(GT_items[idx])
-                au_dataset_len = len(au_path)
-                print(f"Au len image {au_dataset_len}")
+            for i, this_dataset in enumerate(self.dataset_name):
+                au_items = self.au_folder[this_dataset]
+                for idx in range(len(au_items)):
+                    au_path, _ = util.get_image_paths(au_items[idx])
+                    au_dataset_len = len(au_path)
+                    print(f"Au len image {au_dataset_len}")
 
-                num_train_val_split = int(au_dataset_len * 0.85)
-                self.au_GT += (au_path[:num_train_val_split] if self.is_train else au_path[num_train_val_split:])
+                    num_train_val_split = int(au_dataset_len * 0.85)
+                    self.au_GT += (au_path[:num_train_val_split] if self.is_train else au_path[num_train_val_split:])
 
         assert self.paths_GT, 'Error: GT path is empty.'
 
@@ -166,6 +169,7 @@ class CASIA_dataset(data.Dataset):
             return_list.append(mask)
 
         if  self.with_au:
+            index = np.random.randint(0,len(self.au_GT))
             GT_path = self.au_GT[index]
 
             img_au_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)

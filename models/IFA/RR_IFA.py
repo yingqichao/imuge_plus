@@ -50,7 +50,6 @@ class RR_IFA(base_IFA):
 
 
     def network_definitions(self):
-        self.consider_mask_prediction = self.opt['consider_mask_prediction']
         ### mode=8: InvISP to bi-directionally convert RGB and RAW,
         self.network_list = ['qf_predict_network']
         self.save_network_list = ['qf_predict_network']
@@ -122,6 +121,8 @@ class RR_IFA(base_IFA):
         # self.triplet_loss = nn.TripletMarginLoss(margin=1.0, p=1).cuda()
 
     def network_definitions_binary_classification(self):
+        self.IFA_bc_label = None
+
         ### todo: network
         if 'cmt' in self.opt['predict_PSNR_model'].lower():
             self.qf_predict_network = self.define_CMT()
@@ -174,55 +175,48 @@ class RR_IFA(base_IFA):
         tampered_image_original, authentic_image_original = self.real_H, self.canny_image
 
         batch_size = self.real_H.shape[0]
-        degrade = self.real_H
+        degrade_tampered, degrade_authentic = tampered_image_original, authentic_image_original
         degrade_time = np.random.randint(1, 3)
         for i in range(degrade_time):
             degrade_index = np.random.randint(1, 1000)
-            degrade = self.benign_attacks_without_simulation(forward_image=degrade, index=degrade_index)
+            degrade_tampered = self.benign_attacks_without_simulation(forward_image=degrade_tampered, index=degrade_index)
+            degrade_authentic = self.benign_attacks_without_simulation(forward_image=degrade_authentic, index=degrade_index)
 
+        degraded = torch.cat([degrade_tampered, degrade_authentic],dim=0)
         ## first half: synthesized downgraded images
         # degrade_synthesize, degrade_input = degrade[:batch_size // 2], degrade[batch_size // 2:]
-        predicted = None
 
         with torch.no_grad():
             ## second half: restored downgraded images
-            if self.global_step % 3 == 0:  # 'unet' in self.opt['restoration_model'].lower():
-                predicted = self.restore_unet(degrade_input, torch.zeros((1)).cuda())
-                predicted = self.clamp_with_grad(predicted)
-                # loss = self.l1_loss(predicted, self.real_H)
-            elif self.global_step % 3 == 1:  # 'invisp' in self.opt['restoration_model'].lower():
-                predicted = self.restore_invisp(degrade_input)
-                predicted = self.clamp_with_grad(predicted)
+            if self.global_step % 6 == 0:  # 'unet' in self.opt['restoration_model'].lower():
+                degrade_sum = self.restore_unet(degraded, torch.zeros((1)).cuda())
+                degrade_sum = self.clamp_with_grad(degrade_sum)
+                degrade_sum = self.to_jpeg(forward_image=degrade_sum)
+                # loss = self.l1_loss(degrade_sum, self.real_H)
+            elif self.global_step % 6 == 1:  # 'invisp' in self.opt['restoration_model'].lower():
+                degrade_sum = self.restore_invisp(degraded)
+                degrade_sum = self.clamp_with_grad(degrade_sum)
+                degrade_sum = self.to_jpeg(forward_image=degrade_sum)
                 # reverted, _ = self.qf_predict_network(degrade, rev=True)
-                # loss = self.l1_loss(predicted, self.real_H)  # + self.l1_loss(reverted, degrade.clone().detach())
-            else:  # restormer
-                predicted = self.restore_restormer(degrade_input)
-                predicted = self.clamp_with_grad(predicted)
-                # loss = self.l1_loss(predicted, self.real_H)
+                # loss = self.l1_loss(degrade_sum, self.real_H)  # + self.l1_loss(reverted, degrade.clone().detach())
+            elif self.global_step % 6 == 2:  # restormer
+                degrade_sum = self.restore_restormer(degraded)
+                degrade_sum = self.clamp_with_grad(degrade_sum)
+                degrade_sum = self.to_jpeg(forward_image=degrade_sum)
+                # loss = self.l1_loss(degrade_sum, self.real_H)
+            else:
+                degrade_sum = degraded
 
-            predicted = self.to_jpeg(forward_image=predicted)
 
-            degrade_sum = torch.cat([degrade_synthesize, predicted.detach()], dim=0)
-            ## ground-truth: PSNR between degrade_sum and original image
-            PSNR = torch.zeros((batch_size, 1)).cuda()
-            for i in range(batch_size):
-                this_psnr = self.psnr(self.postprocess(degrade_sum[i:i + 1]),
-                                      self.postprocess(self.real_H[i:i + 1])).item()
-                if this_psnr == 0:
-                    raise NotImplementedError("PSNR作为标签不可以等于0！")
-                PSNR[i, :] = this_psnr
+            ## ground-truth: first 0 then 1
+            if self.IFA_bc_label is None:
+                self.IFA_bc_label = torch.tensor([0.]*batch_size+[1.]*batch_size).unsqueeze(1).cuda()
 
-            PSNR_mean = torch.mean(PSNR).item()
-            PSNR_syn = torch.mean(PSNR[:batch_size // 2]).item()
-            PSNR_restore = torch.mean(PSNR[batch_size // 2:]).item()
 
         with torch.enable_grad():
             ## predict PSNR given degrade_sum
-            PSNR_predicted = self.qf_predict_network(degrade_sum)
-            PSNR_mean_predict = torch.mean(PSNR_predicted).item()
-            PSNR_mean_predict_syn = torch.mean(PSNR_predicted[:batch_size // 2]).item()
-            PSNR_mean_predict_restore = torch.mean(PSNR_predicted[batch_size // 2:]).item()
-            loss = self.l1_loss(PSNR_predicted, PSNR)
+            predicted_score = self.qf_predict_network(degrade_sum)
+            loss = self.bce_with_logit_loss(predicted_score, self.IFA_bc_label)
 
             loss.backward()
             nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
@@ -231,18 +225,14 @@ class RR_IFA(base_IFA):
 
             logs['sum_loss'] = loss.item()
 
-            logs['PSNR'] = PSNR_mean
-            logs['PSNR_syn'] = PSNR_syn
-            logs['PSNR_res'] = PSNR_restore
-            logs['PSNR_predict'] = PSNR_mean_predict
-            logs['PSNR_predict_syn'] = PSNR_mean_predict_syn
-            logs['PSNR_predict_res'] = PSNR_mean_predict_restore
-
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             images = stitch_images(
-                self.postprocess(self.real_H),
-                self.postprocess(degrade_sum),
-                self.postprocess(10 * torch.abs(self.real_H - degrade_sum)),
+                self.postprocess(tampered_image_original),
+                self.postprocess(authentic_image_original),
+                self.postprocess(degrade_sum[:batch_size]),
+                self.postprocess(degrade_sum[batch_size:]),
+                self.postprocess(10 * torch.abs(tampered_image_original - degrade_sum[:batch_size])),
+                self.postprocess(10 * torch.abs(authentic_image_original - degrade_sum[batch_size:])),
                 img_per_row=1
             )
 

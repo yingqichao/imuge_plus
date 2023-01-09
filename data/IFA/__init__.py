@@ -18,7 +18,7 @@ def create_dataset(*, opt, args):
     if args.mode==0:
         print("dataset Defacto")
         from data.CASIA_dataset import CASIA_dataset as D
-        train_set = D(opt, dataset_opt, is_train=True, dataset="CASIA2", attack_list=None, with_mask=False, with_au=True)
+        train_set = D(opt, dataset_opt, is_train=True, dataset=["CASIA1","CASIA2"], attack_list=None, with_mask=False, with_au=True)
     else:
         print("dataset LQ")
         from data.LQ_dataset import LQDataset as D
@@ -31,8 +31,13 @@ def create_dataset(*, opt, args):
     val_dataset_opt = opt['datasets']['val']
     print('#################################### val set ####################################')
     print(val_dataset_opt)
-    print("dataset LQ")
-    from data.LQ_dataset import LQDataset as D
-    val_set = D(opt, val_dataset_opt, load_mask=False)
+    if args.mode==0:
+        print("dataset Defacto")
+        from data.CASIA_dataset import CASIA_dataset as D
+        val_set = D(opt, val_dataset_opt, is_train=False, dataset=["CASIA1","CASIA2"], attack_list=None, with_mask=False, with_au=True)
+    else:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        val_set = D(opt, val_dataset_opt, load_mask=False)
 
     return train_set, val_set
