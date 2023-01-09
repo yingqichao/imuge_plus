@@ -164,27 +164,33 @@ class base_IFA(BaseModel):
         if mode == 'train':
             img, mask = batch
             self.real_H = img.cuda()
-            self.canny_image = mask.unsqueeze(1).cuda()
+            self.canny_image = mask.cuda()
+            if len(self.canny_image.shape)==3:
+                self.canny_image = self.canny_image.unsqueeze(1)
         else:
             img, mask = batch
             self.real_H_val = img.cuda()
             self.canny_image_val = mask.unsqueeze(1).cuda()
+            if len(self.canny_image_val.shape)==3:
+                self.canny_image_val = self.canny_image_val.unsqueeze(1)
 
     def optimize_parameters_router(self, mode, step=None, epoch=None):
         if mode == 0.0:
-            return self.predict_IFA_with_reference(step=step, epoch=epoch)
+            return self.IFA_binary_classification(step=step, epoch=epoch)
         elif mode == 1.0:
             return self.pretrain_restormer_restoration(step=step, epoch=epoch)
         elif mode == 2.0:
             return self.predict_PSNR(step=step, epoch=epoch)
+        elif mode ==3.0:
+            return self.new_method(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
     ####################################################################################################
-    # todo: MODE == 1
+    # todo: MODE == 0
     # todo: train restoration models (restormer, unet and invisp)
     ####################################################################################################
-    def predict_IFA_with_reference(self, step=None, epoch=None):
+    def IFA_binary_classification(self, step=None, epoch=None):
         pass
 
     ####################################################################################################
@@ -199,6 +205,13 @@ class base_IFA(BaseModel):
     # todo: get_protected_RAW_and_corresponding_images
     ####################################################################################################
     def pretrain_restormer_restoration(self, step=None, epoch=None):
+        pass
+
+    ####################################################################################################
+    # todo: MODE == 3
+    # todo: get_protected_RAW_and_corresponding_images
+    ####################################################################################################
+    def new_method(self, step=None, epoch=None):
         pass
 
 
@@ -364,32 +377,6 @@ class base_IFA(BaseModel):
                                         find_unused_parameters=True)
         return model
 
-    def define_restormer(self):
-        print("using restormer as testing ISP...")
-        from restoration_methods.restormer.model_restormer import Restormer
-        model = Restormer(dim=16, ).cuda()
-        model = DistributedDataParallel(model,
-                                        device_ids=[torch.cuda.current_device()],
-                                        find_unused_parameters=True)
-        return model
-
-    def define_convnext(self, num_classes=1000):
-        print("using convnext")
-        from network.CNN_architectures.convnext_official import convnext_base
-        model = convnext_base(num_classes=num_classes).cuda()
-        model = DistributedDataParallel(model,
-                                        device_ids=[torch.cuda.current_device()],
-                                        find_unused_parameters=True)
-        return model
-
-    def define_CMT(self):
-        print("using CMT as hybrid CNN+transformer model")
-        from network.advanced_transformers.cmt import CMT, cmt_b
-        model = cmt_b(img_size=self.width_height,num_classes=1).cuda()
-        model = DistributedDataParallel(model,
-                                        device_ids=[torch.cuda.current_device()],
-                                        find_unused_parameters=True)
-        return model
 
     def define_my_own_elastic_as_detector(self):
         print("using MPF_net as detector")

@@ -14,10 +14,15 @@ def create_dataset(*, opt, args):
     dataset_opt = opt['datasets']['train']
     print("#################################### train set ####################################")
     print(dataset_opt)
-
-    print("dataset LQ")
-    from data.LQ_dataset import LQDataset as D
-    train_set = D(opt, dataset_opt, load_mask=False)
+    ## mode 0 1 2, 3
+    if args.mode==0:
+        print("dataset Defacto")
+        from data.CASIA_dataset import CASIA_dataset as D
+        train_set = D(opt, dataset_opt, is_train=True, dataset="CASIA2", attack_list=None, with_mask=False, with_au=True)
+    else:
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        train_set = D(opt, dataset_opt, load_mask=False)
 
     ####################################################################################################
     # todo: TEST DATASET DEFINITION

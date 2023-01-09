@@ -56,6 +56,7 @@ def create_dataset_and_loader(*, opt,args,rank,seed):
     elif "ISP" in opt['model']:
         from data.ISP import create_dataset
         train_set, val_set = create_dataset(opt=opt, args=args)
+        # elif "IJCAI"
     else:
         raise NotImplementedError('大神是不是搞错了？')
 

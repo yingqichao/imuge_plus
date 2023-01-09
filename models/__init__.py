@@ -24,6 +24,7 @@ def create_models(*, opt, args, train_set=None, val_set=None):
         from models.IFA import create_training_scripts_and_print_variables
     elif 'PAMI' in which_model:
         from models.PAMI import create_training_scripts_and_print_variables
+        # elif 'IJ'
     else:
         raise NotImplementedError("大神，模式是不是搞错了？现在只支持ISP IFA PAMI")
 

@@ -106,6 +106,7 @@ def main(args,opt):
     print(f"Model name: {which_model}")
     from data import create_dataset_and_loader
     from models import create_models
+    ## data
     train_set, val_set, train_sampler, train_loader, val_loader = create_dataset_and_loader(opt=opt, args=args, rank=rank, seed=seed)
     model = create_models(opt=opt,args=args, train_set=train_set, val_set=val_set)
 

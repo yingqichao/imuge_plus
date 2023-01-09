@@ -610,15 +610,15 @@ class Modified_invISP(BaseModel):
                                                  find_unused_parameters=True)
         return model
 
-    def define_restormer(self):
-        print("using restormer as testing ISP...")
-        from restoration_methods.restormer.model_restormer import Restormer
-        model = Restormer(dim=16, ).cuda()
-        model = DistributedDataParallel(model,
-                                device_ids=[torch.cuda.current_device()],
-                                find_unused_parameters=True)
-        return model
-
+    def create_folders_for_the_experiment(self):
+        from utils.commons import create_folder
+        create_folder(self.out_space_storage)
+        create_folder(self.out_space_storage + "/model")
+        create_folder(self.out_space_storage + "/images")
+        create_folder(self.out_space_storage + "/isp_images/")
+        create_folder(self.out_space_storage + "/model/" + self.task_name)
+        create_folder(self.out_space_storage + "/images/" + self.task_name)
+        create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
 
     def define_my_own_elastic_as_detector(self):
         print("using MPF_net as detector")
@@ -721,7 +721,7 @@ class Modified_invISP(BaseModel):
 
     def define_resfcn_as_detector(self):
         print("using ResFCN as detector")
-        from MVSS.models.resfcn import ResFCN
+        from detection_methods.MVSS.models.resfcn import ResFCN
         model = ResFCN().cuda()
         checkpoint = torch.load('/groupshare/codes/resfcn_coco_1013.pth', map_location='cpu')
         model.load_state_dict(checkpoint, strict=True)
@@ -756,7 +756,7 @@ class Modified_invISP(BaseModel):
 
     def define_inpainting_edgeconnect(self):
         from inpainting_methods.edgeconnect.main import load_config
-        from inpainting_methods.edgeconnect.src import EdgeModel, InpaintingModel
+        from inpainting_methods.edgeconnect.src.models import EdgeModel, InpaintingModel
         print("Building edgeconnect...........please wait...")
         config = load_config(mode=2)
         self.edge_model = EdgeModel(config)

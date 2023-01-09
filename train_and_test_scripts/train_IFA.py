@@ -8,59 +8,38 @@ def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, tra
 
     if rank <= 0:
         print('Start training ...')
-    # latest_values = None
 
     print_step, restart_step = 40, opt['restart_step']
     start = time.time()
 
-    # train_generator_1 = iter(train_loader_1)
-    # val_generator = iter(val_loader)
-    # val_item = next(val_generator)
-    # model.feed_data_val_router(batch=val_item, mode=args.mode)
+
     for epoch in range(50):
         current_step = 0
 
-        # stateful_metrics = ['CK','RELOAD','ID','CEv_now','CEp_now','CE_now','STATE','lr','APEXGT','empty',
-        #                     'SIMUL','RECON','RealTime'
-        #                     'exclusion','FW1', 'QF','QFGT','QFR','BK1', 'FW', 'BK','FW1', 'BK1', 'LC', 'Kind',
-        #                     'FAB1','BAB1','A', 'AGT','1','2','3','4','0','gt','pred','RATE','SSBK']
-        # if rank <= 0:
-        #     progbar = Progbar(total, width=10, stateful_metrics=stateful_metrics)
+
         running_list = {}  # [0.0]*len(variables_list)
         valid_idx = 0
-        # running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
+
         if opt['dist']:
             train_sampler.set_epoch(epoch)
         for idx, train_data in enumerate(train_loader):
-            #### get item from another dataset
-            # try:
-            #     train_item_1 = next(train_generator_1)
-            # except StopIteration as e:
-            #     print("The end of val set is reached. Refreshing...")
-            #     train_generator_1 = iter(train_loader_1)
-            #     train_item_1 = next(train_generator_1)
+
             #### training
             model.feed_data_router(batch=train_data, mode=args.mode)
 
             logs, debug_logs, did_val = model.optimize_parameters_router(mode=args.mode, step=current_step, epoch=epoch)
 
-            # if variables_list[0] in logs or variables_list[1] in logs or variables_list[2] in logs:
+
             for key in logs:
                 if key not in running_list:
                     running_list[key] = 0
                 running_list[key] += logs[key]
             valid_idx += 1
-            # else:
-            #     ## which is kind of abnormal, print
-            #     print(variables_list)
+
 
             if valid_idx > 0 and (
                     idx < 10 or valid_idx % print_step == print_step - 1):  # print every 2000 mini-batches
-                # print(f'[{epoch + 1}, {valid_idx + 1} {rank}] '
-                #       f'running_CE_MVSS: {running_CE_MVSS / print_step:.2f} '
-                #       f'running_CE_mantra: {running_CE_mantra / print_step:.2f} '
-                #       f'running_CE_resfcn: {running_CE_resfcn / print_step:.2f} '
-                #       )
+
                 end = time.time()
                 lr = logs['lr']
                 info_str = f'[{epoch + 1}, {valid_idx + 1} {idx * model.real_H.shape[0]} {rank} {lr}] '

@@ -49,17 +49,6 @@ class IFA_loss(base_IFA):
         ### todo: constants
         self.history_accuracy = 0.1
 
-    def define_ddpm_unet_network(self):
-        from network.CNN_architectures.ddpm_lucidrains import Unet
-        # input = torch.ones((3, 3, 128, 128)).cuda()
-        # output = model(input, torch.zeros((1)).cuda())
-
-        print("using ddpm_unet")
-        model = Unet().cuda()
-        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
-                                        find_unused_parameters=True)
-        return model
-
 
     def network_definitions(self):
 
@@ -73,7 +62,7 @@ class IFA_loss(base_IFA):
         elif self.args.mode == 2:
             self.network_definitions_predict_PSNR()
         else:
-            raise NotImplementedError('大神ISP的模式是不是搞错了？')
+            raise NotImplementedError('大神IFA loss的模式是不是搞错了？')
 
         if self.opt['load_predictor_models'] is not None:
             # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',

@@ -312,13 +312,54 @@ class BaseModel():
 
     ### todo: folders
     def create_folders_for_the_experiment(self):
-        create_folder(self.out_space_storage)
-        create_folder(self.out_space_storage + "/model")
-        create_folder(self.out_space_storage + "/images")
-        create_folder(self.out_space_storage + "/isp_images/")
-        create_folder(self.out_space_storage + "/model/" + self.task_name)
-        create_folder(self.out_space_storage + "/images/" + self.task_name)
-        create_folder(self.out_space_storage + "/isp_images/" + self.task_name)
+        pass
+
+    def define_ddpm_unet_network(self):
+        from network.CNN_architectures.ddpm_lucidrains import Unet
+        # input = torch.ones((3, 3, 128, 128)).cuda()
+        # output = model(input, torch.zeros((1)).cuda())
+
+        print("using ddpm_unet")
+        model = Unet().cuda()
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
+
+    def define_tres_network(self):
+        from models.IFA.network.tres_model import Net
+
+        print("using tres_model")
+        model = Net(num_embeddings=1024).cuda()
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
+
+    def define_restormer(self):
+        print("using restormer as testing ISP...")
+        from restoration_methods.restormer.model_restormer import Restormer
+        model = Restormer(dim=16, ).cuda()
+        model = DistributedDataParallel(model,
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
+
+    def define_convnext(self, num_classes=1000):
+        print("using convnext")
+        from network.CNN_architectures.convnext_official import convnext_base
+        model = convnext_base(num_classes=num_classes).cuda()
+        model = DistributedDataParallel(model,
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
+
+    def define_CMT(self):
+        print("using CMT as hybrid CNN+transformer model")
+        from network.advanced_transformers.cmt import CMT, cmt_b
+        model = cmt_b(img_size=self.width_height,num_classes=1).cuda()
+        model = DistributedDataParallel(model,
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
+        return model
 
     ### todo: cropping attack
     def cropping_mask_generation(self, forward_image, locs=None, min_rate=0.6, max_rate=1.0):
