@@ -321,17 +321,18 @@ class MVSSNet(ResNet50):
         feature_map, _ = self.base_forward(input_)
         c1, c2, c3, c4 = feature_map
 
-        if self.sobel:
-            res1 = self.erb_db_1(run_sobel(self.sobel_x1, self.sobel_y1, c1))
-            res1 = self.erb_trans_1(res1 + self.upsample(self.erb_db_2(run_sobel(self.sobel_x2, self.sobel_y2, c2))))
-            res1 = self.erb_trans_2(res1 + self.upsample_4(self.erb_db_3(run_sobel(self.sobel_x3, self.sobel_y3, c3))))
-            res1 = self.erb_trans_3(res1 + self.upsample_4(self.erb_db_4(run_sobel(self.sobel_x4, self.sobel_y4, c4))), relu=False)
-
-        else:
-            res1 = self.erb_db_1(c1)
-            res1 = self.erb_trans_1(res1 + self.upsample(self.erb_db_2(c2)))
-            res1 = self.erb_trans_2(res1 + self.upsample_4(self.erb_db_3(c3)))
-            res1 = self.erb_trans_3(res1 + self.upsample_4(self.erb_db_4(c4)), relu=False)
+        ########## seems to only take effect when there is supervision over edge
+        # if self.sobel:
+        #     res1 = self.erb_db_1(run_sobel(self.sobel_x1, self.sobel_y1, c1))
+        #     res1 = self.erb_trans_1(res1 + self.upsample(self.erb_db_2(run_sobel(self.sobel_x2, self.sobel_y2, c2))))
+        #     res1 = self.erb_trans_2(res1 + self.upsample_4(self.erb_db_3(run_sobel(self.sobel_x3, self.sobel_y3, c3))))
+        #     res1 = self.erb_trans_3(res1 + self.upsample_4(self.erb_db_4(run_sobel(self.sobel_x4, self.sobel_y4, c4))), relu=False)
+        #
+        # else:
+        #     res1 = self.erb_db_1(c1)
+        #     res1 = self.erb_trans_1(res1 + self.upsample(self.erb_db_2(c2)))
+        #     res1 = self.erb_trans_2(res1 + self.upsample_4(self.erb_db_3(c3)))
+        #     res1 = self.erb_trans_3(res1 + self.upsample_4(self.erb_db_4(c4)), relu=False)
 
         if self.constrain:
             x = rgb2gray(x)
@@ -343,16 +344,17 @@ class MVSSNet(ResNet50):
         outputs = []
 
         x = self.head(c4)
-        x0 = F.interpolate(x[0], size, mode='bilinear', align_corners=True)
+        feat_before_bottleneck = x[0]
+        x0 = F.interpolate(x[1], size, mode='bilinear', align_corners=True)
         outputs.append(x0)
 
         if self.aux:
-            x1 = F.interpolate(x[1], size, mode='bilinear', align_corners=True)
-            x2 = F.interpolate(x[2], size, mode='bilinear', align_corners=True)
+            x1 = F.interpolate(x[2], size, mode='bilinear', align_corners=True)
+            x2 = F.interpolate(x[3], size, mode='bilinear', align_corners=True)
             outputs.append(x1)
             outputs.append(x2)
 
-        return res1, x0
+        return feat_before_bottleneck, x0 # the first element is originally res1
 
 
 class _PositionAttentionModule(nn.Module):
@@ -453,6 +455,7 @@ class _DAHead(nn.Module):
         feat_fusion = feat_p + feat_c
 
         outputs = []
+        outputs.append(feat_fusion) ### added 2023.1.10
         fusion_out = self.out(feat_fusion)
         outputs.append(fusion_out)
         if self.aux:

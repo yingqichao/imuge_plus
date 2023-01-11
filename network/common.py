@@ -290,3 +290,44 @@ class MLP(nn.Module):
         x = torch.flatten(x, start_dim=1)
         logit = self.fc(x)
         return logit
+
+
+class SimpleConv(nn.Module):
+    def __init__(self, feature_dim, class_dim, hidden_dim=100):
+        super(SimpleConv, self).__init__()
+        self.feature_dim = feature_dim
+        self.class_dim = class_dim
+        # self.pooling = nn.AdaptiveAvgPool2d((feature_dim, feature_dim))
+
+        self.l1 = nn.Sequential(
+            nn.Conv2d(feature_dim, feature_dim, kernel_size=5, stride=1, padding=2, bias=True),
+            nn.ReLU(),
+        )
+        self.l2 = nn.Sequential(
+            nn.Conv2d(feature_dim, feature_dim, kernel_size=5, stride=1, padding=2, bias=True),
+            nn.ReLU(),
+        )
+        self.l3 = nn.Sequential(
+            nn.Conv2d(feature_dim, feature_dim, kernel_size=5, stride=1, padding=2, bias=True),
+            nn.ReLU(),
+        )
+        self.l4 = nn.Sequential(
+            nn.Conv2d(feature_dim, feature_dim, kernel_size=5, stride=1, padding=2, bias=True),
+            nn.ReLU(),
+        )
+
+        self.fc = nn.Sequential(
+                        torch.nn.AdaptiveAvgPool2d((1, 1)),
+                        torch.nn.Flatten(),
+                        torch.nn.Linear(feature_dim, class_dim),
+                        # nn.Sigmoid()
+                )
+
+    def forward(self, x):
+        x = x + self.l1(x)
+        x = x + self.l2(x)
+        x = x + self.l3(x)
+        x = x + self.l4(x)
+        logit = self.fc(x)
+        return logit
+

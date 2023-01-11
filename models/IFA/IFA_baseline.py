@@ -168,9 +168,10 @@ class IFA_baseline(base_IFA):
         batch = torch.cat([tampered_image_original, authentic_image_original], dim=0)
         which_model = self.opt['which_model_for_detector']
         with torch.no_grad():
-            predicted_seg = self.detector(batch)
-            if 'MVSS' in which_model:
-                _, predicted_seg = predicted_seg
+            out = self.detector(batch)
+            # if 'MVSS' in which_model:
+            ### all mode return (feature, predicted_mask)
+            feat_before_bottleneck, predicted_seg = out
             if self.IFA_bc_label is None:  # gt 0 means fake 1 means true
                 self.IFA_bc_label = torch.tensor([0.] * batch_size + [1.] * batch_size).unsqueeze(1).cuda()
 
@@ -205,7 +206,8 @@ class IFA_baseline(base_IFA):
 
 
     def define_MLP(self, feature_dim, class_dim):
-        mlp = MLP(feature_dim=feature_dim, class_dim=class_dim).cuda()
+        from network.common import SimpleConv
+        mlp = SimpleConv(feature_dim=feature_dim, class_dim=class_dim).cuda()
         model = DistributedDataParallel(mlp,
                                         device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
