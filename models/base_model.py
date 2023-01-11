@@ -343,10 +343,11 @@ class BaseModel():
                                         find_unused_parameters=True)
         return model
 
-    def define_convnext(self, num_classes=1000):
+    def define_convnext(self, num_classes=1000, size='base'):
         print("using convnext")
-        from network.CNN_architectures.convnext_official import convnext_base
-        model = convnext_base(num_classes=num_classes).cuda()
+        from network.CNN_architectures.convnext_official import convnext_base, convnext_large
+        b = convnext_base if 'base' in size else convnext_large
+        model = b(num_classes=num_classes).cuda()
         model = DistributedDataParallel(model,
                                         device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)

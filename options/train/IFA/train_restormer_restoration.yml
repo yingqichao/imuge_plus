@@ -18,7 +18,7 @@ load_invisp_models: 10_7999_qf_predict.pth
 
 #### general settings
 
-gpu_ids: [2]
+gpu_ids: [1,2]
 
 restart_step: 1000
 model_save_period: 4000
@@ -44,7 +44,7 @@ datasets:
     use_shuffle: true
     n_workers: 2 # per GPU
 
-    batch_size: 16 # 4
+    batch_size: 12 # 4
     GT_size: 256 # 608
 
     color: RGB
@@ -61,7 +61,7 @@ datasets:
 
 
 train:
-  lr_scratch: !!float 1e-3
+  lr_scratch: !!float 1e-4
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
