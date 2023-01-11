@@ -182,7 +182,7 @@ class base_IFA(BaseModel):
         elif mode == 2.0:
             return self.predict_PSNR(step=step, epoch=epoch)
         elif mode ==3.0:
-            return self.new_method(step=step, epoch=epoch)
+            return self.baseline_method(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
@@ -211,7 +211,7 @@ class base_IFA(BaseModel):
     # todo: MODE == 3
     # todo: get_protected_RAW_and_corresponding_images
     ####################################################################################################
-    def new_method(self, step=None, epoch=None):
+    def baseline_method(self, step=None, epoch=None):
         pass
 
 
@@ -399,7 +399,7 @@ class base_IFA(BaseModel):
 
     def define_MVSS_as_detector(self):
         print("using MVSS as detector")
-        model_path = '/groupshare/codes/MVSS/ckpt/mvssnet_casia.pt'
+        model_path = '/groupshare/codes/detection_methods/MVSS/ckpt/mvssnet_casia.pt'
         from detection_methods.MVSS.models.mvssnet import get_mvss
         model = get_mvss(
             backbone='resnet50',

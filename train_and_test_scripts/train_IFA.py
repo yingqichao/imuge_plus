@@ -13,7 +13,7 @@ def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, tra
     start = time.time()
 
 
-    for epoch in range(50):
+    for epoch in range(10000):
         current_step = 0
 
 

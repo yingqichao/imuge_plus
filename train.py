@@ -115,6 +115,8 @@ def main(args,opt):
                               train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
 if __name__ == '__main__':
+    # print('hello world')
+    # exit(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('-opt', type=str, help='Path to option YMAL file.')
     parser.add_argument('--launcher', choices=['none', 'pytorch'], default='none',

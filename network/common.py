@@ -271,3 +271,22 @@ class Upsampler(nn.Sequential):
             raise NotImplementedError
 
         super(Upsampler, self).__init__(*m)
+
+class MLP(nn.Module):
+    def __init__(self, feature_dim, class_dim, hidden_dim=100):
+        super(MLP, self).__init__()
+        self.feature_dim = feature_dim
+        self.class_dim = class_dim
+        self.pooling = nn.AdaptiveAvgPool2d((feature_dim, feature_dim))
+        self.fc = nn.Sequential(
+            nn.Linear(feature_dim*feature_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, class_dim)
+        )
+
+
+    def forward(self, x):
+        x = self.pooling(x)
+        x = torch.flatten(x, start_dim=1)
+        logit = self.fc(x)
+        return logit

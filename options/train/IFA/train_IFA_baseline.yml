@@ -4,21 +4,21 @@ restoration_model: unet
 predict_PSNR_model: resnet # cmt or resnet
 
 #### model path dirs
-predictor_folder: /groupshare/IFA_results/model/RR_IFA/
+predictor_folder: /groupshare/IFA_results/model/IFA_baseline/
 
 load_predictor_models: 22_9_qf_predict.pth #0_13999
 minimum_PSNR_caused_by_attack: 20
 
-#### model path for MODE 2: ESTIMATING PSNR
-load_restormer_models: 15_3999_qf_predict.pth
-load_unet_models: 31_7999_qf_predict.pth
-load_invisp_models: 10_7999_qf_predict.pth
+#### model path for MODE 3:detector
+which_model_for_detector: Mantra
+load_detector_models: None
+feature_dim: 64
 
 
 
 #### general settings
 
-gpu_ids: [3]
+gpu_ids: [4]
 
 restart_step: 1000
 model_save_period: 4000
