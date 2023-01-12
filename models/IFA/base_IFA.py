@@ -194,7 +194,7 @@ class base_IFA(BaseModel):
         elif mode == 2.0:
             pass
         elif mode == 3.0:
-            pass
+            return self.validate_IFA_baseline(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的 validate 方法，请检查！")
 
@@ -206,6 +206,9 @@ class base_IFA(BaseModel):
         pass
 
     def validate_IFA_dense_prediction_postprocess(self, step=None, epoch=None):
+        pass
+
+    def validate_IFA_baseline(self, step=None, epoch=None):
         pass
 
     def IFA_dense_prediction_postprocess(self, step=None, epoch=None):
