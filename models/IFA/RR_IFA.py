@@ -266,8 +266,90 @@ class RR_IFA(base_IFA):
 
         return logs, None, False
 
+    def validate_IFA_dense_prediction_postprocess(self, step=None, epoch=None):
+        ### todo: downgrade model include n/2 real-world examples and n/2 restored examples
+        ## self.canny_image is the authentic image in this mode
+        self.qf_predict_network.eval()
+        if step is not None:
+            self.global_step = step
+        logs = {}
+        lr = self.get_current_learning_rate()
+        logs['lr'] = lr
+        use_pre_post_process = np.random.randint(0, 10000) % 2 == 0
+        if use_pre_post_process:
+            self.real_H_val, psnr = self.global_post_process(original=self.real_H_val)
+
+        auth_non_tamper, auth_tamper = self.real_H_val[:self.batch_size//3], self.real_H_val[self.batch_size//3:]
+
+        masks, masks_GT, percent_range = self.mask_generation(modified_input=auth_tamper, index=self.global_step,
+                                                              percent_range=(0.0, 0.2))
+        masks_GT = torch.cat([self.zero_metric, masks_GT],dim=0)
+
+
+        degraded = self.benign_attacks_without_simulation(forward_image=auth_tamper, index=self.global_step)
+
+        if self.opt['use_restore']:
+            use_restoration = np.random.randint(0,10000) % 3 == 0
+            if use_restoration:
+                with torch.no_grad():
+
+                    if use_restoration%3==0: #'unet' in self.opt['restoration_model'].lower():
+                        degraded = self.restore_unet(degraded, self.timestamp)
+                        degraded = self.clamp_with_grad(degraded)
+                        # loss = self.l1_loss(predicted, self.real_H)
+                    elif use_restoration%3==1: #'invisp' in self.opt['restoration_model'].lower():
+                        degraded = self.restore_invisp(degraded)
+                        degraded = self.clamp_with_grad(degraded)
+                        # reverted, _ = self.qf_predict_network(degrade, rev=True)
+                        # loss = self.l1_loss(predicted, self.real_H)  # + self.l1_loss(reverted, degrade.clone().detach())
+                    else: # restormer
+                        degraded = self.restore_restormer(degraded)
+                        degraded = self.clamp_with_grad(degraded)
+                        # loss = self.l1_loss(predicted, self.real_H)
+
+        mixed = auth_tamper*(1-masks) + degraded*masks
+        ### contain both authentic and tampered
+        mixed_pattern_images = torch.cat([auth_non_tamper, mixed],dim=0)
+
+
+        if not use_pre_post_process:
+            mixed_pattern_images_post, psnr = self.global_post_process(original=mixed_pattern_images)
+        else:
+            mixed_pattern_images_post = mixed_pattern_images
+
+
+        with torch.no_grad():
+            ## predict PSNR given degrade_sum
+            predicted_mask = self.qf_predict_network(mixed_pattern_images_post, self.timestamp)
+            loss = self.bce_with_logit_loss(predicted_mask, masks_GT)
+
+            logs['sum_loss'] = loss.item()
+
+        if (self.global_step % 100 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.real_H_val),
+                self.postprocess(mixed_pattern_images),
+                self.postprocess(10 * torch.abs(self.real_H_val - mixed_pattern_images)),
+                self.postprocess(mixed_pattern_images_post),
+                self.postprocess(10 * torch.abs(mixed_pattern_images_post - mixed_pattern_images)),
+                self.postprocess(torch.sigmoid(predicted_mask)),
+                self.postprocess(masks_GT),
+
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}_val.png"
+            images.save(name)
+
+        logs['psnr'] = psnr
+
+        self.global_step = self.global_step + 1
+
+        return logs, None, False
+
     def global_post_process(self, *, original):
-        psnr_requirement = 28
+        psnr_requirement = 26
         use_global_postprocess = np.random.randint(0, 10000) % 2 == 0
         if use_global_postprocess:
             mixed_pattern_images_post = self.benign_attack_ndarray_auto_control(forward_image=original,

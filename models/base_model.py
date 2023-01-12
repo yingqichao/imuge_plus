@@ -188,7 +188,10 @@ class BaseModel():
 
     ### todo: Abstract Methods
 
-    def optimize_parameters_router(self, mode, step=None):
+    def optimize_parameters_router(self, mode, step=None, epoch=None):
+        pass
+
+    def validate_router(self, mode, step=None, epoch=None):
         pass
 
     def feed_data_router(self, batch, mode):
@@ -420,13 +423,13 @@ class BaseModel():
             percent_range = (0.0, 0.3) if index not in self.opt["simulated_copymove_indices"] else (0.0, 0.25)
 
         batch_size, height_width = modified_input.shape[0], modified_input.shape[2]
-        masks_GT = torch.zeros(batch_size, 1, self.real_H.shape[2], self.real_H.shape[3]).cuda()
+        masks_GT = torch.zeros(batch_size, 1, modified_input.shape[2], modified_input.shape[3]).cuda()
         ## THE RECOVERY STAGE WILL ONLY WORK UNDER LARGE TAMPERING
         ## TO LOCALIZE SMALL TAMPERING, WE ONLY UPDATE LOCALIZER NETWORK
 
         for imgs in range(batch_size):
             masks_origin, _ = self.generate_stroke_mask(
-                [self.real_H.shape[2], self.real_H.shape[3]], percent_range=percent_range)
+                [modified_input.shape[2], modified_input.shape[3]], percent_range=percent_range)
             masks_GT[imgs, :, :, :] = masks_origin.cuda()
         masks = masks_GT.repeat(1, 3, 1, 1)
 

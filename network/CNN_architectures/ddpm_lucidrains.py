@@ -183,18 +183,24 @@ class Block(nn.Module):
         return x
 
 class ResnetBlock(nn.Module):
-    def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8):
+    def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8, enable_fft = True):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_emb_dim, dim_out * 2)
         ) if exists(time_emb_dim) else None
+        self.enable_fft = enable_fft
 
-        self.block1 = Block(dim, dim_out//2, groups = groups)
-        self.block2 = Block(dim_out//2, dim_out//2, groups = groups)
+        if self.enable_fft:
 
-        self.block1_fft = Block(2*dim+2, dim_out, groups=groups)
-        self.block2_fft = Block(dim_out, dim_out, groups=groups)
+            self.block1 = Block(dim, dim_out//2, groups = groups)
+            self.block2 = Block(dim_out//2, dim_out//2, groups = groups)
+
+            self.block1_fft = Block(2*dim+2, dim_out, groups=groups)
+            self.block2_fft = Block(dim_out, dim_out, groups=groups)
+        else:
+            self.block1 = Block(dim, dim_out , groups=groups)
+            self.block2 = Block(dim_out, dim_out, groups=groups)
 
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
@@ -207,32 +213,33 @@ class ResnetBlock(nn.Module):
             scale_shift = time_emb.chunk(2, dim = 1)
 
         ### local path
-        h = self.block1(x, scale_shift = scale_shift)
+        h = self.block1(x, scale_shift=scale_shift)
         h = self.block2(h)
-        ### global path
-        batch = x.shape[0]
-        fft_dim = (-2, -1)
-        ffted = torch.fft.rfftn(x, dim=fft_dim, norm='ortho')
-        ffted = torch.stack((ffted.real, ffted.imag), dim=-1)
-        ffted = ffted.permute(0, 1, 4, 2, 3).contiguous()  # (batch, c, 2, h, w/2+1)
-        ffted = ffted.view((batch, -1,) + ffted.size()[3:])
+        if self.enable_fft:
+            ### global path
+            batch = x.shape[0]
+            fft_dim = (-2, -1)
+            ffted = torch.fft.rfftn(x, dim=fft_dim, norm='ortho')
+            ffted = torch.stack((ffted.real, ffted.imag), dim=-1)
+            ffted = ffted.permute(0, 1, 4, 2, 3).contiguous()  # (batch, c, 2, h, w/2+1)
+            ffted = ffted.view((batch, -1,) + ffted.size()[3:])
 
-        height, width = ffted.shape[-2:]
-        coords_vert = torch.linspace(0, 1, height)[None, None, :, None].expand(batch, 1, height, width).to(ffted)
-        coords_hor = torch.linspace(0, 1, width)[None, None, None, :].expand(batch, 1, height, width).to(ffted)
-        ffted = torch.cat((coords_vert, coords_hor, ffted), dim=1)
+            height, width = ffted.shape[-2:]
+            coords_vert = torch.linspace(0, 1, height)[None, None, :, None].expand(batch, 1, height, width).to(ffted)
+            coords_hor = torch.linspace(0, 1, width)[None, None, None, :].expand(batch, 1, height, width).to(ffted)
+            ffted = torch.cat((coords_vert, coords_hor, ffted), dim=1)
 
-        ffted = self.block1_fft(ffted, scale_shift=scale_shift)
-        ffted = self.block2_fft(ffted)
+            ffted = self.block1_fft(ffted, scale_shift=scale_shift)
+            ffted = self.block2_fft(ffted)
 
-        ffted = ffted.view((batch, -1, 2,) + ffted.size()[2:]).permute(
-            0, 1, 3, 4, 2).contiguous()  # (batch,c, t, h, w/2+1, 2)
-        ffted = torch.complex(ffted[..., 0], ffted[..., 1])
+            ffted = ffted.view((batch, -1, 2,) + ffted.size()[2:]).permute(
+                0, 1, 3, 4, 2).contiguous()  # (batch,c, t, h, w/2+1, 2)
+            ffted = torch.complex(ffted[..., 0], ffted[..., 1])
 
-        ifft_shape_slice = x.shape[-2:]
-        h_fft = torch.fft.irfftn(ffted, s=ifft_shape_slice, dim=fft_dim, norm='ortho')
+            ifft_shape_slice = x.shape[-2:]
+            h_fft = torch.fft.irfftn(ffted, s=ifft_shape_slice, dim=fft_dim, norm='ortho')
 
-        h = torch.cat([h, h_fft],dim=1)
+            h = torch.cat([h, h_fft],dim=1)
 
         return h + self.res_conv(x)
 

@@ -186,6 +186,18 @@ class base_IFA(BaseModel):
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
+    def validate_router(self, mode, step=None, epoch=None):
+        if mode == 0.0:
+            return self.validate_IFA_dense_prediction_postprocess(step=step, epoch=epoch)
+        elif mode == 1.0:
+            pass
+        elif mode == 2.0:
+            pass
+        elif mode == 3.0:
+            pass
+        else:
+            raise NotImplementedError(f"没有找到mode {mode} 对应的 validate 方法，请检查！")
+
     ####################################################################################################
     # todo: MODE == 0
     # todo: train restoration models (restormer, unet and invisp)
@@ -193,10 +205,9 @@ class base_IFA(BaseModel):
     def IFA_binary_classification(self, step=None, epoch=None):
         pass
 
-    ####################################################################################################
-    # todo: MODE == 0
-    # todo: train restoration models (restormer, unet and invisp)
-    ####################################################################################################
+    def validate_IFA_dense_prediction_postprocess(self, step=None, epoch=None):
+        pass
+
     def IFA_dense_prediction_postprocess(self, step=None, epoch=None):
         pass
 
