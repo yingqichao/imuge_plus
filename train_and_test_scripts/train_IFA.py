@@ -42,7 +42,7 @@ def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, tra
 
                 end = time.time()
                 lr = logs['lr']
-                info_str = f'[{epoch + 1}, {valid_idx + 1} {idx * model.real_H.shape[0]} {rank} {lr}] '
+                info_str = f'[{epoch}, {valid_idx-1} {idx * model.real_H.shape[0]} {rank} {lr}] '
                 for key in running_list:
                     info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
                 info_str += f'time per sample {(end - start) / print_step / model.real_H.shape[0]:.4f} s'

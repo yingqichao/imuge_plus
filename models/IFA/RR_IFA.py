@@ -132,37 +132,39 @@ class RR_IFA(base_IFA):
 
     def network_definitions_dense_prediction_postprocess(self):
         self.timestamp = torch.zeros((1)).cuda()
+        self.zero_metric = torch.zeros((self.batch_size//3,1,self.width_height,self.width_height)).cuda()
 
         ### todo: network
-        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1)
+        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=True, use_fft=False)
 
-        self.restore_restormer = self.define_restormer()
-        self.restore_unet = self.define_ddpm_unet_network()
-        self.restore_invisp = self.define_invISP(block_num=[4, 4, 4])
+        if self.opt['use_restore']:
+            self.restore_restormer = self.define_restormer()
+            self.restore_unet = self.define_ddpm_unet_network()
+            self.restore_invisp = self.define_invISP(block_num=[4, 4, 4])
 
-        model_paths = [
-            str(self.opt['load_restormer_models']),
-            str(self.opt['load_unet_models']),
-            str(self.opt['load_invisp_models']),
-        ]
-        models = [
-            self.restore_restormer, self.restore_unet, self.restore_invisp
-        ]
-        folders = [
-            'Restormer_restoration', 'Unet_restoration', 'Invisp_restoration'
-        ]
+            model_paths = [
+                str(self.opt['load_restormer_models']),
+                str(self.opt['load_unet_models']),
+                str(self.opt['load_invisp_models']),
+            ]
+            models = [
+                self.restore_restormer, self.restore_unet, self.restore_invisp
+            ]
+            folders = [
+                'Restormer_restoration', 'Unet_restoration', 'Invisp_restoration'
+            ]
 
-        print(f"loading pretrained restoration models")
-        for idx, model_path in enumerate(model_paths):
-            model = models[idx]
-            pretrain = f'{self.out_space_storage}/model/{folders[idx]}/' + model_path
-            load_path_G = pretrain
+            print(f"loading pretrained restoration models")
+            for idx, model_path in enumerate(model_paths):
+                model = models[idx]
+                pretrain = f'{self.out_space_storage}/model/{folders[idx]}/' + model_path
+                load_path_G = pretrain
 
-            print('Loading model for class [{:s}] ...'.format(load_path_G))
-            if os.path.exists(load_path_G):
-                self.load_network(load_path_G, model, strict=False)
-            else:
-                print('Did not find model for class [{:s}] ...'.format(load_path_G))
+                print('Loading model for class [{:s}] ...'.format(load_path_G))
+                if os.path.exists(load_path_G):
+                    self.load_network(load_path_G, model, strict=False)
+                else:
+                    print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
 
     def IFA_dense_prediction_postprocess(self, step=None, epoch=None):
@@ -174,42 +176,48 @@ class RR_IFA(base_IFA):
         logs = {}
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
+        use_pre_post_process = np.random.randint(0, 10000) % 2 == 0
+        if use_pre_post_process:
+            self.real_H, psnr = self.global_post_process(original=self.real_H)
 
-        authentic_image_original = self.real_H
+        auth_non_tamper, auth_tamper = self.real_H[:self.batch_size//3], self.real_H[self.batch_size//3:]
 
-        masks, masks_GT, percent_range = self.mask_generation(modified_input=authentic_image_original, index=self.global_step,
+        masks, masks_GT, percent_range = self.mask_generation(modified_input=auth_tamper, index=self.global_step,
                                                               percent_range=(0.0, 0.2))
+        masks_GT = torch.cat([self.zero_metric, masks_GT],dim=0)
 
-        batch_size = self.real_H.shape[0]
 
-        degraded = self.benign_attacks_without_simulation(forward_image=authentic_image_original, index=self.global_step)
+        degraded = self.benign_attacks_without_simulation(forward_image=auth_tamper, index=self.global_step)
 
-        use_restoration = np.random.randint(0,10000) % 2 == 0
-        if use_restoration:
-            with torch.no_grad():
+        if self.opt['use_restore']:
+            use_restoration = np.random.randint(0,10000) % 3 == 0
+            if use_restoration:
+                with torch.no_grad():
 
-                if use_restoration%3==0: #'unet' in self.opt['restoration_model'].lower():
-                    degraded = self.restore_unet(degraded, self.timestamp)
-                    degraded = self.clamp_with_grad(degraded)
-                    # loss = self.l1_loss(predicted, self.real_H)
-                elif use_restoration%3==1: #'invisp' in self.opt['restoration_model'].lower():
-                    degraded = self.restore_invisp(degraded)
-                    degraded = self.clamp_with_grad(degraded)
-                    # reverted, _ = self.qf_predict_network(degrade, rev=True)
-                    # loss = self.l1_loss(predicted, self.real_H)  # + self.l1_loss(reverted, degrade.clone().detach())
-                else: # restormer
-                    degraded = self.restore_restormer(degraded)
-                    degraded = self.clamp_with_grad(degraded)
-                    # loss = self.l1_loss(predicted, self.real_H)
+                    if use_restoration%3==0: #'unet' in self.opt['restoration_model'].lower():
+                        degraded = self.restore_unet(degraded, self.timestamp)
+                        degraded = self.clamp_with_grad(degraded)
+                        # loss = self.l1_loss(predicted, self.real_H)
+                    elif use_restoration%3==1: #'invisp' in self.opt['restoration_model'].lower():
+                        degraded = self.restore_invisp(degraded)
+                        degraded = self.clamp_with_grad(degraded)
+                        # reverted, _ = self.qf_predict_network(degrade, rev=True)
+                        # loss = self.l1_loss(predicted, self.real_H)  # + self.l1_loss(reverted, degrade.clone().detach())
+                    else: # restormer
+                        degraded = self.restore_restormer(degraded)
+                        degraded = self.clamp_with_grad(degraded)
+                        # loss = self.l1_loss(predicted, self.real_H)
 
-        mixed_pattern_images = authentic_image_original*(1-masks) + degraded*masks
+        mixed = auth_tamper*(1-masks) + degraded*masks
+        ### contain both authentic and tampered
+        mixed_pattern_images = torch.cat([auth_non_tamper, mixed],dim=0)
 
-        use_global_postprocess = np.random.randint(0, 10000) % 2 == 0
-        if use_global_postprocess:
-            mixed_pattern_images_post = self.benign_attacks_without_simulation(forward_image=mixed_pattern_images,
-                                                              index=use_global_postprocess)
+
+        if not use_pre_post_process:
+            mixed_pattern_images_post, psnr = self.global_post_process(original=mixed_pattern_images)
         else:
             mixed_pattern_images_post = mixed_pattern_images
+
 
         with torch.enable_grad():
             ## predict PSNR given degrade_sum
@@ -225,9 +233,9 @@ class RR_IFA(base_IFA):
 
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             images = stitch_images(
-                self.postprocess(authentic_image_original),
+                self.postprocess(self.real_H),
                 self.postprocess(mixed_pattern_images),
-                self.postprocess(10 * torch.abs(authentic_image_original - mixed_pattern_images)),
+                self.postprocess(10 * torch.abs(self.real_H - mixed_pattern_images)),
                 self.postprocess(mixed_pattern_images_post),
                 self.postprocess(10 * torch.abs(mixed_pattern_images_post - mixed_pattern_images)),
                 self.postprocess(torch.sigmoid(predicted_mask)),
@@ -239,6 +247,8 @@ class RR_IFA(base_IFA):
             name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
                    f"_{str(self.rank)}.png"
             images.save(name)
+
+        logs['psnr'] = psnr
 
         ######## Finally ####################
         for scheduler in self.schedulers:
@@ -255,6 +265,33 @@ class RR_IFA(base_IFA):
         self.global_step = self.global_step + 1
 
         return logs, None, False
+
+    def global_post_process(self, *, original):
+        psnr_requirement = 28
+        use_global_postprocess = np.random.randint(0, 10000) % 2 == 0
+        if use_global_postprocess:
+            mixed_pattern_images_post = self.benign_attack_ndarray_auto_control(forward_image=original,
+                                                                                index=use_global_postprocess,
+                                                                                psnr_requirement=psnr_requirement)
+        else:
+            mixed_pattern_images_post = original
+
+        psnr = self.psnr(self.postprocess(mixed_pattern_images_post), self.postprocess(original)).item()
+        if not (psnr < 1 or psnr > psnr_requirement):  # , f"PSNR {psnr} is not allowed! {self.global_step}"
+            mixed_conpensate = None
+            ### blurring attack is tough, special care on that
+            for alpha in [i * 0.1 for i in range(1, 10)]:
+                mixed_conpensate = alpha * original + (1 - alpha) * mixed_pattern_images_post
+                psnr = self.psnr(self.postprocess(mixed_conpensate), self.postprocess(original)).item()
+
+                if psnr > psnr_requirement:
+                    break
+            mixed_pattern_images_post = mixed_conpensate
+
+        assert (psnr < 1 or psnr > psnr_requirement), f"PSNR {psnr} is not allowed! {self.global_step}"
+        psnr = 40 if psnr < 1 else psnr
+
+        return mixed_pattern_images_post, psnr
 
     def IFA_binary_classification(self, step=None, epoch=None):
         ### todo: downgrade model include n/2 real-world examples and n/2 restored examples

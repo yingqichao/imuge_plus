@@ -190,8 +190,12 @@ class ResnetBlock(nn.Module):
             nn.Linear(time_emb_dim, dim_out * 2)
         ) if exists(time_emb_dim) else None
 
-        self.block1 = Block(dim, dim_out, groups = groups)
-        self.block2 = Block(dim_out, dim_out, groups = groups)
+        self.block1 = Block(dim, dim_out//2, groups = groups)
+        self.block2 = Block(dim_out//2, dim_out//2, groups = groups)
+
+        self.block1_fft = Block(2*dim+2, dim_out, groups=groups)
+        self.block2_fft = Block(dim_out, dim_out, groups=groups)
+
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb = None):
@@ -202,9 +206,33 @@ class ResnetBlock(nn.Module):
             time_emb = rearrange(time_emb, 'b c -> b c 1 1')
             scale_shift = time_emb.chunk(2, dim = 1)
 
+        ### local path
         h = self.block1(x, scale_shift = scale_shift)
-
         h = self.block2(h)
+        ### global path
+        batch = x.shape[0]
+        fft_dim = (-2, -1)
+        ffted = torch.fft.rfftn(x, dim=fft_dim, norm='ortho')
+        ffted = torch.stack((ffted.real, ffted.imag), dim=-1)
+        ffted = ffted.permute(0, 1, 4, 2, 3).contiguous()  # (batch, c, 2, h, w/2+1)
+        ffted = ffted.view((batch, -1,) + ffted.size()[3:])
+
+        height, width = ffted.shape[-2:]
+        coords_vert = torch.linspace(0, 1, height)[None, None, :, None].expand(batch, 1, height, width).to(ffted)
+        coords_hor = torch.linspace(0, 1, width)[None, None, None, :].expand(batch, 1, height, width).to(ffted)
+        ffted = torch.cat((coords_vert, coords_hor, ffted), dim=1)
+
+        ffted = self.block1_fft(ffted, scale_shift=scale_shift)
+        ffted = self.block2_fft(ffted)
+
+        ffted = ffted.view((batch, -1, 2,) + ffted.size()[2:]).permute(
+            0, 1, 3, 4, 2).contiguous()  # (batch,c, t, h, w/2+1, 2)
+        ffted = torch.complex(ffted[..., 0], ffted[..., 1])
+
+        ifft_shape_slice = x.shape[-2:]
+        h_fft = torch.fft.irfftn(ffted, s=ifft_shape_slice, dim=fft_dim, norm='ortho')
+
+        h = torch.cat([h, h_fft],dim=1)
 
         return h + self.res_conv(x)
 
@@ -263,7 +291,7 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 # model
-
+import numpy as np
 class Unet(nn.Module):
     def __init__(
         self,
@@ -277,17 +305,35 @@ class Unet(nn.Module):
         learned_variance = False,
         learned_sinusoidal_cond = False,
         random_fourier_features = False,
-        learned_sinusoidal_dim = 16
+        learned_sinusoidal_dim = 16,
+        use_bayar = False,
+        use_fft = False,
     ):
         super().__init__()
-
-        # determine dimensions
-
         self.channels = channels
         self.self_condition = self_condition
         input_channels = channels * (2 if self_condition else 1)
 
+
+        # determine dimensions
+        self.use_bayar = use_bayar
+        if self.use_bayar:
+            self.BayarConv2D = nn.Conv2d(3, 3, 5, 1, padding=2, bias=False)
+            self.bayar_mask = (torch.tensor(np.ones(shape=(5, 5)))).cuda()
+            self.bayar_mask[2, 2] = 0
+            self.bayar_final = (torch.tensor(np.zeros((5, 5)))).cuda()
+            self.bayar_final[2, 2] = -1
+            self.activation = nn.ELU()
+            input_channels += 3
+
+        self.use_fft = use_fft
+        if self.use_fft:
+            self.fft_norm = 'ortho'
+            input_channels += 3
+
+
         init_dim = default(init_dim, dim)
+
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
@@ -297,23 +343,23 @@ class Unet(nn.Module):
 
         # time embeddings
 
-        time_dim = dim * 4
+        time_dim = None #dim * 4
 
         self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
 
-        if self.random_or_learned_sinusoidal_cond:
-            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
-            fourier_dim = learned_sinusoidal_dim + 1
-        else:
-            sinu_pos_emb = SinusoidalPosEmb(dim)
-            fourier_dim = dim
+        # if self.random_or_learned_sinusoidal_cond:
+        #     sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
+        #     fourier_dim = learned_sinusoidal_dim + 1
+        # else:
+        #     sinu_pos_emb = SinusoidalPosEmb(dim)
+        #     fourier_dim = dim
 
-        self.time_mlp = nn.Sequential(
-            sinu_pos_emb,
-            nn.Linear(fourier_dim, time_dim),
-            nn.GELU(),
-            nn.Linear(time_dim, time_dim)
-        )
+        # self.time_mlp = nn.Sequential(
+        #     sinu_pos_emb,
+        #     nn.Linear(fourier_dim, time_dim),
+        #     nn.GELU(),
+        #     nn.Linear(time_dim, time_dim)
+        # )
 
         # layers
 
@@ -353,14 +399,47 @@ class Unet(nn.Module):
         self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
 
     def forward(self, x, time, x_self_cond = None):
+        batch = x.shape[0]
         if self.self_condition:
             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
             x = torch.cat((x_self_cond, x), dim = 1)
 
+        ### support bayar conv as init
+        if self.use_bayar:
+            self.BayarConv2D.weight.data *= self.bayar_mask
+            self.BayarConv2D.weight.data *= torch.pow(self.BayarConv2D.weight.data.sum(axis=(2, 3)).view(3, 3, 1, 1), -1)
+            self.BayarConv2D.weight.data += self.bayar_final
+
+            # Symmetric padding
+            # x = symm_pad(x, (2, 2, 2, 2))
+
+            # conv_init = self.vanillaConv2D(x)
+            conv_bayar = self.BayarConv2D(x)
+            # conv_srm = self.SRMConv2D(x)
+
+            first_block = conv_bayar #torch.cat([conv_init, conv_srm, conv_bayar], axis=1)
+            x_bayar = self.activation(first_block)
+            x = torch.cat([x,x_bayar],dim=1)
+
+        # ### support fft at init
+        # if self.use_fft:
+        #     fft_dim = (-2, -1)
+        #     ffted = torch.fft.rfftn(x, dim=fft_dim, norm=self.fft_norm)
+        #     ffted = torch.stack((ffted.real, ffted.imag), dim=-1)
+        #     ffted = ffted.permute(0, 1, 4, 2, 3).contiguous()  # (batch, c, 2, h, w/2+1)
+        #     ffted = ffted.view((batch, -1,) + ffted.size()[3:])
+        #     # spectral pos encoding
+        #     height, width = ffted.shape[-2:]
+        #     coords_vert = torch.linspace(0, 1, height)[None, None, :, None].expand(batch, 1, height, width).to(ffted)
+        #     coords_hor = torch.linspace(0, 1, width)[None, None, None, :].expand(batch, 1, height, width).to(ffted)
+        #     ffted = torch.cat((coords_vert, coords_hor, ffted), dim=1)
+        #     x = torch.cat([x, ffted], dim=1)
+
         x = self.init_conv(x)
+
         r = x.clone()
 
-        t = self.time_mlp(time)
+        t = None #self.time_mlp(time)
 
         h = []
 

@@ -1,6 +1,7 @@
 import copy
 # from .networks import SPADE_UNet
 import os
+import random
 from collections import OrderedDict
 
 from skimage.feature import canny
@@ -180,6 +181,7 @@ class BaseModel():
         # self.criterion_adv = CWLoss().cuda()  # loss for fooling target model
         self.CE_loss = nn.CrossEntropyLoss().cuda()
         self.width_height = opt['datasets']['train']['GT_size']
+        self.batch_size = opt['datasets']['train']['batch_size']
         self.init_gaussian = None
         # self.adversarial_loss = AdversarialLoss(type="nsgan").cuda()
 
@@ -314,13 +316,13 @@ class BaseModel():
     def create_folders_for_the_experiment(self):
         pass
 
-    def define_ddpm_unet_network(self, out_dim=3):
+    def define_ddpm_unet_network(self, out_dim=3, use_bayar=False, use_fft=True):
         from network.CNN_architectures.ddpm_lucidrains import Unet
         # input = torch.ones((3, 3, 128, 128)).cuda()
         # output = model(input, torch.zeros((1)).cuda())
 
         print("using ddpm_unet")
-        model = Unet(out_dim=out_dim).cuda()
+        model = Unet(out_dim=out_dim, use_bayar=use_bayar, use_fft=use_fft).cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
         return model
@@ -657,6 +659,55 @@ class BaseModel():
             realworld_attack = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality,
                                                                     index=index, kernel=kernel_size,
                                                                     resize_ratio=resize_ratio)
+            attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
+
+        return attacked_real_jpeg.cuda()
+
+    def benign_attack_ndarray_auto_control(self, *, forward_image, index=None, psnr_requirement=None):
+        '''
+            real-world attack, whose setting should be fed.
+        '''
+        ## note: create tensor directly on device:
+        ## torch.ones((1,1),device=a.get_device())
+        compare_image = forward_image.detach().cpu()
+        index_for_postprocessing = index  # self.global_step
+        if psnr_requirement is None:
+            psnr_requirement = self.opt['minimum_PSNR_caused_by_attack']
+
+        # kernel_size = random.choice([3, 5, 7, 9])  # 3,5,7
+        kernel_list = random.sample([3, 5, 7, 9],3)
+        resize_list = [
+            (int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
+            (int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
+            (int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
+            ]
+        quality_list = [
+            int(self.get_quality_idx_by_iteration(index=index_for_postprocessing)* 5),
+            int(self.get_quality_idx_by_iteration(index=index_for_postprocessing)* 5),
+            int(self.get_quality_idx_by_iteration(index=index_for_postprocessing)* 5),
+            ]
+
+        batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
+        attacked_real_jpeg = torch.empty_like(forward_image)
+        # quality = int(quality_idx * 5)
+
+        for idx_atkimg in range(batch_size):
+            grid = forward_image[idx_atkimg]
+            max_try, tried, psnr_best = 1, 0, 0
+            realworld_attack = None
+            while tried<max_try:
+                realworld_candidate = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality_list[tried],
+                                                                        index=index, kernel=kernel_list[tried],
+                                                                        resize_ratio=resize_list[tried])
+                psnr = self.psnr(self.postprocess(compare_image[idx_atkimg:idx_atkimg + 1]), self.postprocess(realworld_candidate)).item()
+                if psnr>psnr_best:
+                    realworld_attack = realworld_candidate
+                    psnr_best = psnr
+                if psnr>psnr_requirement:
+                    break
+                else:
+                    tried += 1
+
             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
         return attacked_real_jpeg.cuda()
