@@ -40,12 +40,13 @@ def create_dataset(*, opt, args):
     print('#################################### val set ####################################')
     print(val_dataset_opt)
     if args.mode==0:
-        # print("dataset Defacto")
-        # from data.CASIA_dataset import CASIA_dataset as D
-        # val_set = D(opt, val_dataset_opt, is_train=False, dataset=["CASIA1","CASIA2"], attack_list=None, with_mask=False, with_au=True)
-        print("dataset LQ")
-        from data.LQ_dataset import LQDataset as D
-        val_set = D(opt, val_dataset_opt, load_mask=False)
+        print("dataset Defacto")
+        from data.CASIA_dataset import CASIA_dataset as D
+        val_set = D(opt, val_dataset_opt, is_train=False, dataset=["CASIA2"], attack_list=None, with_mask=True, with_au=True,
+                    split=False)
+        # print("dataset LQ")
+        # from data.LQ_dataset import LQDataset as D
+        # val_set = D(opt, val_dataset_opt, load_mask=False)
     elif args.mode == 3:
         print("dataset CASIA2")
         from data.CASIA_dataset import CASIA_dataset as D

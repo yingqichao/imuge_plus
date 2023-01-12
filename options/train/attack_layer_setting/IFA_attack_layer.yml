@@ -58,7 +58,7 @@ model_save_period: 1000
 
 weak_JPEG_lower_bound: 20
 strong_JPEG_upper_bound: 20
-strong_JPEG_lower_bound: 14
+strong_JPEG_lower_bound: 12
 cropping_lower_bound: 0.7
 
 

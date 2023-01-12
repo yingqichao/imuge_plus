@@ -23,7 +23,8 @@ class CASIA_dataset(data.Dataset):
     The pair is ensured by 'sorted' function, so please check the name convention.
     '''
 
-    def __init__(self, opt, dataset_opt, is_train=True, dataset: list =["CASIA1"],attack_list=None, with_au=False, with_mask=True):
+    def __init__(self, opt, dataset_opt, is_train=True, dataset: list =["CASIA1"],attack_list=None, with_au=False, with_mask=True,
+                 split=True):
         super(CASIA_dataset, self).__init__()
         self.is_train = is_train
         self.opt = opt
@@ -34,6 +35,7 @@ class CASIA_dataset(data.Dataset):
         self.dataset_name = dataset
         self.with_au = with_au
         self.with_mask = with_mask
+        self.split = split
 
         print(f"Using {dataset} with_au {with_au} with_mask {with_mask} is_train {is_train}")
 
@@ -81,25 +83,34 @@ class CASIA_dataset(data.Dataset):
                     # mask_path = sorted(mask_path)
                     dataset_len = len(GT_path)
                     print(f"len image {dataset_len}")
-                    num_train_val_split = int(dataset_len*0.85)
-                    self.paths_GT += (GT_path[:num_train_val_split] if self.is_train else GT_path[num_train_val_split:])
+                    num_train_val_split = int(dataset_len*(0.85 if self.split else 1))
+                    if not self.split:
+                        self.paths_GT += GT_path
+                    elif self.is_train:
+                        self.paths_GT += GT_path[:num_train_val_split]
+                    else:
+                        self.paths_GT += GT_path[num_train_val_split:]
 
         if self.with_mask:
             self.paths_mask = []
             for i, this_dataset in enumerate(self.dataset_name):
                 mask_items = self.mask_folder[this_dataset]
-                for idx in range(len(GT_items)):
+                for idx in range(len(mask_items)):
                     if attack_list is None or idx in attack_list:
                         mask_path, _ = util.get_image_paths(mask_items[idx])
                         # GT_path = sorted(GT_path)
                         # mask_path = sorted(mask_path)
                         dataset_mask_len = len(mask_path)
                         print(f"len mask {dataset_mask_len}")
-                        num_train_val_split = int(dataset_mask_len * 0.85)
-                        self.paths_mask += (
-                            mask_path[:num_train_val_split] if self.is_train else mask_path[num_train_val_split:])
+                        num_train_val_split = int(dataset_mask_len*(0.85 if self.split else 1))
+                        if not self.split:
+                            self.paths_mask += mask_path
+                        elif self.is_train:
+                            self.paths_mask += mask_path[:num_train_val_split]
+                        else:
+                            self.paths_mask += mask_path[num_train_val_split:]
 
-            assert len(self.paths_GT)==len(self.paths_mask), 'Mask和Image的总数不匹配！请检查'
+            assert len(self.paths_GT)==len(self.paths_mask), f'Mask和Image的总数不匹配！{len(self.paths_GT)} {len(self.paths_mask)}请检查'
 
         if self.with_au:
             self.au_folder = {
@@ -142,7 +153,7 @@ class CASIA_dataset(data.Dataset):
 
         # img_GT = util.read_img(GT_path)
         img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
-        img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
         img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
         img_GT = img_GT.astype(np.float32) / 255.
         if img_GT.ndim == 2:
@@ -173,7 +184,7 @@ class CASIA_dataset(data.Dataset):
             GT_path = self.au_GT[index]
 
             img_au_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
-            img_au_GT = util.channel_convert(img_au_GT.shape[2], self.dataset_opt['color'], [img_au_GT])[0]
+            # img_au_GT = util.channel_convert(img_au_GT.shape[2], self.dataset_opt['color'], [img_au_GT])[0]
             img_au_GT = self.transform_just_resize(image=copy.deepcopy(img_au_GT))["image"]
             img_au_GT = img_au_GT.astype(np.float32) / 255.
             if img_au_GT.ndim == 2:

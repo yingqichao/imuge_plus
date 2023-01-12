@@ -1,12 +1,13 @@
 
-do_evaluate: 1000
+do_evaluate: 2000
 minimum_PSNR_caused_by_attack: 25
 use_restore: false
+max_psnr: 45
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: 1_9_qf_predict.pth
+load_predictor_models: 0_1999_qf_predict.pth
 consider_mask_prediction: false
 
 load_restormer_models: 15_3999_qf_predict.pth
@@ -27,6 +28,9 @@ simulated_AWGN_indices: [4]
 simulated_strong_JPEG_indices: [3,6,7]
 simulated_weak_JPEG_indices: []
 
+weak_JPEG_lower_bound: 20
+strong_JPEG_upper_bound: 20
+strong_JPEG_lower_bound: 12
 
 
 datasets:
@@ -59,7 +63,7 @@ datasets:
     dataroot_GT: /groupshare/COCOdataset/val2017
     dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
     GT_size: 256
-    batch_size: 16
+    batch_size: 12
 
 
 train:

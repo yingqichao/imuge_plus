@@ -171,6 +171,7 @@ class BaseModel():
         self.bce_loss = nn.BCELoss().cuda()
         self.bce_with_logit_loss = nn.BCEWithLogitsLoss().cuda()
         self.l1_loss = nn.SmoothL1Loss(beta=0.5).cuda()  # reduction="sum"
+        self.hard_l1_loss = nn.L1Loss().cuda()  # reduction="sum"
         self.l2_loss = nn.MSELoss().cuda()  # reduction="sum"
         self.perceptual_loss = PerceptualLoss().cuda()
         self.style_loss = StyleLoss().cuda()
@@ -319,13 +320,13 @@ class BaseModel():
     def create_folders_for_the_experiment(self):
         pass
 
-    def define_ddpm_unet_network(self, out_dim=3, use_bayar=False, use_fft=True):
+    def define_ddpm_unet_network(self, out_dim=3, use_bayar=False, use_fft=False, use_classification=False):
         from network.CNN_architectures.ddpm_lucidrains import Unet
         # input = torch.ones((3, 3, 128, 128)).cuda()
         # output = model(input, torch.zeros((1)).cuda())
 
         print("using ddpm_unet")
-        model = Unet(out_dim=out_dim, use_bayar=use_bayar, use_fft=use_fft).cuda()
+        model = Unet(out_dim=out_dim, use_bayar=use_bayar, use_fft=use_fft, use_classification=use_classification).cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
         return model
@@ -666,13 +667,15 @@ class BaseModel():
 
         return attacked_real_jpeg.cuda()
 
-    def benign_attack_ndarray_auto_control(self, *, forward_image, index=None, psnr_requirement=None):
+    def benign_attack_ndarray_auto_control(self, *, forward_image, index=None, psnr_requirement=None, get_label=False,
+                                           local_compensate=True, global_compensate=False):
         '''
             real-world attack, whose setting should be fed.
         '''
         ## note: create tensor directly on device:
         ## torch.ones((1,1),device=a.get_device())
-        compare_image = forward_image.detach().cpu()
+        psnr_label = torch.zeros((self.batch_size, 1), device=forward_image.device)
+        # compare_image = forward_image.detach().cpu()
         index_for_postprocessing = index  # self.global_step
         if psnr_requirement is None:
             psnr_requirement = self.opt['minimum_PSNR_caused_by_attack']
@@ -691,18 +694,18 @@ class BaseModel():
             ]
 
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
-        attacked_real_jpeg = torch.empty_like(forward_image)
+        attacked_real_jpeg = torch.empty_like(forward_image,device=forward_image.device)
         # quality = int(quality_idx * 5)
 
         for idx_atkimg in range(batch_size):
             grid = forward_image[idx_atkimg]
-            max_try, tried, psnr_best = 1, 0, 0
+            max_try, tried, psnr, psnr_best = 1, 0, 0, 0
             realworld_attack = None
             while tried<max_try:
                 realworld_candidate = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality_list[tried],
                                                                         index=index, kernel=kernel_list[tried],
                                                                         resize_ratio=resize_list[tried])
-                psnr = self.psnr(self.postprocess(compare_image[idx_atkimg:idx_atkimg + 1]), self.postprocess(realworld_candidate)).item()
+                psnr = self.psnr(self.postprocess(forward_image[idx_atkimg:idx_atkimg + 1]), self.postprocess(realworld_candidate)).item()
                 if psnr>psnr_best:
                     realworld_attack = realworld_candidate
                     psnr_best = psnr
@@ -711,9 +714,31 @@ class BaseModel():
                 else:
                     tried += 1
 
+            ## global compensate to make dense probailities
+            if global_compensate and np.random.rand()>0.5:
+                beta = np.random.rand()
+                realworld_attack = beta * forward_image[idx_atkimg:idx_atkimg + 1] + (1 - beta) * realworld_attack
+                psnr = self.psnr(self.postprocess(realworld_attack), self.postprocess(forward_image[idx_atkimg:idx_atkimg + 1])).item()
+
+            ## eliminate too poor images
+            if not (psnr < 1 or psnr > psnr_requirement):  # , f"PSNR {psnr} is not allowed! {self.global_step}"
+                mixed_conpensate = None
+                ### blurring attack is tough, special care on that
+                for alpha in [i * 0.1 for i in range(1, 10)]:
+                    mixed_conpensate = alpha * forward_image[idx_atkimg:idx_atkimg+1] + (1 - alpha) * realworld_attack
+                    psnr = self.psnr(self.postprocess(mixed_conpensate), self.postprocess(forward_image[idx_atkimg:idx_atkimg+1])).item()
+
+                    if psnr > psnr_requirement:
+                        break
+                realworld_attack = mixed_conpensate
+
+            psnr_label[idx_atkimg:idx_atkimg + 1] = min(1., (psnr-psnr_requirement)/(self.opt['max_psnr']-psnr_requirement))
             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
-        return attacked_real_jpeg.cuda()
+        if get_label:
+            return attacked_real_jpeg, psnr_label
+        else:
+            return attacked_real_jpeg
 
     def to_jpeg(self, *, forward_image):
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
@@ -802,7 +827,7 @@ class BaseModel():
         realworld_attack = torch.from_numpy(
             np.ascontiguousarray(np.transpose(realworld_attack, (2, 0, 1)))).contiguous().float()
         realworld_attack = realworld_attack.unsqueeze(0)
-        return realworld_attack
+        return realworld_attack.cuda()
 
     ### todo: trivial stuffs
     def is_image_file(self, filename):

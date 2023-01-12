@@ -168,11 +168,12 @@ class base_IFA(BaseModel):
             if len(self.canny_image.shape)==3:
                 self.canny_image = self.canny_image.unsqueeze(1)
         else:
-            img, mask = batch
+            img, mask, img_auth = batch
             self.real_H_val = img.cuda()
-            self.canny_image_val = mask.unsqueeze(1).cuda()
+            self.canny_image_val = mask.cuda()
             if len(self.canny_image_val.shape)==3:
                 self.canny_image_val = self.canny_image_val.unsqueeze(1)
+            self.auth_image = img_auth.cuda()
 
     def optimize_parameters_router(self, mode, step=None, epoch=None):
         if mode == 0.0:

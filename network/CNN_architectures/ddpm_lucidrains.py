@@ -315,6 +315,7 @@ class Unet(nn.Module):
         learned_sinusoidal_dim = 16,
         use_bayar = False,
         use_fft = False,
+        use_classification = False,
     ):
         super().__init__()
         self.channels = channels
@@ -349,11 +350,8 @@ class Unet(nn.Module):
         block_klass = partial(ResnetBlock, groups = resnet_block_groups)
 
         # time embeddings
-
         time_dim = None #dim * 4
-
         self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
-
         # if self.random_or_learned_sinusoidal_cond:
         #     sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
         #     fourier_dim = learned_sinusoidal_dim + 1
@@ -388,6 +386,12 @@ class Unet(nn.Module):
         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
         self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
+
+        self.use_classification = use_classification
+        if self.use_classification:
+            self.norm_class = nn.LayerNorm(mid_dim, eps=1e-6)
+            self.head_class = nn.Linear(mid_dim, 1)
+
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
@@ -464,6 +468,10 @@ class Unet(nn.Module):
         x = self.mid_attn(x)
         x = self.mid_block2(x, t)
 
+        if self.use_classification:
+            x_cls = self.norm_class(x.mean([-2, -1]))
+            x_cls = self.head_class(x_cls)
+
         for block1, block2, attn, upsample in self.ups:
             x = torch.cat((x, h.pop()), dim = 1)
             x = block1(x, t)
@@ -477,7 +485,12 @@ class Unet(nn.Module):
         x = torch.cat((x, r), dim = 1)
 
         x = self.final_res_block(x, t)
-        return self.final_conv(x)
+        x = self.final_conv(x)
+
+        if not self.use_classification:
+            return x
+        else:
+            return x, x_cls
 
 # gaussian diffusion trainer class
 
