@@ -304,17 +304,18 @@ class SimpleConv(nn.Module):
             nn.ReLU(),
         )
         self.l2 = nn.Sequential(
-            nn.Conv2d(feature_dim, feature_dim, kernel_size=5, stride=1, padding=2, bias=True),
+            nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=2, padding=1, bias=True),
             nn.ReLU(),
         )
         self.l3 = nn.Sequential(
-            nn.Conv2d(feature_dim, feature_dim, kernel_size=5, stride=1, padding=2, bias=True),
+            nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=True),
             nn.ReLU(),
         )
         self.l4 = nn.Sequential(
-            nn.Conv2d(feature_dim, feature_dim, kernel_size=5, stride=1, padding=2, bias=True),
+            nn.Conv2d(feature_dim, feature_dim, kernel_size=3, stride=1, padding=1, bias=True),
             nn.ReLU(),
         )
+
 
         self.fc = nn.Sequential(
                         torch.nn.AdaptiveAvgPool2d((1, 1)),
@@ -325,7 +326,7 @@ class SimpleConv(nn.Module):
 
     def forward(self, x):
         x = x + self.l1(x)
-        x = x + self.l2(x)
+        x = self.l2(x)
         x = x + self.l3(x)
         x = x + self.l4(x)
         logit = self.fc(x)

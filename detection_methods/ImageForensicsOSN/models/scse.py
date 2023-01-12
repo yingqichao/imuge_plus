@@ -126,7 +126,7 @@ class EncoderDecoder(AbstractModel):
         _, _, hf, wf = f.shape
         if hf != h0 or wf != w0:
             f = F.interpolate(f, (h0, w0))
-        return f
+        return last_dec_out, f
 
     def get_decoder(self, layer):
         in_channels = (
