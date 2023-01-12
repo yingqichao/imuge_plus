@@ -612,7 +612,7 @@ class MantraNet(nn.Module):
         final_output = self.end(output_lstm)
         
 
-        return final_output
+        return output_lstm, final_output
             
 
 #Slight modification of the original MantraNet using a GRU instead of a LSTM

@@ -1,27 +1,30 @@
 
 do_evaluate: false
-restoration_model: unet
-predict_PSNR_model: resnet # cmt or resnet
+minimum_PSNR_caused_by_attack: 25
 
 #### model path dirs
-predictor_folder: /groupshare/IFA_results/model/RR_IFA/
+predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: ~ #psnr_predict: 40_9_qf_predict.pth #0_13999
-minimum_PSNR_caused_by_attack: 20
+load_predictor_models: 4_13999_qf_predict.pth
+consider_mask_prediction: false
 
-#### model path for MODE 2: ESTIMATING PSNR
 load_restormer_models: 15_3999_qf_predict.pth
 load_unet_models: 31_7999_qf_predict.pth
 load_invisp_models: 10_7999_qf_predict.pth
 
-
-
 #### general settings
 
-gpu_ids: [1,2]
+gpu_ids: [2]
 
 restart_step: 1000
-model_save_period: 4000
+model_save_period: 2000
+
+simulated_resize_indices: [0,5]
+simulated_gblur_indices: [1]
+simulated_mblur_indices: [2]
+simulated_AWGN_indices: [4]
+simulated_strong_JPEG_indices: [3,6,7]
+simulated_weak_JPEG_indices: []
 
 
 
@@ -42,9 +45,9 @@ datasets:
     dataroot_LQ: ~
 
     use_shuffle: true
-    n_workers: 2 # per GPU
+    n_workers: 4 # per GPU
 
-    batch_size: 12 # 4
+    batch_size: 10 # 4
     GT_size: 256 # 608
 
     color: RGB
@@ -55,9 +58,7 @@ datasets:
     dataroot_GT: /groupshare/COCOdataset/val2017
     dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
     GT_size: 256
-    batch_size: 1
-
-    color: RGB
+    batch_size: 16
 
 
 train:
@@ -65,4 +66,3 @@ train:
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999
-#  weight_decay_G: !!float 1e-5

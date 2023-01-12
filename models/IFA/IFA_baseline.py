@@ -176,7 +176,7 @@ class IFA_baseline(base_IFA):
                 self.IFA_bc_label = torch.tensor([0.] * batch_size + [1.] * batch_size).unsqueeze(1).cuda()
 
         with torch.enable_grad():
-            predicted_score = self.qf_predict_network(predicted_seg)
+            predicted_score = self.qf_predict_network(feat_before_bottleneck)
             loss = self.bce_with_logit_loss(predicted_score, self.IFA_bc_label)
 
             loss.backward()

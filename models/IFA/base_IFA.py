@@ -176,7 +176,7 @@ class base_IFA(BaseModel):
 
     def optimize_parameters_router(self, mode, step=None, epoch=None):
         if mode == 0.0:
-            return self.IFA_binary_classification(step=step, epoch=epoch)
+            return self.IFA_dense_prediction_postprocess(step=step, epoch=epoch) #self.IFA_binary_classification(step=step, epoch=epoch)
         elif mode == 1.0:
             return self.pretrain_restormer_restoration(step=step, epoch=epoch)
         elif mode == 2.0:
@@ -191,6 +191,13 @@ class base_IFA(BaseModel):
     # todo: train restoration models (restormer, unet and invisp)
     ####################################################################################################
     def IFA_binary_classification(self, step=None, epoch=None):
+        pass
+
+    ####################################################################################################
+    # todo: MODE == 0
+    # todo: train restoration models (restormer, unet and invisp)
+    ####################################################################################################
+    def IFA_dense_prediction_postprocess(self, step=None, epoch=None):
         pass
 
     ####################################################################################################

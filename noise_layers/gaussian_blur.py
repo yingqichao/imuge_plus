@@ -55,7 +55,7 @@ class GaussianBlur(nn.Module):
     def forward(self, tensor, kernel_size=5):
         self.name = "GaussianBlur"
         blur_result = tensor
-        for kernel in [3, 5, 7]:
+        for kernel in [3, 5, 7, 9]:
             gaussian_layer = self.get_gaussian_kernel(kernel).cuda()
             blur_result = gaussian_layer(tensor)
             psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()

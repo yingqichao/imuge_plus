@@ -1,5 +1,6 @@
 
-do_evaluate: true
+do_evaluate: false
+minimum_PSNR_caused_by_attack: 20
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/RR_IFA/
@@ -7,9 +8,13 @@ predictor_folder: /groupshare/IFA_results/model/RR_IFA/
 load_predictor_models: ~ #0_13999
 consider_mask_prediction: false
 
+load_restormer_models: 15_3999_qf_predict.pth
+load_unet_models: 31_7999_qf_predict.pth
+load_invisp_models: 10_7999_qf_predict.pth
+
 #### general settings
 
-gpu_ids: [1,2]
+gpu_ids: [2]
 
 restart_step: 1000
 model_save_period: 2000
@@ -35,8 +40,8 @@ datasets:
     use_shuffle: true
     n_workers: 4 # per GPU
 
-    batch_size: 16 # 4
-    GT_size: 512 # 608
+    batch_size: 10 # 4
+    GT_size: 256 # 608
 
     color: RGB
 
@@ -45,7 +50,7 @@ datasets:
     mode: LQGT
     dataroot_GT: /groupshare/COCOdataset/val2017
     dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
-    GT_size: 512
+    GT_size: 256
     batch_size: 16
 
 

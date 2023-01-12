@@ -16,9 +16,12 @@ def create_dataset(*, opt, args):
     print(dataset_opt)
     ## mode 0 1 2, 3
     if args.mode==0:
-        print("dataset Defacto")
-        from data.CASIA_dataset import CASIA_dataset as D
-        train_set = D(opt, dataset_opt, is_train=True, dataset=["CASIA1","CASIA2"], attack_list=None, with_mask=False, with_au=True)
+        # print("dataset Defacto")
+        # from data.CASIA_dataset import CASIA_dataset as D
+        # train_set = D(opt, dataset_opt, is_train=True, dataset=["CASIA1","CASIA2"], attack_list=None, with_mask=False, with_au=True)
+        print("dataset LQ")
+        from data.LQ_dataset import LQDataset as D
+        train_set = D(opt, dataset_opt, load_mask=False)
     elif args.mode == 3:
         print("dataset CASIA2")
         from data.CASIA_dataset import CASIA_dataset as D

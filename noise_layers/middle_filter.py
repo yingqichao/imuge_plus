@@ -17,7 +17,7 @@ class MiddleBlur(nn.Module):
 	def forward(self, tensor, kernel=5):
 		# image, cover_image = image_and_cover
 		blur_result = tensor
-		for idx, kernel in enumerate([3, 5, 7]):
+		for idx, kernel in enumerate([3, 5, 7, 9]):
 			blur_result = self.middle_filters[idx](tensor)
 			psnr = self.psnr(self.postprocess(blur_result), self.postprocess(tensor)).item()
 			if psnr >= self.psnr_thresh or kernel==7:
