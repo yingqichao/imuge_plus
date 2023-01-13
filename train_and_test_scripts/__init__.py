@@ -13,7 +13,7 @@ def scripts_router(*, which_model, opt, args, rank, model,
         training_script_ISP(opt=opt, args=args, rank=rank, model=model,
                             train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
-    elif 'IFA' in which_model and args.mode in [0.0, 1.0, 2.0, 3.0]:
+    elif 'IFA' in which_model:
         ## todo: training of RR-IFA
         from train_and_test_scripts.train_IFA import training_script_IFA
         training_script_IFA(opt=opt, args=args, rank=rank, model=model,

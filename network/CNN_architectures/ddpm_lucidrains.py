@@ -141,7 +141,9 @@ class SinusoidalPosEmb(nn.Module):
         half_dim = self.dim // 2
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
-        emb = x[:, None] * emb[None, :]
+        if len(x.shape)==1:
+            x = x[:, None]
+        emb = x * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
 
@@ -185,6 +187,10 @@ class Block(nn.Module):
 class ResnetBlock(nn.Module):
     def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8, enable_fft = True):
         super().__init__()
+        self.time_mlp = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(time_emb_dim, dim_out)
+        ) if exists(time_emb_dim) else None
         self.mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_emb_dim, dim_out * 2)
@@ -206,11 +212,14 @@ class ResnetBlock(nn.Module):
 
     def forward(self, x, time_emb = None):
 
-        scale_shift = None
-        if exists(self.mlp) and exists(time_emb):
-            time_emb = self.mlp(time_emb)
-            time_emb = rearrange(time_emb, 'b c -> b c 1 1')
-            scale_shift = time_emb.chunk(2, dim = 1)
+        scale_shift, scale_shift_fft = None, None
+        if exists(self.time_mlp) and exists(time_emb):
+            time_emb_local = self.time_mlp(time_emb)
+            time_emb_local = rearrange(time_emb_local, 'b c -> b c 1 1')
+            scale_shift = time_emb_local.chunk(2, dim = 1)
+            time_emb_fft = self.mlp(time_emb)
+            time_emb_fft = rearrange(time_emb_fft, 'b c -> b c 1 1')
+            scale_shift_fft = time_emb_fft.chunk(2, dim=1)
 
         ### local path
         h = self.block1(x, scale_shift=scale_shift)
@@ -229,7 +238,7 @@ class ResnetBlock(nn.Module):
             coords_hor = torch.linspace(0, 1, width)[None, None, None, :].expand(batch, 1, height, width).to(ffted)
             ffted = torch.cat((coords_vert, coords_hor, ffted), dim=1)
 
-            ffted = self.block1_fft(ffted, scale_shift=scale_shift)
+            ffted = self.block1_fft(ffted, scale_shift=scale_shift_fft)
             ffted = self.block2_fft(ffted)
 
             ffted = ffted.view((batch, -1, 2,) + ffted.size()[2:]).permute(
@@ -316,12 +325,13 @@ class Unet(nn.Module):
         use_bayar = False,
         use_fft = False,
         use_classification = False,
+        use_middle_features = False,
     ):
         super().__init__()
         self.channels = channels
         self.self_condition = self_condition
         input_channels = channels * (2 if self_condition else 1)
-
+        self.use_middle_features = use_middle_features
 
         # determine dimensions
         self.use_bayar = use_bayar
@@ -335,9 +345,7 @@ class Unet(nn.Module):
             input_channels += 3
 
         self.use_fft = use_fft
-        if self.use_fft:
-            self.fft_norm = 'ortho'
-            input_channels += 3
+        self.fft_norm = 'ortho'
 
 
         init_dim = default(init_dim, dim)
@@ -347,24 +355,24 @@ class Unet(nn.Module):
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
-        block_klass = partial(ResnetBlock, groups = resnet_block_groups)
+        block_klass = partial(ResnetBlock, groups = resnet_block_groups, enable_fft=self.use_fft)
 
         # time embeddings
-        time_dim = None #dim * 4
+        time_dim =dim * 4
         self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
-        # if self.random_or_learned_sinusoidal_cond:
-        #     sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
-        #     fourier_dim = learned_sinusoidal_dim + 1
-        # else:
-        #     sinu_pos_emb = SinusoidalPosEmb(dim)
-        #     fourier_dim = dim
+        if self.random_or_learned_sinusoidal_cond:
+            sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
+            fourier_dim = learned_sinusoidal_dim + 1
+        else:
+            sinu_pos_emb = SinusoidalPosEmb(dim)
+            fourier_dim = dim
 
-        # self.time_mlp = nn.Sequential(
-        #     sinu_pos_emb,
-        #     nn.Linear(fourier_dim, time_dim),
-        #     nn.GELU(),
-        #     nn.Linear(time_dim, time_dim)
-        # )
+        self.time_mlp = nn.Sequential(
+            sinu_pos_emb,
+            nn.Linear(fourier_dim, time_dim),
+            nn.GELU(),
+            nn.Linear(time_dim, time_dim)
+        )
 
         # layers
 
@@ -411,6 +419,7 @@ class Unet(nn.Module):
 
     def forward(self, x, time, x_self_cond = None):
         batch = x.shape[0]
+        middle_feats = []
         if self.self_condition:
             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
             x = torch.cat((x_self_cond, x), dim = 1)
@@ -431,20 +440,6 @@ class Unet(nn.Module):
             first_block = conv_bayar #torch.cat([conv_init, conv_srm, conv_bayar], axis=1)
             x_bayar = self.activation(first_block)
             x = torch.cat([x,x_bayar],dim=1)
-
-        # ### support fft at init
-        # if self.use_fft:
-        #     fft_dim = (-2, -1)
-        #     ffted = torch.fft.rfftn(x, dim=fft_dim, norm=self.fft_norm)
-        #     ffted = torch.stack((ffted.real, ffted.imag), dim=-1)
-        #     ffted = ffted.permute(0, 1, 4, 2, 3).contiguous()  # (batch, c, 2, h, w/2+1)
-        #     ffted = ffted.view((batch, -1,) + ffted.size()[3:])
-        #     # spectral pos encoding
-        #     height, width = ffted.shape[-2:]
-        #     coords_vert = torch.linspace(0, 1, height)[None, None, :, None].expand(batch, 1, height, width).to(ffted)
-        #     coords_hor = torch.linspace(0, 1, width)[None, None, None, :].expand(batch, 1, height, width).to(ffted)
-        #     ffted = torch.cat((coords_vert, coords_hor, ffted), dim=1)
-        #     x = torch.cat([x, ffted], dim=1)
 
         x = self.init_conv(x)
 
@@ -468,9 +463,12 @@ class Unet(nn.Module):
         x = self.mid_attn(x)
         x = self.mid_block2(x, t)
 
+        x_cls = None
         if self.use_classification:
             x_cls = self.norm_class(x.mean([-2, -1]))
             x_cls = self.head_class(x_cls)
+
+            t = self.time_mlp(x_cls)
 
         for block1, block2, attn, upsample in self.ups:
             x = torch.cat((x, h.pop()), dim = 1)
@@ -479,18 +477,22 @@ class Unet(nn.Module):
             x = torch.cat((x, h.pop()), dim = 1)
             x = block2(x, t)
             x = attn(x)
-
+            middle_feats.append(x)
             x = upsample(x)
 
         x = torch.cat((x, r), dim = 1)
 
         x = self.final_res_block(x, t)
+        middle_feats.append(x)
         x = self.final_conv(x)
 
-        if not self.use_classification:
-            return x
-        else:
-            return x, x_cls
+        outputs = [x]
+        if self.use_classification:
+            outputs.append(x_cls)
+        if self.use_middle_features:
+            outputs.append(middle_feats)
+
+        return tuple(outputs)
 
 # gaussian diffusion trainer class
 

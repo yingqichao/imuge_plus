@@ -73,42 +73,48 @@ class CASIA_dataset(data.Dataset):
         }
 
 
-        self.paths_GT = []
+        self.paths_GT = {} # list is less dependable if we need to load mask
         for i, this_dataset in enumerate(self.dataset_name):
             GT_items = self.GT_folder[this_dataset]
             for idx in range(len(GT_items)):
                 if attack_list is None or idx in attack_list:
-                    GT_path, _ = util.get_image_paths(GT_items[idx])
+                    if 'CASIA' in GT_items[idx]:
+                        GT_path, self.codebook = util.get_filename_from_images(GT_items[idx],sep1='.',sep2='_')
+                    else:
+                        GT_path, _ = util.get_image_paths(GT_items[idx])
                     # GT_path = sorted(GT_path)
                     # mask_path = sorted(mask_path)
                     dataset_len = len(GT_path)
                     print(f"len image {dataset_len}")
                     num_train_val_split = int(dataset_len*(0.85 if self.split else 1))
                     if not self.split:
-                        self.paths_GT += GT_path
+                        self.paths_GT.update(GT_path)
                     elif self.is_train:
-                        self.paths_GT += GT_path[:num_train_val_split]
+                        self.paths_GT.update(GT_path[:num_train_val_split])
                     else:
-                        self.paths_GT += GT_path[num_train_val_split:]
+                        self.paths_GT.update(GT_path[num_train_val_split:])
 
         if self.with_mask:
-            self.paths_mask = []
+            self.paths_mask = {}
             for i, this_dataset in enumerate(self.dataset_name):
                 mask_items = self.mask_folder[this_dataset]
                 for idx in range(len(mask_items)):
                     if attack_list is None or idx in attack_list:
-                        mask_path, _ = util.get_image_paths(mask_items[idx])
+                        if 'CASIA' in mask_items[idx]:
+                            mask_path, _ = util.get_filename_from_images(mask_items[idx],sep1='_',sep2='_')
+                        else:
+                            mask_path, _ = util.get_image_paths(mask_items[idx])
                         # GT_path = sorted(GT_path)
                         # mask_path = sorted(mask_path)
                         dataset_mask_len = len(mask_path)
                         print(f"len mask {dataset_mask_len}")
                         num_train_val_split = int(dataset_mask_len*(0.85 if self.split else 1))
                         if not self.split:
-                            self.paths_mask += mask_path
+                            self.paths_mask.update(mask_path)
                         elif self.is_train:
-                            self.paths_mask += mask_path[:num_train_val_split]
+                            self.paths_mask.update(mask_path[:num_train_val_split])
                         else:
-                            self.paths_mask += mask_path[num_train_val_split:]
+                            self.paths_mask.update(mask_path[num_train_val_split:])
 
             assert len(self.paths_GT)==len(self.paths_mask), f'Mask和Image的总数不匹配！{len(self.paths_GT)} {len(self.paths_mask)}请检查'
 
@@ -149,7 +155,8 @@ class CASIA_dataset(data.Dataset):
         # scale = self.dataset_opt['scale']
 
         # get GT image
-        GT_path = self.paths_GT[index]
+        filename = self.codebook[index]
+        GT_path = self.paths_GT[filename]
 
         # img_GT = util.read_img(GT_path)
         img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
@@ -168,7 +175,7 @@ class CASIA_dataset(data.Dataset):
         return_list.append(img_GT)
 
         if self.with_mask:
-            mask_path = self.paths_mask[index]
+            mask_path = self.paths_mask[filename]
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
             mask = (mask > 127).astype(np.uint8) * 255
             # mask = util.channel_convert(mask.shape[2], self.dataset_opt['color'], [mask])[0]

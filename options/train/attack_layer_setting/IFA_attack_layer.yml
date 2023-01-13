@@ -46,7 +46,7 @@ include_isp_inference: true
 conduct_augmentation: true
 
 psnr_thresh: 44
-CE_hyper_param: 0.02
+#CE_hyper_param: 0.02
 ssim_hyper_param: 0 #0.01
 perceptual_hyper_param: 0.001
 RAW_L1_hyper_param: 10

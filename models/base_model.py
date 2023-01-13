@@ -80,6 +80,28 @@ class BaseModel():
         ### todo: constants
         self.global_step = 0
         self.width_height = opt['datasets']['train']['GT_size']
+
+        self.amount_of_augmentation = len(
+            self.opt['simulated_hue'] +
+            self.opt['simulated_contrast'] +
+            self.opt['simulated_saturation'] +
+            self.opt['simulated_brightness'] +
+            self.opt['simulated_gamma']
+        )
+
+        # self.amount_of_detectors = len(
+        #     self.opt['detector_using_MPF_indices'] +
+        #     self.opt['detector_using_MVSS_indices'] +
+        #     self.opt['detector_using_OSN_indices']
+        # )
+
+        self.amount_of_inpainting = len(
+            self.opt['zits_as_inpainting'] +
+            self.opt['edgeconnect_as_inpainting'] +
+            self.opt['lama_as_inpainting'] +
+            self.opt['ideal_as_inpainting']
+        )
+
         self.amount_of_tampering = len(
             self.opt['simulated_splicing_indices'] +
             self.opt['simulated_copymove_indices'] +
@@ -254,15 +276,17 @@ class BaseModel():
 
 
     ### todo: Helper functions
-    def exponential_weight_for_backward(self, *, value, exp=1.5):
+    def exponential_weight_for_backward(self, *, value, exp=1.5, norm=1, alpha=0.5):
         '''
             exponential loss for recovery loss's weight.
             PSNR  29     30     31     32     33(base)   34     35
             Weigh 0.161  0.192  0.231  0.277  0.333      0.400  0.500
         '''
-        if self.opt['exp_weight'] is not None:
+        if 'exp_weight' in self.opt:
             exp = self.opt['exp_weight']
-        return min(1, self.opt['CE_hyper_param']*((exp)**(value-self.opt['psnr_thresh'])))
+        if 'CE_hyper_param' in self.opt:
+            alpha = self.opt['CE_hyper_param']
+        return min(1, alpha*((exp)**(norm*(value-self.opt['psnr_thresh']))))
 
     def update_history_losses(self, *, index, PSNR, loss, loss_CE, PSNR_attack):
         '''
@@ -320,13 +344,14 @@ class BaseModel():
     def create_folders_for_the_experiment(self):
         pass
 
-    def define_ddpm_unet_network(self, out_dim=3, use_bayar=False, use_fft=False, use_classification=False):
+    def define_ddpm_unet_network(self, out_dim=3, use_bayar=False, use_fft=False, use_classification=False, use_middle_features=False):
         from network.CNN_architectures.ddpm_lucidrains import Unet
         # input = torch.ones((3, 3, 128, 128)).cuda()
         # output = model(input, torch.zeros((1)).cuda())
 
         print("using ddpm_unet")
-        model = Unet(out_dim=out_dim, use_bayar=use_bayar, use_fft=use_fft, use_classification=use_classification).cuda()
+        model = Unet(out_dim=out_dim, use_bayar=use_bayar, use_fft=use_fft, use_classification=use_classification,
+                     use_middle_features=use_middle_features).cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
         return model
@@ -569,6 +594,43 @@ class BaseModel():
                 return i
         raise NotImplementedError("大神，你想找的index过于稀有了，在1000以内都找不到这样的组合，修改一下吧！")
 
+    ####################################################################################################
+    # todo: settings for beginning training
+    ####################################################################################################
+    def data_augmentation_on_rendered_rgb(self, modified_input, index=None, scale=1):
+        if index is None:
+            index = self.global_step
+        index = index % self.amount_of_augmentation
+
+        is_stronger = np.random.rand() > 0.5
+        if index in self.opt['simulated_hue']:
+            ## careful!
+            magnitude = 0.05
+            strength = np.random.rand() * (magnitude if is_stronger > 0 else -magnitude)
+            modified_adjusted = F.adjust_hue(modified_input, hue_factor=0 + strength)  # 0.5 ave
+        elif index in self.opt['simulated_contrast']:
+            magnitude = 0.3 * scale
+            strength = np.random.rand() * (magnitude if is_stronger > 0 else -magnitude)
+            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1 + strength)  # 1 ave
+        elif index in self.opt['simulated_gamma']:
+            ## careful!
+            magnitude = 0.05
+            strength = np.random.rand() * (magnitude if is_stronger > 0 else -magnitude)
+            modified_adjusted = F.adjust_gamma(modified_input, gamma=1 + strength)  # 1 ave
+        elif index in self.opt['simulated_saturation']:
+            magnitude = 0.3 * scale
+            strength = np.random.rand() * (magnitude if is_stronger > 0 else -magnitude)
+            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1 + strength)
+        elif index in self.opt['simulated_brightness']:
+            magnitude = 0.3 * scale
+            strength = np.random.rand() * (magnitude if is_stronger > 0 else -magnitude)
+            modified_adjusted = F.adjust_brightness(modified_input,
+                                                    brightness_factor=1 + strength)  # 1 ave
+        else:
+            raise NotImplementedError(f"图像增强的index错误，请检查！index: {index}/{self.amount_of_augmentation}")
+        modified_adjusted = self.clamp_with_grad(modified_adjusted)
+
+        return modified_adjusted  # modified_input + (modified_adjusted - modified_input).detach()
 
     def benign_attacks(self, *, attacked_forward, quality_idx, kernel_size=None, resize_ratio=None, index=None):
         '''
@@ -674,7 +736,6 @@ class BaseModel():
         '''
         ## note: create tensor directly on device:
         ## torch.ones((1,1),device=a.get_device())
-        psnr_label = torch.zeros((self.batch_size, 1), device=forward_image.device)
         # compare_image = forward_image.detach().cpu()
         index_for_postprocessing = index  # self.global_step
         if psnr_requirement is None:
@@ -705,40 +766,88 @@ class BaseModel():
                 realworld_candidate = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality_list[tried],
                                                                         index=index, kernel=kernel_list[tried],
                                                                         resize_ratio=resize_list[tried])
-                psnr = self.psnr(self.postprocess(forward_image[idx_atkimg:idx_atkimg + 1]), self.postprocess(realworld_candidate)).item()
-                if psnr>psnr_best:
-                    realworld_attack = realworld_candidate
-                    psnr_best = psnr
-                if psnr>psnr_requirement:
-                    break
-                else:
-                    tried += 1
-
-            ## global compensate to make dense probailities
-            if global_compensate and np.random.rand()>0.5:
-                beta = np.random.rand()
-                realworld_attack = beta * forward_image[idx_atkimg:idx_atkimg + 1] + (1 - beta) * realworld_attack
-                psnr = self.psnr(self.postprocess(realworld_attack), self.postprocess(forward_image[idx_atkimg:idx_atkimg + 1])).item()
-
-            ## eliminate too poor images
-            if not (psnr < 1 or psnr > psnr_requirement):  # , f"PSNR {psnr} is not allowed! {self.global_step}"
-                mixed_conpensate = None
-                ### blurring attack is tough, special care on that
-                for alpha in [i * 0.1 for i in range(1, 10)]:
-                    mixed_conpensate = alpha * forward_image[idx_atkimg:idx_atkimg+1] + (1 - alpha) * realworld_attack
-                    psnr = self.psnr(self.postprocess(mixed_conpensate), self.postprocess(forward_image[idx_atkimg:idx_atkimg+1])).item()
-
-                    if psnr > psnr_requirement:
+                if max_try>1:
+                    psnr = self.psnr(self.postprocess(forward_image[idx_atkimg:idx_atkimg + 1]), self.postprocess(realworld_candidate)).item()
+                    if psnr>psnr_best:
+                        realworld_attack = realworld_candidate
+                        psnr_best = psnr
+                    if psnr>psnr_requirement:
                         break
-                realworld_attack = mixed_conpensate
+                else:
+                    realworld_attack = realworld_candidate
 
-            psnr_label[idx_atkimg:idx_atkimg + 1] = min(1., (psnr-psnr_requirement)/(self.opt['max_psnr']-psnr_requirement))
+                tried += 1
+
             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
+        # ## eliminate too poor images
+        # if not (psnr < 1 or psnr > psnr_requirement):  # , f"PSNR {psnr} is not allowed! {self.global_step}"
+        #     mixed_conpensate = None
+        #     ### blurring attack is tough, special care on that
+        #     for alpha in [i * 0.1 for i in range(1, 10)]:
+        #         mixed_conpensate = alpha * forward_image[idx_atkimg:idx_atkimg + 1] + (1 - alpha) * realworld_attack
+        #         psnr = self.psnr(self.postprocess(mixed_conpensate),
+        #                          self.postprocess(forward_image[idx_atkimg:idx_atkimg + 1])).item()
+        #
+        #         if psnr > psnr_requirement:
+        #             break
+        #     realworld_attack = mixed_conpensate
+
+        if self.opt['use_restore'] and np.random.rand()>0.5:
+            use_restoration = np.random.randint(0,10000) % 3 == 0
+            if use_restoration:
+                with torch.no_grad():
+
+                    if use_restoration%3==0: #'unet' in self.opt['restoration_model'].lower():
+                        attacked_real_jpeg = self.restore_unet(attacked_real_jpeg, self.timestamp)
+                        attacked_real_jpeg = self.clamp_with_grad(attacked_real_jpeg)
+
+                    elif use_restoration%3==1: #'invisp' in self.opt['restoration_model'].lower():
+                        attacked_real_jpeg = self.restore_invisp(attacked_real_jpeg)
+                        attacked_real_jpeg = self.clamp_with_grad(attacked_real_jpeg)
+
+                    else: # restormer
+                        attacked_real_jpeg = self.restore_restormer(attacked_real_jpeg)
+                        attacked_real_jpeg = self.clamp_with_grad(attacked_real_jpeg)
+
+        psnr_distort = self.psnr(self.postprocess(attacked_real_jpeg), self.postprocess(forward_image)).item()
+        ## global compensate (distort) to make dense probailities
+        if global_compensate and np.random.rand() > 0.5: # and psnr_distort < self.opt['minimum_PSNR_caused_by_attack']:
+            beta = np.random.rand()
+            attacked_real_jpeg = beta * forward_image + (1 - beta) * attacked_real_jpeg
+            psnr_distort = self.psnr(self.postprocess(attacked_real_jpeg), self.postprocess(forward_image)).item()
+
+        ## color adjustment
+        if self.opt['do_augment'] and np.random.rand() > 0.5:
+            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_real_jpeg,
+                                                                        index=np.random.randint(0, 10000),
+                                                                        scale=2)
+
+
+            # psnr = self.psnr(self.postprocess(attacked_adjusted), self.postprocess(forward_image)).item()
+            ## global compensate (color) to make dense probailities
+            if global_compensate and np.random.rand() > 0.5: # and psnr<self.opt['minimum_PSNR_caused_by_attack']:
+                beta = np.random.rand()
+                attacked_real_jpeg = beta * attacked_real_jpeg + (1 - beta) * attacked_adjusted
+            else:
+                attacked_real_jpeg = attacked_adjusted
+
+        ## calculate psnr label
+        psnr_label = self.calculate_psnr_label(real=forward_image, fake=attacked_real_jpeg,
+                                               psnr_max=self.opt['max_psnr'], psnr_min=psnr_requirement)
+
         if get_label:
-            return attacked_real_jpeg, psnr_label
+            return attacked_real_jpeg, psnr_label, psnr_distort
         else:
-            return attacked_real_jpeg
+            return attacked_real_jpeg, psnr_distort
+
+    def calculate_psnr_label(self, *, real, fake, psnr_max, psnr_min):
+        psnr_label = torch.zeros((self.batch_size, 1), device=real.device)
+        for idx_atkimg in range(self.batch_size):
+            psnr = self.psnr(self.postprocess(fake[idx_atkimg:idx_atkimg + 1]),
+                             self.postprocess(real[idx_atkimg:idx_atkimg + 1])).item()
+            psnr_label[idx_atkimg:idx_atkimg + 1] = max(0., min(1., (psnr - psnr_min) / (psnr_max - psnr_min)))
+        return psnr_label
 
     def to_jpeg(self, *, forward_image):
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]

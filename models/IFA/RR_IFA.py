@@ -61,8 +61,8 @@ class RR_IFA(base_IFA):
         ### todo: network
         if self.args.mode == 0:
             self.network_definitions_dense_prediction_postprocess()
-        # elif self.args.mode == 2:
-        #     self.network_definitions_predict_PSNR()
+        elif self.args.mode == 4:
+            self.network_definitions_distill()
         else:
             raise NotImplementedError('大神RR IFA的模式是不是搞错了？')
 
@@ -103,7 +103,7 @@ class RR_IFA(base_IFA):
             raise NotImplementedError('用作qf_predict的网络名字是不是搞错了？')
 
         self.restore_restormer = self.define_restormer()
-        self.restore_unet = self.define_ddpm_unet_network()
+        self.restore_unet = self.define_ddpm_unet_network(use_bayar=False, use_fft=False)
         self.restore_invisp = self.define_invISP(block_num=[4, 4, 4])
 
         model_paths = [
@@ -130,17 +130,49 @@ class RR_IFA(base_IFA):
             else:
                 print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
+    def network_definitions_distill(self):
+        self.network_list.append('generator')
+        self.save_network_list.append('generator')
+        self.training_network_list.append('generator')
+
+        self.detection_image, self.detection_mask = None, None
+        self.timestamp = torch.zeros((1)).cuda()
+        self.zero_metric = torch.zeros((self.batch_size,3,self.width_height,self.width_height)).cuda()
+
+        ### todo: network
+        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=True, use_fft=True,
+                                                                use_classification=False, use_middle_features=True)
+        self.generator = self.define_ddpm_unet_network(out_dim=15, use_bayar=True, use_fft=True,
+                                                                use_classification=False, use_middle_features=False)
+
+        if self.opt['load_generator_models'] is not None:
+            # self.load_model_wrapper(folder_name='predictor_folder', model_name='load_predictor_models',
+            #                         network_lists=["qf_predict_network"], strict=False)
+            load_detector_storage = self.opt['predictor_folder']
+            model_path = str(self.opt['load_generator_models'])  # last time: 10999
+
+            print(f"loading models: {self.network_list}")
+            pretrain = load_detector_storage + model_path
+            load_path_G = pretrain #+"_qf_predict.pth"
+
+            print('Loading model for class [{:s}] ...'.format(load_path_G))
+            if os.path.exists(load_path_G):
+                self.load_network(load_path_G, self.generator, strict=False)
+
+            else:
+                print('Did not find model for class [{:s}] ...'.format(load_path_G))
+
     def network_definitions_dense_prediction_postprocess(self):
         self.timestamp = torch.zeros((1)).cuda()
         self.zero_metric = torch.zeros((self.batch_size//3,1,self.width_height,self.width_height)).cuda()
 
         ### todo: network
-        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=True, use_fft=False,
+        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=True, use_fft=True,
                                                                 use_classification=True)
 
         if self.opt['use_restore']:
             self.restore_restormer = self.define_restormer()
-            self.restore_unet = self.define_ddpm_unet_network()
+            self.restore_unet = self.define_ddpm_unet_network(use_bayar=False, use_fft=False)
             self.restore_invisp = self.define_invISP(block_num=[4, 4, 4])
 
             model_paths = [
@@ -167,6 +199,107 @@ class RR_IFA(base_IFA):
                 else:
                     print('Did not find model for class [{:s}] ...'.format(load_path_G))
 
+    def IFA_distill(self, step=None, epoch=None):
+        #### SYMBOL FOR NOTIFYING THE OUTER VAL LOADER #######
+        did_val = False
+        if step is not None:
+            self.global_step = step
+
+        logs, debug_logs = {}, []
+        # self.real_H = self.clamp_with_grad(self.real_H)
+        lr = self.get_current_learning_rate()
+        logs['lr'] = lr
+
+
+        self.qf_predict_network.train()
+        self.generator.train()
+
+        no_grad_features = None
+        with torch.no_grad():
+            pred_detection_mask, no_grad_features = self.qf_predict_network(self.detection_image, None)
+
+        with torch.enable_grad():
+            noise_patterns = self.generator(self.real_H, None)[0]
+            idx_pattern = self.global_step%5
+            selected_patterns = noise_patterns[:,idx_pattern*3:(1+idx_pattern)*3]
+            mixed_image = self.real_H+self.detection_mask*selected_patterns
+            mixed_image = self.clamp_with_grad(mixed_image)
+            psnr = self.psnr(self.postprocess(mixed_image), self.postprocess(self.real_H)).item()
+            pred_mask, pred_features = self.qf_predict_network(mixed_image, None)
+
+            loss_CE = self.bce_with_logit_loss(pred_mask, self.detection_mask)  # pred loss
+            loss_L1 = self.l1_loss(selected_patterns, self.zero_metric)  # pattern loss
+            loss_distill = 0
+            for i in range(len(pred_features)):
+                loss_distill += self.l1_loss(pred_features[i], no_grad_features[i]) # distill loss
+            loss_distill *= 10. #/len(pred_features))
+            if loss_distill>100:
+                raise StopIteration(f"gradient exploded. {loss_distill.item()}")
+
+            alpha = self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=0.2,exp=2)
+            loss = 0.05*loss_CE + alpha*loss_L1 + loss_distill
+
+            logs['loss'] = loss.item()
+            logs['L1'] = loss_L1.item()
+            logs['CE'] = loss_CE.item()
+            logs['alpha'] = alpha
+            logs['PSNR'] = psnr
+            logs['distill'] = loss_distill.item()
+
+            loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
+            logs['CE_detection'] = loss_CE_detection.item()
+            loss.backward()
+
+            nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
+            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+            self.optimizer_qf.step()
+            self.optimizer_qf.zero_grad()
+            self.optimizer_generator.step()
+            self.optimizer_generator.zero_grad()
+
+
+            ##### printing the images  ######
+            if (self.global_step % 1000 == 3 or self.global_step <= 10):
+                images = stitch_images(
+                    self.postprocess(self.real_H),
+                    self.postprocess(mixed_image),
+                    self.postprocess(10 * torch.abs(self.real_H - mixed_image)),
+                    self.postprocess(self.detection_image),
+                    self.postprocess(torch.sigmoid(pred_mask)),
+                    self.postprocess(torch.sigmoid(pred_detection_mask)),
+                    self.postprocess(self.detection_mask),
+                    img_per_row=1
+                )
+
+                name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
+                       f"_{str(self.rank)}.png"
+                images.save(name)
+
+            ######## Finally ####################
+            for scheduler in self.schedulers:
+                scheduler.step()
+
+            if self.global_step % (self.opt['model_save_period']) == (
+                    self.opt['model_save_period'] - 1) or self.global_step == 9:
+                if self.rank == 0:
+                    print('Saving models and training states.')
+                    # self.save(self.global_step, folder='model', network_list=self.save_network_list)
+                    self.save_network(self.qf_predict_network, 'qf_predict', f"{epoch}_{self.global_step}",
+                                      model_path=f'{self.out_space_storage}/model/{self.task_name}/')
+                    self.save_network(self.generator, 'generator', f"{epoch}_{self.global_step}",
+                                      model_path=f'{self.out_space_storage}/model/{self.task_name}/')
+
+        self.global_step = self.global_step + 1
+
+        return logs, None, False
+
+    def feed_aux_data(self, detection_item):
+        img, mask = detection_item
+        self.detection_image = img.cuda()
+        self.detection_mask = mask.cuda()
+        if len(self.detection_mask.shape) == 3:
+            self.detection_mask = self.detection_mask.unsqueeze(1)
+
 
     def IFA_dense_prediction_postprocess(self, step=None, epoch=None):
         ### todo: downgrade model include n/2 real-world examples and n/2 restored examples
@@ -180,7 +313,7 @@ class RR_IFA(base_IFA):
         use_post_process = True #np.random.randint(0, 10000) % 3 != 0
         use_pre_post_process = np.random.randint(0, 10000) % 2 == 0
 
-        compressed_real_H, psnr, psnr_label = self.global_post_process(original=self.real_H, get_label=True)
+        compressed_real_H, psnr_distort, psnr_label = self.global_post_process(original=self.real_H, get_label=True)
 
         if use_pre_post_process and use_post_process:
             input_images = compressed_real_H
@@ -188,31 +321,19 @@ class RR_IFA(base_IFA):
             input_images = self.real_H
 
 
-        auth_non_tamper, auth_tamper = input_images[:self.batch_size//3], input_images[self.batch_size//3:]
+        auth_non_tamper, auth_tamper = input_images[:self.batch_size//4], input_images[self.batch_size//4:]
 
-        masks, masks_GT, percent_range = self.mask_generation(modified_input=auth_tamper, index=self.global_step,
+        masks, masks_GT, percent_range = self.mask_generation(modified_input=auth_tamper, index=np.random.randint(0,10000),
                                                               percent_range=(0.0, 0.2))
         masks_GT = torch.cat([self.zero_metric, masks_GT],dim=0)
 
 
-        degraded = self.benign_attacks_without_simulation(forward_image=auth_tamper, index=self.global_step)
+        degraded = self.benign_attacks_without_simulation(forward_image=auth_tamper, index=np.random.randint(0,10000))
 
-        # if self.opt['use_restore']:
-        #     use_restoration = np.random.randint(0,10000) % 3 == 0
-        #     if use_restoration:
-        #         with torch.no_grad():
-        #
-        #             if use_restoration%3==0: #'unet' in self.opt['restoration_model'].lower():
-        #                 degraded = self.restore_unet(degraded, self.timestamp)
-        #                 degraded = self.clamp_with_grad(degraded)
-        #
-        #             elif use_restoration%3==1: #'invisp' in self.opt['restoration_model'].lower():
-        #                 degraded = self.restore_invisp(degraded)
-        #                 degraded = self.clamp_with_grad(degraded)
-        #
-        #             else: # restormer
-        #                 degraded = self.restore_restormer(degraded)
-        #                 degraded = self.clamp_with_grad(degraded)
+
+        if self.opt['do_augment'] and np.random.rand()>0.5:
+            degraded = self.data_augmentation_on_rendered_rgb(degraded, index=np.random.randint(0,10000), scale=2)
+
 
         mixed = auth_tamper*(1-masks) + degraded*masks
         ### contain both authentic and tampered
@@ -220,33 +341,46 @@ class RR_IFA(base_IFA):
 
 
         if not use_pre_post_process and use_post_process:
-            mixed_pattern_images_post, psnr, psnr_label = self.global_post_process(original=mixed_pattern_images, get_label=True,
+            mixed_pattern_images_post, psnr_distort, psnr_label = self.global_post_process(original=mixed_pattern_images, get_label=True,
                                                                                    local_compensate=True, global_compensate=True)
         else:
             mixed_pattern_images_post = mixed_pattern_images
 
+        psnr_label_mean = torch.mean(psnr_label).item()
+        REAL_PSNR = self.opt['minimum_PSNR_caused_by_attack'] + \
+                       (self.opt['max_psnr'] - self.opt['minimum_PSNR_caused_by_attack']) * psnr_label_mean
+        logs['psnr'] = REAL_PSNR
+        logs['psnr_distort'] = psnr_distort
+        if psnr_distort>self.opt['minimun_PSNR_that_activates_local']:
+            with torch.enable_grad():
+                ## predict PSNR given degrade_sum
+                predicted_mask, predicted_psnr = self.qf_predict_network(mixed_pattern_images_post, self.timestamp)
+                loss = 0
+                loss_mask = self.bce_with_logit_loss(predicted_mask, masks_GT)
+                loss_psnr_regress = self.l1_loss(predicted_psnr, psnr_label)
+                loss += loss_mask
+                loss += loss_psnr_regress
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+                self.optimizer_qf.step()
+                self.optimizer_qf.zero_grad()
 
-        with torch.enable_grad():
-            ## predict PSNR given degrade_sum
-            predicted_mask, predicted_psnr = self.qf_predict_network(mixed_pattern_images_post, self.timestamp)
-            loss = 0
-            loss_mask = self.bce_with_logit_loss(predicted_mask, masks_GT)
-            loss_psnr_regress = self.l1_loss(predicted_psnr, psnr_label)
-            loss += loss_mask
-            loss += loss_psnr_regress
-            loss.backward()
-            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-            self.optimizer_qf.step()
-            self.optimizer_qf.zero_grad()
 
-            # psnr_label_mean = torch.mean(psnr_label).item()
-            logs['sum'] = loss.item()
-            logs['psnr_loss'] = (self.opt['max_psnr']-self.opt['minimum_PSNR_caused_by_attack']) * loss_psnr_regress.item()
-            logs['mask_loss'] = loss_mask.item()
+                psnr_predict_mean = torch.mean(predicted_psnr).item()
+                logs['sum'] = loss.item()
+                logs['psnr_loss'] = (self.opt['max_psnr']-self.opt['minimum_PSNR_caused_by_attack']) * loss_psnr_regress.item()
+                logs['mask_loss'] = loss_mask.item()
+                logs['psnr_pred'] = self.opt['minimum_PSNR_caused_by_attack'] + \
+                                    (self.opt['max_psnr'] - self.opt[
+                                        'minimum_PSNR_caused_by_attack']) * psnr_predict_mean
+        else:
+            predicted_mask = torch.zeros_like(masks_GT,device=masks_GT.device)
+
 
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             images = stitch_images(
                 self.postprocess(self.real_H),
+                self.postprocess(input_images),
                 self.postprocess(mixed_pattern_images),
                 self.postprocess(10 * torch.abs(self.real_H - mixed_pattern_images)),
                 self.postprocess(mixed_pattern_images_post),
@@ -260,9 +394,6 @@ class RR_IFA(base_IFA):
             name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
                    f"_{str(self.rank)}.png"
             images.save(name)
-
-        logs['psnr'] = psnr
-        logs['psnr_pred'] =  self.opt['max_psnr']*torch.mean(predicted_psnr).item()
 
         ######## Finally ####################
         for scheduler in self.schedulers:
@@ -414,29 +545,30 @@ class RR_IFA(base_IFA):
 
     def global_post_process(self, *, original, get_label=False, local_compensate=True, global_compensate=True):
         psnr_requirement = self.opt['minimum_PSNR_caused_by_attack']
-        use_global_postprocess = np.random.randint(0, 10000) % 2 == 0
-        if use_global_postprocess:
-            mixed_pattern_images_post = self.benign_attack_ndarray_auto_control(forward_image=original,
-                                                                                index=use_global_postprocess,
-                                                                                psnr_requirement=psnr_requirement,
-                                                                                get_label=get_label,
-                                                                                local_compensate=local_compensate,
-                                                                                global_compensate=global_compensate)
-            if get_label:
-                mixed_pattern_images_post, psnr_label = mixed_pattern_images_post
-        else:
-            mixed_pattern_images_post = original
-            if get_label:
-                psnr_label = torch.ones((self.batch_size,1),device=original.device)
+        # use_global_postprocess = np.random.randint(0, 10000) % 2 == 0
+        # if use_global_postprocess:
+        mixed_pattern_images_post, psnr_label, psnr = self.benign_attack_ndarray_auto_control(forward_image=original,
+                                                                            index=np.random.randint(0, 10000),
+                                                                            psnr_requirement=psnr_requirement,
+                                                                            get_label=get_label,
+                                                                            local_compensate=local_compensate,
+                                                                            global_compensate=global_compensate)
+        # if get_label:
+        #     mixed_pattern_images_post, psnr_label = mixed_pattern_images_post
+        # else:
+        #     mixed_pattern_images_post = original
+        #     if get_label:
+        #         psnr_label = torch.ones((self.batch_size,1),device=original.device)
 
-        psnr = self.psnr(self.postprocess(mixed_pattern_images_post), self.postprocess(original)).item()
-        assert (psnr < 1 or psnr > psnr_requirement), f"PSNR {psnr} is not allowed! {self.global_step}"
-        psnr = self.opt['max_psnr'] if psnr < 1 else psnr
+        # psnr = self.psnr(self.postprocess(mixed_pattern_images_post), self.postprocess(original)).item()
+        # # assert (psnr > psnr_requirement), f"PSNR {psnr} is not allowed! {self.global_step}"
+        # psnr = self.opt['max_psnr'] if psnr < 1 else psnr
 
-        if get_label:
-            return mixed_pattern_images_post, psnr, psnr_label
-        else:
-            return mixed_pattern_images_post, psnr
+
+        # if get_label:
+        return mixed_pattern_images_post, psnr, psnr_label
+        # else:
+        #     return mixed_pattern_images_post, psnr
 
     def IFA_binary_classification(self, step=None, epoch=None):
         ### todo: downgrade model include n/2 real-world examples and n/2 restored examples

@@ -4,11 +4,14 @@ minimum_PSNR_caused_by_attack: 25
 minimun_PSNR_that_activates_local: 30
 use_restore: true
 max_psnr: 45
+psnr_thresh: 30
+#CE_hyper_param: 0.33
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: 0_9999_qf_predict.pth
+load_predictor_models: ~ #0_11999_qf_predict.pth
+load_generator_models: ~
 consider_mask_prediction: false
 do_augment: true
 
@@ -18,7 +21,7 @@ load_invisp_models: 10_7999_qf_predict.pth
 
 #### general settings
 
-gpu_ids: [4]
+gpu_ids: [3]
 
 restart_step: 1000
 model_save_period: 2000
@@ -60,7 +63,7 @@ datasets:
     use_shuffle: true
     n_workers: 4 # per GPU
 
-    batch_size: 8 # 4
+    batch_size: 4 # 4
     GT_size: 256 # 608
 
     color: RGB

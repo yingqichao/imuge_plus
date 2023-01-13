@@ -72,26 +72,6 @@ class base_IFA(BaseModel):
         self.default_detection_networks_for_training = ['qf_predict_network']
         self.global_step_for_inpainting = 0
 
-        self.amount_of_augmentation = len(
-            self.opt['simulated_hue'] +
-            self.opt['simulated_contrast'] +
-            self.opt['simulated_saturation'] +
-            self.opt['simulated_brightness'] +
-            self.opt['simulated_gamma']
-        )
-
-        # self.amount_of_detectors = len(
-        #     self.opt['detector_using_MPF_indices'] +
-        #     self.opt['detector_using_MVSS_indices'] +
-        #     self.opt['detector_using_OSN_indices']
-        # )
-
-        self.amount_of_inpainting = len(
-            self.opt['zits_as_inpainting'] +
-            self.opt['edgeconnect_as_inpainting'] +
-            self.opt['lama_as_inpainting'] +
-            self.opt['ideal_as_inpainting']
-        )
 
         # self.mode_dict = {
         #     0: 'RR IFA',
@@ -184,6 +164,8 @@ class base_IFA(BaseModel):
             return self.predict_PSNR(step=step, epoch=epoch)
         elif mode ==3.0:
             return self.baseline_method(step=step, epoch=epoch)
+        elif mode ==4.0:
+            return self.IFA_distill(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的方法，请检查！")
 
@@ -196,6 +178,8 @@ class base_IFA(BaseModel):
             pass
         elif mode == 3.0:
             return self.validate_IFA_baseline(step=step, epoch=epoch)
+        elif mode == 4.0:
+            return self.validate_IFA_dense_prediction_postprocess(step=step, epoch=epoch)
         else:
             raise NotImplementedError(f"没有找到mode {mode} 对应的 validate 方法，请检查！")
 
@@ -234,6 +218,13 @@ class base_IFA(BaseModel):
     # todo: get_protected_RAW_and_corresponding_images
     ####################################################################################################
     def baseline_method(self, step=None, epoch=None):
+        pass
+
+    ####################################################################################################
+    # todo: MODE == 4
+    # todo: get_protected_RAW_and_corresponding_images
+    ####################################################################################################
+    def IFA_distill(self, step=None, epoch=None):
         pass
 
 
@@ -340,7 +331,8 @@ class base_IFA(BaseModel):
         # attacked_forward = torch.zeros_like(modified_input)
         # for img_idx in range(batch_size):
         if index is None:
-            index = self.global_step % self.amount_of_tampering
+            index = self.global_step
+        index = index % self.amount_of_tampering
 
         if index in self.opt['simulated_splicing_indices']:  # self.using_splicing():
             ### todo: splicing
@@ -662,37 +654,6 @@ class base_IFA(BaseModel):
 
         return merged_image.clone().detach() * masks + forward_image * (1 - masks)
 
-    ####################################################################################################
-    # todo: settings for beginning training
-    ####################################################################################################
-    def data_augmentation_on_rendered_rgb(self, modified_input, index=None):
-        if index is None:
-            index = self.global_step % self.amount_of_augmentation
-
-        is_stronger = np.random.rand() > 0.5
-        if index in self.opt['simulated_hue']:
-            ## careful!
-            strength = np.random.rand() * (0.05 if is_stronger > 0 else -0.05)
-            modified_adjusted = F.adjust_hue(modified_input, hue_factor=0 + strength)  # 0.5 ave
-        elif index in self.opt['simulated_contrast']:
-            strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
-            modified_adjusted = F.adjust_contrast(modified_input, contrast_factor=1 + strength)  # 1 ave
-        elif index in self.opt['simulated_gamma']:
-            ## careful!
-            strength = np.random.rand() * (0.05 if is_stronger > 0 else -0.05)
-            modified_adjusted = F.adjust_gamma(modified_input, gamma=1 + strength)  # 1 ave
-        elif index in self.opt['simulated_saturation']:
-            strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
-            modified_adjusted = F.adjust_saturation(modified_input, saturation_factor=1 + strength)
-        elif index in self.opt['simulated_brightness']:
-            strength = np.random.rand() * (0.3 if is_stronger > 0 else -0.3)
-            modified_adjusted = F.adjust_brightness(modified_input,
-                                                    brightness_factor=1 + strength)  # 1 ave
-        else:
-            raise NotImplementedError("图像增强的index错误，请检查！")
-        modified_adjusted = self.clamp_with_grad(modified_adjusted)
-
-        return modified_adjusted  # modified_input + (modified_adjusted - modified_input).detach()
 
     def gamma_correction(self, tensor, avg=4095, digit=2.2):
         ## gamma correction
@@ -944,6 +905,7 @@ class base_IFA(BaseModel):
                                                                                  kernel_size=kernel,
                                                                                  resize_ratio=resize_ratio
                                                                                  )
+
         else:
             attacked_image = attacked_adjusted
 

@@ -18,7 +18,7 @@ def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 
 
-def _get_paths_from_images(path):
+def get_paths_from_images(path):
     '''get image path list from image folder'''
     assert os.path.isdir(path), '{:s} is not a valid directory'.format(path)
     images = []
@@ -30,8 +30,27 @@ def _get_paths_from_images(path):
     assert images, '{:s} has no valid image file'.format(path)
     return images
 
+def get_filename_from_images(path,sep1='.',sep2='_'):
+    '''get image path list from image folder'''
+    assert os.path.isdir(path), '{:s} is not a valid directory'.format(path)
+    images, codebook = {}, []
+    for dirpath, _, fnames in sorted(os.walk(path)):
+        for fname in sorted(fnames):
+            if is_image_file(fname):
+                r1 = fname.rfind(sep1)
+                r2 = fname[:r1].rfind(sep2)
+                r3 = fname[:r2].rfind(sep2)
+                img_path = os.path.join(dirpath, fname)
+                filename = fname[r2:r1]
+                if filename in images:
+                    raise ValueError(f"发现重复data：{img_path} {filename} {r1} {r2} {r3}")
+                images[filename] = img_path
+                codebook.append(filename)
+    assert images, '{:s} has no valid image file'.format(path)
+    return images, codebook
 
-def _get_paths_from_lmdb(dataroot):
+
+def get_paths_from_lmdb(dataroot):
     '''get image path list from lmdb meta info'''
     meta_info = pickle.load(open(os.path.join(dataroot, 'meta_info.pkl'), 'rb'))
     paths = meta_info['keys']
@@ -47,9 +66,9 @@ def get_image_paths(dataroot,data_type='img'):
     paths, sizes = None, None
     if dataroot is not None:
         if data_type == 'lmdb':
-            paths, sizes = _get_paths_from_lmdb(dataroot)
+            paths, sizes = get_paths_from_lmdb(dataroot)
         elif data_type == 'img':
-            paths = sorted(_get_paths_from_images(dataroot))
+            paths = sorted(get_paths_from_images(dataroot))
         else:
             raise NotImplementedError('data_type [{:s}] is not recognized.'.format(data_type))
     return paths, sizes
