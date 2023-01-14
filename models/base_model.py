@@ -266,7 +266,7 @@ class BaseModel():
                                                                  lr=self.train_opt['lr_scratch'], weight_decay=wd_G)
 
         if 'generator' in self.network_list:
-            lr = 'lr_scratch'
+            lr = 'lr_scratch' if not 'lr_generator' in self.train_opt else 'lr_generator'
             self.optimizer_generator = self.create_optimizer(self.generator,
                                                              lr=self.train_opt[lr], weight_decay=wd_G)
         if 'qf_predict_network' in self.network_list:
@@ -344,13 +344,13 @@ class BaseModel():
     def create_folders_for_the_experiment(self):
         pass
 
-    def define_ddpm_unet_network(self, out_dim=3, use_bayar=False, use_fft=False, use_classification=False, use_middle_features=False):
+    def define_ddpm_unet_network(self, out_dim=3, dim = 32, use_bayar=False, use_fft=False, use_classification=False, use_middle_features=False):
         from network.CNN_architectures.ddpm_lucidrains import Unet
         # input = torch.ones((3, 3, 128, 128)).cuda()
         # output = model(input, torch.zeros((1)).cuda())
 
         print("using ddpm_unet")
-        model = Unet(out_dim=out_dim, use_bayar=use_bayar, use_fft=use_fft, use_classification=use_classification,
+        model = Unet(out_dim=out_dim, dim=dim, use_bayar=use_bayar, use_fft=use_fft, use_classification=use_classification,
                      use_middle_features=use_middle_features).cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
@@ -793,35 +793,26 @@ class BaseModel():
         #             break
         #     realworld_attack = mixed_conpensate
 
-        if self.opt['use_restore'] and np.random.rand()>0.5:
-            use_restoration = np.random.randint(0,10000) % 3 == 0
-            if use_restoration:
-                with torch.no_grad():
-
-                    if use_restoration%3==0: #'unet' in self.opt['restoration_model'].lower():
-                        attacked_real_jpeg = self.restore_unet(attacked_real_jpeg, self.timestamp)
-                        attacked_real_jpeg = self.clamp_with_grad(attacked_real_jpeg)
-
-                    elif use_restoration%3==1: #'invisp' in self.opt['restoration_model'].lower():
-                        attacked_real_jpeg = self.restore_invisp(attacked_real_jpeg)
-                        attacked_real_jpeg = self.clamp_with_grad(attacked_real_jpeg)
-
-                    else: # restormer
-                        attacked_real_jpeg = self.restore_restormer(attacked_real_jpeg)
-                        attacked_real_jpeg = self.clamp_with_grad(attacked_real_jpeg)
-
         psnr_distort = self.psnr(self.postprocess(attacked_real_jpeg), self.postprocess(forward_image)).item()
-        ## global compensate (distort) to make dense probailities
-        if global_compensate and np.random.rand() > 0.5: # and psnr_distort < self.opt['minimum_PSNR_caused_by_attack']:
+        # psnr_standard = self.opt['minimum_PSNR_caused_by_attack'] \
+        #                 + np.random.rand()*(self.opt['max_psnr']-self.opt['minimum_PSNR_caused_by_attack'])
+        # psnr_tolerant = 0.5
+        ## global compensate (distort) to make dense probabilities
+        condition = psnr_distort<self.opt['max_psnr'] and \
+                    ((global_compensate and np.random.rand() > 0.5) or psnr_distort<self.opt['minimum_PSNR_caused_by_attack'])
+        attack_backup = attacked_real_jpeg
+        while condition: # and psnr_distort < self.opt['minimum_PSNR_caused_by_attack']:
             beta = np.random.rand()
-            attacked_real_jpeg = beta * forward_image + (1 - beta) * attacked_real_jpeg
-            psnr_distort = self.psnr(self.postprocess(attacked_real_jpeg), self.postprocess(forward_image)).item()
+            attack_backup = beta * forward_image + (1 - beta) * attacked_real_jpeg
+            psnr_distort = self.psnr(self.postprocess(attack_backup), self.postprocess(forward_image)).item()
+            condition = not (psnr_distort>self.opt['minimum_PSNR_caused_by_attack'] and psnr_distort<self.opt['max_psnr'])
+        attacked_real_jpeg = attack_backup
 
         ## color adjustment
         if self.opt['do_augment'] and np.random.rand() > 0.5:
             attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_real_jpeg,
                                                                         index=np.random.randint(0, 10000),
-                                                                        scale=2)
+                                                                        scale=1)
 
 
             # psnr = self.psnr(self.postprocess(attacked_adjusted), self.postprocess(forward_image)).item()

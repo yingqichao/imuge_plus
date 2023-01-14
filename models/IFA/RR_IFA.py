@@ -142,7 +142,7 @@ class RR_IFA(base_IFA):
         ### todo: network
         self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=True, use_fft=True,
                                                                 use_classification=False, use_middle_features=True)
-        self.generator = self.define_ddpm_unet_network(out_dim=15, use_bayar=True, use_fft=True,
+        self.generator = self.define_ddpm_unet_network(out_dim=3, dim=16, use_bayar=False, use_fft=False,
                                                                 use_classification=False, use_middle_features=False)
 
         if self.opt['load_generator_models'] is not None:
@@ -210,34 +210,99 @@ class RR_IFA(base_IFA):
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
 
+        stage_index = (self.global_step//self.opt['restart_step'])
+        if stage_index == 0:
+            ## stage 1: original
+            self.distill_stage_one(logs=logs, epoch=epoch)
+        elif stage_index %2 in [1]:
+            ## stage 2
+            self.distill_stage_two(logs=logs, epoch=epoch)
+        else:
+            ## stage 3
+            self.distill_stage_three(logs=logs, epoch=epoch)
 
+        ######## Finally ####################
+        for scheduler in self.schedulers:
+            scheduler.step()
+
+        if self.global_step % (self.opt['model_save_period']) == (
+                self.opt['model_save_period'] - 1) or self.global_step == 9:
+            if self.rank == 0:
+                print('Saving models and training states.')
+                # self.save(self.global_step, folder='model', network_list=self.save_network_list)
+                self.save_network(self.qf_predict_network, 'qf_predict', f"{epoch}_{self.global_step}",
+                                  model_path=f'{self.out_space_storage}/model/{self.task_name}/')
+                self.save_network(self.generator, 'generator', f"{epoch}_{self.global_step}",
+                                  model_path=f'{self.out_space_storage}/model/{self.task_name}/')
+
+        self.global_step = self.global_step + 1
+
+        return logs, None, False
+
+    def distill_stage_one(self, *, logs, epoch):
+        logs['status'] = 'One'
         self.qf_predict_network.train()
+        self.generator.train()
+
+        no_grad_features = None
+        with torch.enable_grad():
+            pred_detection_mask, no_grad_features = self.qf_predict_network(self.detection_image, None)
+
+            loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
+            logs['CE_detection'] = loss_CE_detection.item()
+            loss_CE_detection.backward()
+
+            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+            self.optimizer_qf.step()
+            self.optimizer_qf.zero_grad()
+
+        ##### printing the images  ######
+        if (self.global_step % 1000 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.detection_image),
+                self.postprocess(pred_detection_mask),
+                self.postprocess(self.detection_mask),
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
+
+    def distill_stage_two(self, *, logs, epoch):
+        logs['status'] = 'Two'
+        self.qf_predict_network.eval()
         self.generator.train()
 
         no_grad_features = None
         with torch.no_grad():
             pred_detection_mask, no_grad_features = self.qf_predict_network(self.detection_image, None)
+            loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
+            logs['CE_detection'] = loss_CE_detection.item()
 
         with torch.enable_grad():
             noise_patterns = self.generator(self.real_H, None)[0]
-            idx_pattern = self.global_step%5
-            selected_patterns = noise_patterns[:,idx_pattern*3:(1+idx_pattern)*3]
-            mixed_image = self.real_H+self.detection_mask*selected_patterns
+            idx_pattern = 0  # self.global_step%5
+            selected_patterns = noise_patterns  # [:,idx_pattern*3:(1+idx_pattern)*3]
+            mixed_image = self.real_H + self.detection_mask * selected_patterns
             mixed_image = self.clamp_with_grad(mixed_image)
             psnr = self.psnr(self.postprocess(mixed_image), self.postprocess(self.real_H)).item()
+
             pred_mask, pred_features = self.qf_predict_network(mixed_image, None)
 
             loss_CE = self.bce_with_logit_loss(pred_mask, self.detection_mask)  # pred loss
-            loss_L1 = self.l1_loss(selected_patterns, self.zero_metric)  # pattern loss
+            loss_L1 = self.l1_loss(mixed_image, self.real_H)  # pattern loss
             loss_distill = 0
             for i in range(len(pred_features)):
-                loss_distill += self.l1_loss(pred_features[i], no_grad_features[i]) # distill loss
-            loss_distill *= 10. #/len(pred_features))
-            if loss_distill>100:
+                loss_this_feature = self.l1_loss(pred_features[i], no_grad_features[i].detach())  # distill loss
+                loss_distill += loss_this_feature
+                logs[f'd{i}'] = loss_this_feature.item()
+            loss_distill *= 1  # /len(pred_features))
+            if loss_distill > 100:
                 raise StopIteration(f"gradient exploded. {loss_distill.item()}")
 
-            alpha = self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=0.2,exp=2)
-            loss = 0.05*loss_CE + alpha*loss_L1 + loss_distill
+            alpha = 0 #self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=0.1,exp=2)
+            loss = 1 * loss_CE + alpha * loss_L1 + loss_distill
 
             logs['loss'] = loss.item()
             logs['L1'] = loss_L1.item()
@@ -246,52 +311,95 @@ class RR_IFA(base_IFA):
             logs['PSNR'] = psnr
             logs['distill'] = loss_distill.item()
 
-            loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
-            logs['CE_detection'] = loss_CE_detection.item()
             loss.backward()
 
             nn.utils.clip_grad_norm_(self.generator.parameters(), 1)
-            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
-            self.optimizer_qf.step()
-            self.optimizer_qf.zero_grad()
             self.optimizer_generator.step()
             self.optimizer_generator.zero_grad()
 
+        ##### printing the images  ######
+        if (self.global_step % 1000 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.real_H),
+                self.postprocess(selected_patterns),
+                self.postprocess(mixed_image),
+                self.postprocess(10 * torch.abs(self.real_H - mixed_image)),
+                self.postprocess(torch.sigmoid(pred_mask)),
+                self.postprocess(self.detection_image),
+                self.postprocess(torch.sigmoid(pred_detection_mask)),
+                self.postprocess(self.detection_mask),
+                img_per_row=1
+            )
 
-            ##### printing the images  ######
-            if (self.global_step % 1000 == 3 or self.global_step <= 10):
-                images = stitch_images(
-                    self.postprocess(self.real_H),
-                    self.postprocess(mixed_image),
-                    self.postprocess(10 * torch.abs(self.real_H - mixed_image)),
-                    self.postprocess(self.detection_image),
-                    self.postprocess(torch.sigmoid(pred_mask)),
-                    self.postprocess(torch.sigmoid(pred_detection_mask)),
-                    self.postprocess(self.detection_mask),
-                    img_per_row=1
-                )
+            name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
 
-                name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
-                       f"_{str(self.rank)}.png"
-                images.save(name)
+    def distill_stage_three(self, *, logs, epoch):
+        logs['status'] = 'Three'
+        self.qf_predict_network.train()
+        self.generator.eval()
 
-            ######## Finally ####################
-            for scheduler in self.schedulers:
-                scheduler.step()
+        with torch.no_grad():
+            noise_patterns = self.generator(self.real_H, None)[0]
+            idx_pattern = 0  # self.global_step%5
+            selected_patterns = noise_patterns  # [:,idx_pattern*3:(1+idx_pattern)*3]
+            mixed_image = self.real_H + self.detection_mask * selected_patterns
+            mixed_image = self.clamp_with_grad(mixed_image)
+            psnr = self.psnr(self.postprocess(mixed_image), self.postprocess(self.real_H)).item()
 
-            if self.global_step % (self.opt['model_save_period']) == (
-                    self.opt['model_save_period'] - 1) or self.global_step == 9:
-                if self.rank == 0:
-                    print('Saving models and training states.')
-                    # self.save(self.global_step, folder='model', network_list=self.save_network_list)
-                    self.save_network(self.qf_predict_network, 'qf_predict', f"{epoch}_{self.global_step}",
-                                      model_path=f'{self.out_space_storage}/model/{self.task_name}/')
-                    self.save_network(self.generator, 'generator', f"{epoch}_{self.global_step}",
-                                      model_path=f'{self.out_space_storage}/model/{self.task_name}/')
+        with torch.enable_grad():
 
-        self.global_step = self.global_step + 1
+            pred_mask_sum, pred_features_sum = self.qf_predict_network(torch.cat([self.detection_image,mixed_image.detach()],dim=0), None)
+            pred_mask, pred_detection_mask = pred_mask_sum[:self.batch_size], pred_mask_sum[self.batch_size:]
 
-        return logs, None, False
+            loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
+            logs['CE_detection'] = loss_CE_detection.item()
+
+            loss_CE = self.bce_with_logit_loss(pred_mask_sum, torch.cat([self.detection_mask,self.detection_mask],dim=0))  # pred loss
+            loss_L1 = self.l1_loss(mixed_image, self.real_H)  # pattern loss
+            loss_distill = 0
+            for i in range(len(pred_features_sum)):
+                pred_features, no_grad_features = pred_features_sum[i][:self.batch_size], pred_features_sum[i][self.batch_size:]
+                loss_this_feature = self.l1_loss(pred_features, no_grad_features.detach())  # distill loss
+                loss_distill += loss_this_feature
+                logs[f'd{i}'] = loss_this_feature.item()
+            loss_distill *= 1  # /len(pred_features))
+            if loss_distill > 100:
+                raise StopIteration(f"gradient exploded. {loss_distill.item()}")
+
+            alpha = 0 #self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=0.1,exp=2)
+            loss = 1 * loss_CE
+
+            logs['loss'] = loss.item()
+            logs['L1'] = loss_L1.item()
+            logs['CE'] = loss_CE.item()
+            logs['alpha'] = alpha
+            logs['PSNR'] = psnr
+
+            loss.backward()
+
+            nn.utils.clip_grad_norm_(self.qf_predict_network.parameters(), 1)
+            self.optimizer_qf.step()
+            self.optimizer_qf.zero_grad()
+
+        ##### printing the images  ######
+        if (self.global_step % 1000 == 3 or self.global_step <= 10):
+            images = stitch_images(
+                self.postprocess(self.real_H),
+                self.postprocess(selected_patterns),
+                self.postprocess(mixed_image),
+                self.postprocess(10 * torch.abs(self.real_H - mixed_image)),
+                self.postprocess(torch.sigmoid(pred_mask)),
+                self.postprocess(self.detection_image),
+                self.postprocess(torch.sigmoid(pred_detection_mask)),
+                self.postprocess(self.detection_mask),
+                img_per_row=1
+            )
+
+            name = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{str(self.global_step).zfill(5)}" \
+                   f"_{str(self.rank)}.png"
+            images.save(name)
 
     def feed_aux_data(self, detection_item):
         img, mask = detection_item
@@ -311,7 +419,7 @@ class RR_IFA(base_IFA):
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
         use_post_process = True #np.random.randint(0, 10000) % 3 != 0
-        use_pre_post_process = np.random.randint(0, 10000) % 2 == 0
+        use_pre_post_process = False #np.random.randint(0, 10000) % 2 == 0
 
         compressed_real_H, psnr_distort, psnr_label = self.global_post_process(original=self.real_H, get_label=True)
 
@@ -328,8 +436,21 @@ class RR_IFA(base_IFA):
         masks_GT = torch.cat([self.zero_metric, masks_GT],dim=0)
 
 
-        degraded = self.benign_attacks_without_simulation(forward_image=auth_tamper, index=np.random.randint(0,10000))
-
+        degrade_index = np.random.randint(0, 10000)
+        if self.opt['use_restore'] and degrade_index%10 in [3,6,9]:
+            use_restoration = np.random.randint(0,10000) % 3
+            with torch.no_grad():
+                if use_restoration%3==0: #'unet' in self.opt['restoration_model'].lower():
+                    degraded = self.restore_unet(auth_tamper, self.timestamp)[0]
+                    degraded = self.clamp_with_grad(degraded)
+                elif use_restoration%3==1: #'invisp' in self.opt['restoration_model'].lower():
+                    degraded = self.restore_invisp(auth_tamper)
+                    degraded = self.clamp_with_grad(degraded)
+                else: # restormer
+                    degraded = self.restore_restormer(auth_tamper)
+                    degraded = self.clamp_with_grad(degraded)
+        else:
+            degraded = self.benign_attacks_without_simulation(forward_image=auth_tamper, index=degrade_index)
 
         if self.opt['do_augment'] and np.random.rand()>0.5:
             degraded = self.data_augmentation_on_rendered_rgb(degraded, index=np.random.randint(0,10000), scale=2)
@@ -355,9 +476,10 @@ class RR_IFA(base_IFA):
             with torch.enable_grad():
                 ## predict PSNR given degrade_sum
                 predicted_mask, predicted_psnr = self.qf_predict_network(mixed_pattern_images_post, self.timestamp)
+                predicted_psnr = self.clamp_with_grad(predicted_psnr)
                 loss = 0
                 loss_mask = self.bce_with_logit_loss(predicted_mask, masks_GT)
-                loss_psnr_regress = self.l1_loss(predicted_psnr, psnr_label)
+                loss_psnr_regress = self.hard_l1_loss(predicted_psnr, psnr_label)
                 loss += loss_mask
                 loss += loss_psnr_regress
                 loss.backward()
@@ -371,8 +493,7 @@ class RR_IFA(base_IFA):
                 logs['psnr_loss'] = (self.opt['max_psnr']-self.opt['minimum_PSNR_caused_by_attack']) * loss_psnr_regress.item()
                 logs['mask_loss'] = loss_mask.item()
                 logs['psnr_pred'] = self.opt['minimum_PSNR_caused_by_attack'] + \
-                                    (self.opt['max_psnr'] - self.opt[
-                                        'minimum_PSNR_caused_by_attack']) * psnr_predict_mean
+                                    (self.opt['max_psnr'] - self.opt['minimum_PSNR_caused_by_attack']) * psnr_predict_mean
         else:
             predicted_mask = torch.zeros_like(masks_GT,device=masks_GT.device)
 
@@ -382,7 +503,7 @@ class RR_IFA(base_IFA):
                 self.postprocess(self.real_H),
                 self.postprocess(input_images),
                 self.postprocess(mixed_pattern_images),
-                self.postprocess(10 * torch.abs(self.real_H - mixed_pattern_images)),
+                self.postprocess(10 * torch.abs(input_images - mixed_pattern_images)),
                 self.postprocess(mixed_pattern_images_post),
                 self.postprocess(10 * torch.abs(mixed_pattern_images_post - mixed_pattern_images)),
                 self.postprocess(torch.sigmoid(predicted_mask)),
@@ -600,7 +721,7 @@ class RR_IFA(base_IFA):
         with torch.no_grad():
             ## second half: restored downgraded images
             if self.global_step % 6 == 0:  # 'unet' in self.opt['restoration_model'].lower():
-                degrade_sum = self.restore_unet(degraded, torch.zeros((1)).cuda())
+                degrade_sum = self.restore_unet(degraded, torch.zeros((1)).cuda())[0]
                 degrade_sum = self.clamp_with_grad(degrade_sum)
                 degrade_sum = self.to_jpeg(forward_image=degrade_sum)
                 # loss = self.l1_loss(degrade_sum, self.real_H)

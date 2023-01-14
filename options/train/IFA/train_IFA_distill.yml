@@ -4,7 +4,11 @@ minimum_PSNR_caused_by_attack: 25
 minimun_PSNR_that_activates_local: 30
 use_restore: true
 max_psnr: 45
-psnr_thresh: 30
+psnr_thresh: 28
+
+
+detection_dataset: Defacto
+
 #CE_hyper_param: 0.33
 
 #### model path dirs
@@ -80,5 +84,6 @@ datasets:
 train:
   lr_scratch: !!float 1e-4
   lr_finetune: !!float 2e-5
+  lr_generator: !!float 1e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

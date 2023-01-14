@@ -8,9 +8,9 @@ max_psnr: 45
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: 0_9999_qf_predict.pth
+load_predictor_models: ~ #4_3999_qf_predict.pth
 consider_mask_prediction: false
-do_augment: true
+do_augment: false
 
 load_restormer_models: 15_3999_qf_predict.pth
 load_unet_models: 31_7999_qf_predict.pth

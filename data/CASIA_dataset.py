@@ -73,15 +73,18 @@ class CASIA_dataset(data.Dataset):
         }
 
 
-        self.paths_GT = {} # list is less dependable if we need to load mask
+        self.paths_GT, self.codebook = {}, [] # list is less dependable if we need to load mask
         for i, this_dataset in enumerate(self.dataset_name):
             GT_items = self.GT_folder[this_dataset]
             for idx in range(len(GT_items)):
                 if attack_list is None or idx in attack_list:
                     if 'CASIA' in GT_items[idx]:
-                        GT_path, self.codebook = util.get_filename_from_images(GT_items[idx],sep1='.',sep2='_')
+                        GT_path, new_codes = util.get_filename_from_images(GT_items[idx],sep1='.',sep2='_')
+                    elif 'Defacto' in GT_items[idx]:
+                        GT_path, new_codes = util.get_filename_from_images(GT_items[idx], sep1='.', sep2=None)
                     else:
                         GT_path, _ = util.get_image_paths(GT_items[idx])
+                    self.codebook += new_codes
                     # GT_path = sorted(GT_path)
                     # mask_path = sorted(mask_path)
                     dataset_len = len(GT_path)
@@ -102,6 +105,8 @@ class CASIA_dataset(data.Dataset):
                     if attack_list is None or idx in attack_list:
                         if 'CASIA' in mask_items[idx]:
                             mask_path, _ = util.get_filename_from_images(mask_items[idx],sep1='_',sep2='_')
+                        elif 'Defacto' in mask_items[idx]:
+                            mask_path, _ = util.get_filename_from_images(mask_items[idx], sep1='.', sep2=None)
                         else:
                             mask_path, _ = util.get_image_paths(mask_items[idx])
                         # GT_path = sorted(GT_path)

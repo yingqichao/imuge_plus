@@ -468,7 +468,7 @@ class Unet(nn.Module):
             x_cls = self.norm_class(x.mean([-2, -1]))
             x_cls = self.head_class(x_cls)
 
-            t = self.time_mlp(x_cls)
+            t = self.time_mlp(x_cls.detach())
 
         for block1, block2, attn, upsample in self.ups:
             x = torch.cat((x, h.pop()), dim = 1)

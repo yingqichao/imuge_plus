@@ -18,7 +18,7 @@ def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, tra
         from data.data_sampler import DistIterSampler
         dataset_opt, world_size= opt['datasets']['train'], torch.distributed.get_world_size()
         from data.CASIA_dataset import CASIA_dataset as D
-        detection_set = D(opt, dataset_opt, split=False, dataset=["CASIA2"], attack_list=None, with_mask=True, with_au=False)
+        detection_set = D(opt, dataset_opt, split=False, dataset=[opt["detection_dataset"]], attack_list=None, with_mask=True, with_au=False)
         dataset_ratio = 1  # world_size  # enlarge the size of each epoch
         if opt['dist']:
             detection_sampler = DistIterSampler(detection_set, world_size, rank, dataset_ratio, seed=int(time.time())%1000)
@@ -61,11 +61,12 @@ def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, tra
 
 
             for key in logs:
-                if key not in running_list:
-                    running_list[key] = 0
-                    valid_idx_list[key] = 0
-                running_list[key] += logs[key]
-                valid_idx_list[key] += 1
+                if key!='status':
+                    if key not in running_list:
+                        running_list[key] = 0
+                        valid_idx_list[key] = 0
+                    running_list[key] += logs[key]
+                    valid_idx_list[key] += 1
 
 
             if idx > 0 and (
@@ -73,9 +74,11 @@ def training_script_IFA(*, opt, args, rank, model, train_loader, val_loader, tra
 
                 end = time.time()
                 lr = logs['lr']
-                info_str = f'[{epoch}, {idx} {idx * model.real_H.shape[0]} {rank} {lr}] '
+                status = '' if 'status' not in logs else logs['status']
+                info_str = f'[{epoch}, {idx} {idx * model.real_H.shape[0]} {rank} {lr} {status}] '
                 for key in running_list:
-                    info_str += f'{key}: {running_list[key] / valid_idx_list[key]:.4f} '
+                    if key!='status':
+                        info_str += f'{key}: {running_list[key] / valid_idx_list[key]:.4f} '
                 info_str += f'time per sample {(end - start) / print_step / model.real_H.shape[0]:.4f} s'
                 print(info_str)
                 start = time.time()
