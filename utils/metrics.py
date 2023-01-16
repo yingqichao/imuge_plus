@@ -39,20 +39,12 @@ class PSNR(nn.Module):
 
     def __call__(self, a, b):
         # mse = torch.mean((a.float() - b.float()) ** 2)
-        lst, lmse = [], []
-        for i in range(a.shape[0]):
-            mse = torch.mean((a[i].float() - b[i].float()) ** 2)
-            if mse == 0:
-                psnr = self.identity_PSNR
-            else:
-                psnr = self.max_val - 10 * torch.log(mse) / self.base10
-                psnr = psnr.item()
-            lst.append(psnr)
-            lmse.append(mse.item())
-        psnr = sum(lst)/len(lst)
-        mse = sum(lmse) / len(lmse)
+        lst, lmse = self.with_mse(a,b)
 
-        return torch.tensor([psnr],device=a.device)
+        psnr = sum(lst) / len(lst)
+        # mse = sum(lmse) / len(lmse)
+
+        return psnr
 
     def with_mse(self,a,b):
         # mse = torch.mean((a.float() - b.float()) ** 2)
@@ -66,7 +58,34 @@ class PSNR(nn.Module):
                 psnr = psnr.item()
             lst.append(psnr)
             lmse.append(mse.item())
-        psnr = sum(lst) / len(lst)
-        mse = sum(lmse) / len(lmse)
 
-        return torch.tensor([psnr], device=a.device), torch.tensor([mse], device=a.device)
+        return lst, lmse
+
+    def from_error_map_to_psnr(self, predicted_mse_map):
+        lst, lmse = [], []
+        for i in range(predicted_mse_map.shape[0]):
+            mse = torch.mean(((255*predicted_mse_map[i]).float()) ** 2)
+            if mse == 0:
+                psnr = self.identity_PSNR
+            else:
+                psnr = self.max_val - 10 * torch.log(mse) / self.base10
+                psnr = min(self.identity_PSNR, psnr.item())
+            lst.append(psnr)
+
+        # psnr = sum(lst) / len(lst)
+        return lst
+
+    def from_mse_to_psnr(self, pred_mse):
+        lst, lmse = [], []
+        pred_mse = pred_mse * (255**2)
+        for i in range(pred_mse.shape[0]):
+            mse = pred_mse[i]
+            if mse == 0:
+                psnr = self.identity_PSNR
+            else:
+                psnr = self.max_val - 10 * torch.log(mse) / self.base10
+                psnr = min(self.identity_PSNR, psnr.item())
+            lst.append(psnr)
+
+        # psnr = sum(lst) / len(lst)
+        return lst

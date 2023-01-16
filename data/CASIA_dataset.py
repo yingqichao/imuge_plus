@@ -102,18 +102,20 @@ class CASIA_dataset(data.Dataset):
                     else:
                         raise NotImplementedError("目前只支持Defacto和CASIA1/2和NIST16")
                         # GT_path, _ = util.get_image_paths(GT_items[idx])
-                    self.codebook += new_codes
+
                     # GT_path = sorted(GT_path)
                     # mask_path = sorted(mask_path)
                     dataset_len = len(GT_path)
                     print(f"len image {dataset_len}")
                     num_train_val_split = int(dataset_len*(0.85 if self.split else 1))
+                    self.paths_GT.update(GT_path)
                     if not self.split:
-                        self.paths_GT.update(GT_path)
+                        new_codes = new_codes
                     elif self.is_train:
-                        self.paths_GT.update(GT_path[:num_train_val_split])
+                        new_codes = new_codes[:num_train_val_split]
                     else:
-                        self.paths_GT.update(GT_path[num_train_val_split:])
+                        new_codes = new_codes[num_train_val_split:]
+                    self.codebook += new_codes
 
         if self.with_mask:
             self.paths_mask = {}
