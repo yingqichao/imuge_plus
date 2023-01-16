@@ -65,7 +65,7 @@ class BaseModel():
         # self.is_train = opt['is_train']
         self.schedulers = []
         self.optimizers = []
-
+        self.world_size = torch.distributed.get_world_size()
         self.train_set = train_set
         self.val_set = val_set
         self.rank = torch.distributed.get_rank()
@@ -193,6 +193,7 @@ class BaseModel():
         self.bce_loss = nn.BCELoss().cuda()
         self.bce_with_logit_loss = nn.BCEWithLogitsLoss().cuda()
         self.l1_loss = nn.SmoothL1Loss(beta=0.5).cuda()  # reduction="sum"
+        self.consine_similarity = nn.CosineSimilarity(dim=1, eps=1e-6)
         self.hard_l1_loss = nn.L1Loss().cuda()  # reduction="sum"
         self.l2_loss = nn.MSELoss().cuda()  # reduction="sum"
         self.perceptual_loss = PerceptualLoss().cuda()
@@ -276,7 +277,7 @@ class BaseModel():
 
 
     ### todo: Helper functions
-    def exponential_weight_for_backward(self, *, value, exp=1.5, norm=1, alpha=0.5):
+    def exponential_weight_for_backward(self, *, value, exp=1.5, norm=1, alpha=0.5, psnr_thresh=None):
         '''
             exponential loss for recovery loss's weight.
             PSNR  29     30     31     32     33(base)   34     35
@@ -286,7 +287,9 @@ class BaseModel():
             exp = self.opt['exp_weight']
         if 'CE_hyper_param' in self.opt:
             alpha = self.opt['CE_hyper_param']
-        return min(1, alpha*((exp)**(norm*(value-self.opt['psnr_thresh']))))
+        if psnr_thresh is None:
+            psnr_thresh = self.opt['psnr_thresh']
+        return min(1, alpha*((exp)**(norm*(value-psnr_thresh))))
 
     def update_history_losses(self, *, index, PSNR, loss, loss_CE, PSNR_attack):
         '''
@@ -729,7 +732,7 @@ class BaseModel():
 
         return attacked_real_jpeg.cuda()
 
-    def benign_attack_ndarray_auto_control(self, *, forward_image, index=None, psnr_requirement=None, get_label=False,
+    def benign_attack_ndarray_auto_control(self, *, forward_image, psnr_requirement=None, get_label=False,
                                            local_compensate=True, global_compensate=False):
         '''
             real-world attack, whose setting should be fed.
@@ -737,22 +740,11 @@ class BaseModel():
         ## note: create tensor directly on device:
         ## torch.ones((1,1),device=a.get_device())
         # compare_image = forward_image.detach().cpu()
-        index_for_postprocessing = index  # self.global_step
+        # index_for_postprocessing = index  # self.global_step
         if psnr_requirement is None:
             psnr_requirement = self.opt['minimum_PSNR_caused_by_attack']
 
         # kernel_size = random.choice([3, 5, 7, 9])  # 3,5,7
-        kernel_list = random.sample([3, 5, 7, 9],3)
-        resize_list = [
-            (int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
-            (int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
-            (int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
-            ]
-        quality_list = [
-            int(self.get_quality_idx_by_iteration(index=index_for_postprocessing)* 5),
-            int(self.get_quality_idx_by_iteration(index=index_for_postprocessing)* 5),
-            int(self.get_quality_idx_by_iteration(index=index_for_postprocessing)* 5),
-            ]
 
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]
         attacked_real_jpeg = torch.empty_like(forward_image,device=forward_image.device)
@@ -762,6 +754,24 @@ class BaseModel():
             grid = forward_image[idx_atkimg]
             max_try, tried, psnr, psnr_best = 1, 0, 0, 0
             realworld_attack = None
+
+            index = np.random.randint(0,10000)
+
+            kernel_list = random.sample([3, 5, 7], 3)
+            resize_list = [
+                (
+                int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
+                (
+                int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
+                (
+                int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
+            ]
+            quality_list = [
+                int(self.get_quality_idx_by_iteration(index=index) * 5),
+                int(self.get_quality_idx_by_iteration(index=index) * 5),
+                int(self.get_quality_idx_by_iteration(index=index) * 5),
+            ]
+
             while tried<max_try:
                 realworld_candidate = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality_list[tried],
                                                                         index=index, kernel=kernel_list[tried],
@@ -778,6 +788,10 @@ class BaseModel():
 
                 tried += 1
 
+            if psnr<self.opt['minimum_PSNR_caused_by_attack']:
+                beta = np.random.rand()
+                realworld_attack = beta * forward_image[idx_atkimg:idx_atkimg + 1] + (1 - beta) * realworld_attack
+
             attacked_real_jpeg[idx_atkimg:idx_atkimg + 1] = realworld_attack
 
         # ## eliminate too poor images
@@ -793,52 +807,64 @@ class BaseModel():
         #             break
         #     realworld_attack = mixed_conpensate
 
-        psnr_distort = self.psnr(self.postprocess(attacked_real_jpeg), self.postprocess(forward_image)).item()
+        psnr_distort, mse_distort = self.psnr.with_mse(self.postprocess(attacked_real_jpeg), self.postprocess(forward_image))
+        psnr_distort = psnr_distort.item()
         # psnr_standard = self.opt['minimum_PSNR_caused_by_attack'] \
         #                 + np.random.rand()*(self.opt['max_psnr']-self.opt['minimum_PSNR_caused_by_attack'])
         # psnr_tolerant = 0.5
         ## global compensate (distort) to make dense probabilities
-        condition = psnr_distort<self.opt['max_psnr'] and \
-                    ((global_compensate and np.random.rand() > 0.5) or psnr_distort<self.opt['minimum_PSNR_caused_by_attack'])
-        attack_backup = attacked_real_jpeg
-        while condition: # and psnr_distort < self.opt['minimum_PSNR_caused_by_attack']:
-            beta = np.random.rand()
-            attack_backup = beta * forward_image + (1 - beta) * attacked_real_jpeg
-            psnr_distort = self.psnr(self.postprocess(attack_backup), self.postprocess(forward_image)).item()
-            condition = not (psnr_distort>self.opt['minimum_PSNR_caused_by_attack'] and psnr_distort<self.opt['max_psnr'])
-        attacked_real_jpeg = attack_backup
+        # condition = psnr_distort<self.opt['max_psnr'] and \
+        #             ((global_compensate and np.random.rand() > 0.5) or psnr_distort<self.opt['minimum_PSNR_caused_by_attack'])
+        # attack_backup = attacked_real_jpeg
+        # while condition: # and psnr_distort < self.opt['minimum_PSNR_caused_by_attack']:
+        #     beta = np.random.rand()
+        #     attack_backup = beta * forward_image + (1 - beta) * attacked_real_jpeg
+        #     psnr_distort = self.psnr(self.postprocess(attack_backup), self.postprocess(forward_image)).item()
+        #     condition = not (psnr_distort>self.opt['minimum_PSNR_caused_by_attack'] and psnr_distort<self.opt['max_psnr'])
+        # attacked_real_jpeg = attack_backup
 
         ## color adjustment
-        if self.opt['do_augment'] and np.random.rand() > 0.5:
-            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_real_jpeg,
-                                                                        index=np.random.randint(0, 10000),
-                                                                        scale=1)
-
-
-            # psnr = self.psnr(self.postprocess(attacked_adjusted), self.postprocess(forward_image)).item()
-            ## global compensate (color) to make dense probailities
-            if global_compensate and np.random.rand() > 0.5: # and psnr<self.opt['minimum_PSNR_caused_by_attack']:
-                beta = np.random.rand()
-                attacked_real_jpeg = beta * attacked_real_jpeg + (1 - beta) * attacked_adjusted
-            else:
-                attacked_real_jpeg = attacked_adjusted
+        # if self.opt['do_augment'] and np.random.rand() > 0.5:
+        #     attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_real_jpeg,
+        #                                                                 index=np.random.randint(0, 10000),
+        #                                                                 scale=1)
+        #
+        #
+        #     # psnr = self.psnr(self.postprocess(attacked_adjusted), self.postprocess(forward_image)).item()
+        #     ## global compensate (color) to make dense probailities
+        #     if global_compensate and np.random.rand() > 0.5: # and psnr<self.opt['minimum_PSNR_caused_by_attack']:
+        #         beta = np.random.rand()
+        #         attacked_real_jpeg = beta * attacked_real_jpeg + (1 - beta) * attacked_adjusted
+        #     else:
+        #         attacked_real_jpeg = attacked_adjusted
 
         ## calculate psnr label
-        psnr_label = self.calculate_psnr_label(real=forward_image, fake=attacked_real_jpeg,
+        psnr_label, mix_num, psnr_avg, mse_avg = self.calculate_psnr_label(real=forward_image, fake=attacked_real_jpeg,
                                                psnr_max=self.opt['max_psnr'], psnr_min=psnr_requirement)
 
+        psnr_label_mean = torch.mean(psnr_label).item()
+        REAL_PSNR = self.opt['minimum_PSNR_caused_by_attack'] + \
+                    (self.opt['max_psnr'] - self.opt['minimum_PSNR_caused_by_attack']) * psnr_label_mean
+        PSNR_DIFF = REAL_PSNR - psnr_distort
+        mse_diff = mse_distort-mse_avg
         if get_label:
             return attacked_real_jpeg, psnr_label, psnr_distort
         else:
             return attacked_real_jpeg, psnr_distort
 
     def calculate_psnr_label(self, *, real, fake, psnr_max, psnr_min):
-        psnr_label = torch.zeros((self.batch_size, 1), device=real.device)
-        for idx_atkimg in range(self.batch_size):
-            psnr = self.psnr(self.postprocess(fake[idx_atkimg:idx_atkimg + 1]),
-                             self.postprocess(real[idx_atkimg:idx_atkimg + 1])).item()
+        batch_size = real.shape[0]
+        psnr_label = torch.zeros((batch_size, 1), device=real.device)
+        mix_num, psnr_avg,mse_avg = 0, 0, 0
+        for idx_atkimg in range(batch_size):
+            psnr, mse = self.psnr.with_mse(self.postprocess(fake[idx_atkimg:idx_atkimg + 1]),
+                             self.postprocess(real[idx_atkimg:idx_atkimg + 1]))
+            psnr_avg += psnr.item()/batch_size
+            mse_avg += mse.item() / batch_size
             psnr_label[idx_atkimg:idx_atkimg + 1] = max(0., min(1., (psnr - psnr_min) / (psnr_max - psnr_min)))
-        return psnr_label
+            if psnr_label[idx_atkimg:idx_atkimg + 1]==0.:
+                mix_num += 1
+        return psnr_label, mix_num, psnr_avg, mse_avg
 
     def to_jpeg(self, *, forward_image):
         batch_size, height_width = forward_image.shape[0], forward_image.shape[2]

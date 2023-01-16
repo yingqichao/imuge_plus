@@ -1,21 +1,21 @@
 
 do_evaluate: 2000
-minimum_PSNR_caused_by_attack: 25
-minimun_PSNR_that_activates_local: 30
+minimum_PSNR_caused_by_attack: 28
+minimun_PSNR_that_activates_local: 28
 use_restore: true
-max_psnr: 45
+max_psnr: 43
 psnr_thresh: 28
 
 
-detection_dataset: Defacto
+detection_dataset: CASIA2
 
 #CE_hyper_param: 0.33
 
 #### model path dirs
-predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
+predictor_folder: /groupshare/IFA_results/model/IFA_distill/
 
-load_predictor_models: ~ #0_11999_qf_predict.pth
-load_generator_models: ~
+load_predictor_models: 0_19999_qf_predict.pth
+load_generator_models: 0_19999_generator.pth
 consider_mask_prediction: false
 do_augment: true
 
@@ -25,7 +25,7 @@ load_invisp_models: 10_7999_qf_predict.pth
 
 #### general settings
 
-gpu_ids: [3]
+gpu_ids: [2,3]
 
 restart_step: 1000
 model_save_period: 2000
@@ -78,12 +78,12 @@ datasets:
     dataroot_GT: /groupshare/COCOdataset/val2017
     dataroot_LQ: ~ # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
     GT_size: 256
-    batch_size: 12
+    batch_size: 8
 
 
 train:
-  lr_scratch: !!float 1e-4
+  lr_scratch: !!float 2e-4
   lr_finetune: !!float 2e-5
-  lr_generator: !!float 1e-5
+#  lr_generator: !!float 1e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

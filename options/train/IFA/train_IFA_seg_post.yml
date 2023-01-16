@@ -1,16 +1,17 @@
 
 do_evaluate: 2000
 minimum_PSNR_caused_by_attack: 25
-minimun_PSNR_that_activates_local: 30
-use_restore: true
-max_psnr: 45
+minimun_PSNR_that_activates_local: 45
+use_restore: false
+max_psnr: 43
+psnr_thresh: 28
 
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: ~ #4_3999_qf_predict.pth
+load_predictor_models: ~ #0_13999_qf_predict.pth #4_3999_qf_predict.pth
 consider_mask_prediction: false
-do_augment: false
+do_augment: true
 
 load_restormer_models: 15_3999_qf_predict.pth
 load_unet_models: 31_7999_qf_predict.pth
@@ -18,12 +19,12 @@ load_invisp_models: 10_7999_qf_predict.pth
 
 #### general settings
 
-gpu_ids: [4]
+gpu_ids: [0,1]
 
 restart_step: 1000
 model_save_period: 2000
 
-simulated_resize_indices: [0,5]
+simulated_resize_indices: [0,5,8]
 simulated_gblur_indices: [1]
 simulated_mblur_indices: [2]
 simulated_AWGN_indices: [4]
@@ -37,7 +38,7 @@ simulated_brightness: [3,6]
 simulated_gamma: []
 
 weak_JPEG_lower_bound: 20
-strong_JPEG_upper_bound: 20
+strong_JPEG_upper_bound: 18
 strong_JPEG_lower_bound: 10
 
 
@@ -75,7 +76,7 @@ datasets:
 
 
 train:
-  lr_scratch: !!float 1e-4
+  lr_scratch: !!float 1e-3
   lr_finetune: !!float 2e-5
   beta1: 0.9 #0.9
   beta2: 0.999 #0.999

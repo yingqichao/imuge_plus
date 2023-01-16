@@ -30,7 +30,7 @@ class EdgeAccuracy(nn.Module):
 class PSNR(nn.Module):
     def __init__(self, max_val):
         super(PSNR, self).__init__()
-
+        self.identity_PSNR = 100
         base10 = torch.log(torch.tensor(10.0))
         max_val = torch.tensor(max_val).float()
 
@@ -38,9 +38,35 @@ class PSNR(nn.Module):
         self.register_buffer('max_val', 20 * torch.log(max_val) / base10)
 
     def __call__(self, a, b):
-        mse = torch.mean((a.float() - b.float()) ** 2)
+        # mse = torch.mean((a.float() - b.float()) ** 2)
+        lst, lmse = [], []
+        for i in range(a.shape[0]):
+            mse = torch.mean((a[i].float() - b[i].float()) ** 2)
+            if mse == 0:
+                psnr = self.identity_PSNR
+            else:
+                psnr = self.max_val - 10 * torch.log(mse) / self.base10
+                psnr = psnr.item()
+            lst.append(psnr)
+            lmse.append(mse.item())
+        psnr = sum(lst)/len(lst)
+        mse = sum(lmse) / len(lmse)
 
-        if mse == 0:
-            return torch.tensor(0)
+        return torch.tensor([psnr],device=a.device)
 
-        return self.max_val - 10 * torch.log(mse) / self.base10
+    def with_mse(self,a,b):
+        # mse = torch.mean((a.float() - b.float()) ** 2)
+        lst, lmse = [], []
+        for i in range(a.shape[0]):
+            mse = torch.mean((a[i].float() - b[i].float()) ** 2)
+            if mse == 0:
+                psnr = self.identity_PSNR
+            else:
+                psnr = self.max_val - 10 * torch.log(mse) / self.base10
+                psnr = psnr.item()
+            lst.append(psnr)
+            lmse.append(mse.item())
+        psnr = sum(lst) / len(lst)
+        mse = sum(lmse) / len(lmse)
+
+        return torch.tensor([psnr], device=a.device), torch.tensor([mse], device=a.device)

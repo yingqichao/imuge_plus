@@ -398,8 +398,12 @@ class Unet(nn.Module):
         self.use_classification = use_classification
         if self.use_classification:
             self.norm_class = nn.LayerNorm(mid_dim, eps=1e-6)
-            self.head_class = nn.Linear(mid_dim, 1)
-
+            # self.head_class = nn.Linear(mid_dim, 1)
+            self.head_class = nn.Sequential(
+                nn.Linear(mid_dim,mid_dim),
+                nn.ReLU(),
+                nn.Linear(mid_dim, 1)
+            )
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
@@ -449,7 +453,8 @@ class Unet(nn.Module):
 
         h = []
 
-        for block1, block2, attn, downsample in self.downs:
+        for idx, item in enumerate(self.downs):
+            block1, block2, attn, downsample = item
             x = block1(x, t)
             h.append(x)
 
@@ -468,16 +473,18 @@ class Unet(nn.Module):
             x_cls = self.norm_class(x.mean([-2, -1]))
             x_cls = self.head_class(x_cls)
 
-            t = self.time_mlp(x_cls.detach())
+            # t = self.time_mlp(x_cls.detach())
 
-        for block1, block2, attn, upsample in self.ups:
+        for idx, item in enumerate(self.ups):
+            block1, block2, attn, upsample = item
             x = torch.cat((x, h.pop()), dim = 1)
             x = block1(x, t)
 
             x = torch.cat((x, h.pop()), dim = 1)
             x = block2(x, t)
             x = attn(x)
-            middle_feats.append(x)
+            if idx>1:
+                middle_feats.append(x)
             x = upsample(x)
 
         x = torch.cat((x, r), dim = 1)

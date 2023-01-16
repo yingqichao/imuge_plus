@@ -24,8 +24,11 @@ class CASIA_dataset(data.Dataset):
     '''
 
     def __init__(self, opt, dataset_opt, is_train=True, dataset: list =["CASIA1"],attack_list=None, with_au=False, with_mask=True,
-                 split=True):
+                 split=True, filter=True):
         super(CASIA_dataset, self).__init__()
+        self.filter = filter
+        self.min_rate, self.max_rate = 0.01, 0.4
+        self.ban_list = set()
         self.is_train = is_train
         self.opt = opt
         self.dataset_opt = dataset_opt
@@ -47,7 +50,8 @@ class CASIA_dataset(data.Dataset):
 
         self.GT_folder = {
             'CASIA1': [
-                '/groupshare/CASIA1/CASIA 1.0 dataset/Original Tp/Tp/Sp'
+                '/groupshare/CASIA1/CASIA 1.0 dataset/Modified Tp/Tp/Sp'
+                '/groupshare/CASIA1/CASIA 1.0 dataset/Modified Tp/Tp/CM'
             ],
             'CASIA2': [
                 '/groupshare/CASIA2/Tp'
@@ -63,7 +67,8 @@ class CASIA_dataset(data.Dataset):
         }
         self.mask_folder = {
             'CASIA1': [
-                '/groupshare/CASIA1/CASIA 1.0 groundtruth/Sp'
+                '/groupshare/CASIA1/CASIA 1.0 groundtruth/Sp',
+                '/groupshare/CASIA1/CASIA 1.0 groundtruth/CM'
             ],
             'CASIA2': [
                 '/groupshare/CASIA2/CASIA 2 Groundtruth'
@@ -89,7 +94,8 @@ class CASIA_dataset(data.Dataset):
                     elif 'Defacto' in GT_items[idx]:
                         GT_path, new_codes = util.get_filename_from_images(GT_items[idx], sep1='.', sep2=None)
                     else:
-                        GT_path, _ = util.get_image_paths(GT_items[idx])
+                        raise NotImplementedError("目前只支持Defacto和CASIA1/2")
+                        # GT_path, _ = util.get_image_paths(GT_items[idx])
                     self.codebook += new_codes
                     # GT_path = sorted(GT_path)
                     # mask_path = sorted(mask_path)
@@ -166,38 +172,51 @@ class CASIA_dataset(data.Dataset):
         # scale = self.dataset_opt['scale']
 
         # get GT image
-        filename = self.codebook[index]
-        GT_path = self.paths_GT[filename]
+        valid=False
+        while not valid:
+            if not self.is_train or not self.filter:
+                valid = True
+            filename = self.codebook[index]
+            GT_path = self.paths_GT[filename]
+            if GT_path in self.ban_list:
+                index = np.random.randint(0,len(self.paths_mask))
+                continue
 
-        # img_GT = util.read_img(GT_path)
-        img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
-        # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
-        img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
-        img_GT = img_GT.astype(np.float32) / 255.
-        if img_GT.ndim == 2:
-            img_GT = np.expand_dims(img_GT, axis=2)
-        # some images have 4 channels
-        if img_GT.shape[2] > 3:
-            img_GT = img_GT[:, :, :3]
-        # BGR to RGB, HWC to CHW, numpy to tensor
-        img_GT = img_GT[:, :, [2, 1, 0]]
+            if self.with_mask:
+                mask_path = self.paths_mask[filename]
+                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                mask = (mask > 127).astype(np.uint8) * 255
+                # mask = util.channel_convert(mask.shape[2], self.dataset_opt['color'], [mask])[0]
+                mask = self.transform_just_resize(image=copy.deepcopy(mask))["image"]
+                mask = mask.astype(np.float32) / 255.
+                # if img_GT.ndim == 2:
+                #     mask = np.expand_dims(mask, axis=2)
+                mask = torch.from_numpy(np.ascontiguousarray(mask)).float()
+                if 'nist16' in GT_path:
+                    # nist16的mask是反过来的，未篡改为白色
+                    mask = 1.0 - mask
+                rate = torch.mean(mask)
+                if rate<self.min_rate or rate>self.max_rate:
+                    self.ban_list.add(GT_path)
+                    index = np.random.randint(0, len(self.paths_mask))
+                    continue
 
-        img_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
-        return_list.append(img_GT)
+            valid = True
+            # img_GT = util.read_img(GT_path)
+            img_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
+            # img_GT = util.channel_convert(img_GT.shape[2], self.dataset_opt['color'], [img_GT])[0]
+            img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
+            img_GT = img_GT.astype(np.float32) / 255.
+            if img_GT.ndim == 2:
+                img_GT = np.expand_dims(img_GT, axis=2)
+            # some images have 4 channels
+            if img_GT.shape[2] > 3:
+                img_GT = img_GT[:, :, :3]
+            # BGR to RGB, HWC to CHW, numpy to tensor
+            img_GT = img_GT[:, :, [2, 1, 0]]
 
-        if self.with_mask:
-            mask_path = self.paths_mask[filename]
-            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            mask = (mask > 127).astype(np.uint8) * 255
-            # mask = util.channel_convert(mask.shape[2], self.dataset_opt['color'], [mask])[0]
-            mask = self.transform_just_resize(image=copy.deepcopy(mask))["image"]
-            mask = mask.astype(np.float32) / 255.
-            # if img_GT.ndim == 2:
-            #     mask = np.expand_dims(mask, axis=2)
-            mask = torch.from_numpy(np.ascontiguousarray(mask)).float()
-            if 'nist16' in GT_path:
-                # nist16的mask是反过来的，未篡改为白色
-                mask = 1.0 - mask
+            img_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
+            return_list.append(img_GT)
             return_list.append(mask)
 
         if  self.with_au:

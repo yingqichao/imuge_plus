@@ -43,7 +43,7 @@ def create_dataset_and_loader(*, opt,args,rank,seed):
     print("World size: {}".format(world_size))
     print("Batch size: {}".format(dataset_opt['batch_size']))
     num_workers = dataset_opt['n_workers']
-    assert dataset_opt['batch_size'] % world_size == 0
+    # assert dataset_opt['batch_size'] % world_size == 0
     batch_size = dataset_opt['batch_size'] #// world_size
     print("#################################### train set ####################################")
     print(dataset_opt)
