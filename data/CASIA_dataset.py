@@ -97,10 +97,10 @@ class CASIA_dataset(data.Dataset):
                         GT_path, new_codes = util.get_filename_from_images(GT_items[idx],sep1='.',sep2='_',prefix=str(idx))
                     elif 'Defacto' in GT_items[idx]:
                         GT_path, new_codes = util.get_filename_from_images(GT_items[idx], sep1='.', sep2=None,prefix=str(idx))
-                    elif 'NIST' in GT_items[idx]:
+                    elif 'nist16' in GT_items[idx]:
                         GT_path, new_codes = util.get_filename_from_images(GT_items[idx], sep1='.', sep2=None,prefix=str(idx))
                     else:
-                        raise NotImplementedError("目前只支持Defacto和CASIA1/2")
+                        raise NotImplementedError("目前只支持Defacto和CASIA1/2和NIST16")
                         # GT_path, _ = util.get_image_paths(GT_items[idx])
                     self.codebook += new_codes
                     # GT_path = sorted(GT_path)
@@ -125,7 +125,7 @@ class CASIA_dataset(data.Dataset):
                             mask_path, _ = util.get_filename_from_images(mask_items[idx],sep1='_',sep2='_',prefix=str(idx))
                         elif 'Defacto' in mask_items[idx]:
                             mask_path, _ = util.get_filename_from_images(mask_items[idx], sep1='.', sep2=None,prefix=str(idx))
-                        elif 'NIST' in GT_items[idx]:
+                        elif 'nist16' in mask_items[idx]:
                             mask_path, _ = util.get_filename_from_images(mask_items[idx], sep1='.', sep2=None,prefix=str(idx))
                         else:
                             mask_path, _ = util.get_image_paths(mask_items[idx])
@@ -275,7 +275,7 @@ if __name__ == '__main__':
                                      padding=0, normalize=False)
     dataset_opt = {'color':'RGB', 'GT_size':256}
     # 单元测试
-    train_set = CASIA_dataset(None, dataset_opt, dataset=['NIST16'])
+    train_set = CASIA_dataset(None, dataset_opt, dataset=['NIST16'], split=False)
     test_image, test_mask= train_set[0]
     print_this_image(test_image, './image.png')
     print_this_image(test_mask, './mask.png')
