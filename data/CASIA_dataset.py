@@ -57,6 +57,9 @@ class CASIA_dataset(data.Dataset):
                 '/groupshare/Defacto/inpainting_img/img',
                 '/groupshare/Defacto/copymove_img/img',
             ],
+            'NIST16': [
+                '/groupshare/nist16/nist16/img'
+            ]
         }
         self.mask_folder = {
             'CASIA1': [
@@ -70,6 +73,9 @@ class CASIA_dataset(data.Dataset):
                 '/groupshare/Defacto/inpainting_annotations/probe_mask',
                 '/groupshare/Defacto/copymove_annotations/probe_mask',
             ],
+            'NIST16': [
+                '/groupshare/nist16/nist16/mask'
+            ]
         }
 
 
@@ -189,6 +195,9 @@ class CASIA_dataset(data.Dataset):
             # if img_GT.ndim == 2:
             #     mask = np.expand_dims(mask, axis=2)
             mask = torch.from_numpy(np.ascontiguousarray(mask)).float()
+            if 'nist16' in GT_path:
+                # nist16的mask是反过来的，未篡改为白色
+                mask = 1.0 - mask
             return_list.append(mask)
 
         if  self.with_au:
@@ -227,3 +236,19 @@ class CASIA_dataset(data.Dataset):
     #     img = Image.fromarray(img)
     #     img_t = F.to_tensor(img).float()
     #     return img_t
+if __name__ == '__main__':
+    import torchvision
+    def print_this_image(image, filename):
+        '''
+            the input should be sized [C,H,W], not [N,C,H,W]
+        '''
+        camera_ready = image.unsqueeze(0)
+        torchvision.utils.save_image((camera_ready * 255).round() / 255,
+                                     filename, nrow=1,
+                                     padding=0, normalize=False)
+    dataset_opt = {'color':'RGB', 'GT_size':256}
+    # 单元测试
+    train_set = CASIA_dataset(None, dataset_opt, dataset=['NIST16'])
+    test_image, test_mask= train_set[0]
+    print_this_image(test_image, './image.png')
+    print_this_image(test_mask, './mask.png')
