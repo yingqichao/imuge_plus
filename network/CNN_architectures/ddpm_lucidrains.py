@@ -326,13 +326,14 @@ class Unet(nn.Module):
         use_fft = False,
         use_classification = False,
         use_middle_features = False,
+        use_hierarchical_class = False,
     ):
         super().__init__()
         self.channels = channels
         self.self_condition = self_condition
         input_channels = channels * (2 if self_condition else 1)
         self.use_middle_features = use_middle_features
-
+        self.hierarchical_class = use_hierarchical_class
         # determine dimensions
         self.use_bayar = use_bayar
         if self.use_bayar:
@@ -358,7 +359,7 @@ class Unet(nn.Module):
         block_klass = partial(ResnetBlock, groups = resnet_block_groups, enable_fft=self.use_fft)
 
         # time embeddings
-        time_dim =dim * 4
+        time_dim = dim * 4
         self.random_or_learned_sinusoidal_cond = learned_sinusoidal_cond or random_fourier_features
         if self.random_or_learned_sinusoidal_cond:
             sinu_pos_emb = RandomOrLearnedSinusoidalPosEmb(learned_sinusoidal_dim, random_fourier_features)
@@ -395,15 +396,6 @@ class Unet(nn.Module):
         self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
         self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim = time_dim)
 
-        self.use_classification = use_classification
-        if self.use_classification:
-            self.norm_class = nn.LayerNorm(mid_dim, eps=1e-6)
-            # self.head_class = nn.Linear(mid_dim, 1)
-            self.head_class = nn.Sequential(
-                nn.Linear(mid_dim,mid_dim),
-                nn.ReLU(),
-                nn.Linear(mid_dim, 1)
-            )
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
@@ -417,6 +409,25 @@ class Unet(nn.Module):
 
         default_out_dim = channels * (1 if not learned_variance else 2)
         self.out_dim = default(out_dim, default_out_dim)
+
+        self.use_classification = use_classification
+        if self.use_classification:
+            if self.hierarchical_class:
+                self.norm_class = nn.ModuleList([])
+                dims_hierachical = [dim*8, dim * 4, dim * 2, dim, dim]
+                for i in range(len(self.ups)):
+                    self.norm_class.append(nn.LayerNorm(dims_hierachical[i]))
+                norm_dim = sum(dims_hierachical)
+            else:
+                self.norm_class = nn.LayerNorm(mid_dim, eps=1e-6)
+                # self.head_mlp = nn.Linear(mid_dim, 1)
+                norm_dim = mid_dim
+            self.head_mlp = nn.Sequential(
+                nn.Linear(norm_dim, mid_dim),
+                nn.ReLU(),
+                nn.Linear(mid_dim, 1)
+            )
+
 
         self.final_res_block = block_klass(dim * 2, dim, time_emb_dim = time_dim)
         self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
@@ -469,9 +480,9 @@ class Unet(nn.Module):
         x = self.mid_block2(x, t)
 
         x_cls = None
-        if self.use_classification:
+        if self.use_classification and not self.hierarchical_class:
             x_cls = self.norm_class(x.mean([-2, -1]))
-            x_cls = self.head_class(x_cls)
+            x_cls = self.head_mlp(x_cls)
 
             # t = self.time_mlp(x_cls.detach())
 
@@ -483,21 +494,31 @@ class Unet(nn.Module):
             x = torch.cat((x, h.pop()), dim = 1)
             x = block2(x, t)
             x = attn(x)
-            if idx>1:
+            # if idx>1:
+            if self.hierarchical_class:
+                middle_feats.append(self.norm_class[idx](x.mean([-2, -1])))
+            else:
                 middle_feats.append(x)
             x = upsample(x)
 
         x = torch.cat((x, r), dim = 1)
 
         x = self.final_res_block(x, t)
-        middle_feats.append(x)
+        if self.hierarchical_class:
+            middle_feats.append(self.norm_class[-1](x.mean([-2, -1])))
+        else:
+            middle_feats.append(x)
         x = self.final_conv(x)
 
         outputs = [x]
-        if self.use_classification:
+        if self.use_classification and not self.hierarchical_class:
             outputs.append(x_cls)
-        if self.use_middle_features:
+        if self.use_middle_features and not self.hierarchical_class:
             outputs.append(middle_feats)
+        elif self.use_middle_features and self.hierarchical_class:
+            hierarchical_feats = self.head_mlp(torch.cat(middle_feats,dim=1))
+
+            outputs.append(hierarchical_feats)
 
         return tuple(outputs)
 

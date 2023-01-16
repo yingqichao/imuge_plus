@@ -62,7 +62,9 @@ class CASIA_dataset(data.Dataset):
                 '/groupshare/Defacto/copymove_img/img',
             ],
             'NIST16': [
-                '/groupshare/nist16/nist16/img'
+                '/groupshare/nist16/nist16/img/copymove',
+                '/groupshare/nist16/nist16/img/remove',
+                '/groupshare/nist16/nist16/img/splice'
             ]
         }
         self.mask_folder = {
@@ -79,7 +81,9 @@ class CASIA_dataset(data.Dataset):
                 '/groupshare/Defacto/copymove_annotations/probe_mask',
             ],
             'NIST16': [
-                '/groupshare/nist16/nist16/mask'
+                '/groupshare/nist16/nist16/mask/copymove',
+                '/groupshare/nist16/nist16/mask/remove',
+                '/groupshare/nist16/nist16/mask/splice'
             ]
         }
 
@@ -90,9 +94,11 @@ class CASIA_dataset(data.Dataset):
             for idx in range(len(GT_items)):
                 if attack_list is None or idx in attack_list:
                     if 'CASIA' in GT_items[idx]:
-                        GT_path, new_codes = util.get_filename_from_images(GT_items[idx],sep1='.',sep2='_')
+                        GT_path, new_codes = util.get_filename_from_images(GT_items[idx],sep1='.',sep2='_',prefix=str(idx))
                     elif 'Defacto' in GT_items[idx]:
-                        GT_path, new_codes = util.get_filename_from_images(GT_items[idx], sep1='.', sep2=None)
+                        GT_path, new_codes = util.get_filename_from_images(GT_items[idx], sep1='.', sep2=None,prefix=str(idx))
+                    elif 'NIST' in GT_items[idx]:
+                        GT_path, new_codes = util.get_filename_from_images(GT_items[idx], sep1='.', sep2=None,prefix=str(idx))
                     else:
                         raise NotImplementedError("目前只支持Defacto和CASIA1/2")
                         # GT_path, _ = util.get_image_paths(GT_items[idx])
@@ -116,9 +122,11 @@ class CASIA_dataset(data.Dataset):
                 for idx in range(len(mask_items)):
                     if attack_list is None or idx in attack_list:
                         if 'CASIA' in mask_items[idx]:
-                            mask_path, _ = util.get_filename_from_images(mask_items[idx],sep1='_',sep2='_')
+                            mask_path, _ = util.get_filename_from_images(mask_items[idx],sep1='_',sep2='_',prefix=str(idx))
                         elif 'Defacto' in mask_items[idx]:
-                            mask_path, _ = util.get_filename_from_images(mask_items[idx], sep1='.', sep2=None)
+                            mask_path, _ = util.get_filename_from_images(mask_items[idx], sep1='.', sep2=None,prefix=str(idx))
+                        elif 'NIST' in GT_items[idx]:
+                            mask_path, _ = util.get_filename_from_images(mask_items[idx], sep1='.', sep2=None,prefix=str(idx))
                         else:
                             mask_path, _ = util.get_image_paths(mask_items[idx])
                         # GT_path = sorted(GT_path)

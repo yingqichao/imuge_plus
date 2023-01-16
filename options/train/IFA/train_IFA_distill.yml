@@ -14,8 +14,8 @@ detection_dataset: CASIA2
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/IFA_distill/
 
-load_predictor_models: 0_19999_qf_predict.pth
-load_generator_models: 0_19999_generator.pth
+load_predictor_models: 0_9999_qf_predict.pth
+load_generator_models: 0_9999_generator.pth
 consider_mask_prediction: false
 do_augment: true
 

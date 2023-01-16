@@ -143,9 +143,9 @@ class RR_IFA(base_IFA):
         self.zero_metric = torch.zeros((self.batch_size,3,self.width_height,self.width_height)).cuda()
 
         ### todo: network
-        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=False, use_fft=False,
+        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=True, use_fft=True, use_hierarchical_class=True,
                                                                 use_classification=True, use_middle_features=True)
-        self.generator = self.define_ddpm_unet_network(out_dim=3, dim=16, use_bayar=False, use_fft=False,
+        self.generator = self.define_ddpm_unet_network(out_dim=3, dim=16, use_bayar=True, use_fft=True,
                                                                 use_classification=False, use_middle_features=False)
 
         if self.opt['load_generator_models'] is not None:
@@ -170,7 +170,7 @@ class RR_IFA(base_IFA):
         self.zero_metric = torch.zeros((self.batch_size//3,1,self.width_height,self.width_height)).cuda()
 
         ### todo: network
-        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=False, use_fft=False,
+        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=1, use_bayar=True, use_fft=True,
                                                                 use_classification=True)
 
         if self.opt['use_restore']:
@@ -239,7 +239,7 @@ class RR_IFA(base_IFA):
         if epoch==0 and stage_index<warmup_stage and self.opt['load_predictor_models'] is None:
             ## stage 1: original
             self.distill_stage_one(logs=logs, epoch=epoch)
-        elif ((stage_index-warmup_stage)//1000) % 2 in [0]:
+        elif ((stage_index-warmup_stage)) % 2 in [0]:
             ## stage 2
             self.distill_stage_two(logs=logs, epoch=epoch)
         else:
@@ -269,9 +269,8 @@ class RR_IFA(base_IFA):
         self.qf_predict_network.train()
         self.generator.eval()
 
-        no_grad_features = None
         with torch.enable_grad():
-            pred_detection_mask, _, no_grad_features = self.qf_predict_network(self.detection_image, None)
+            pred_detection_mask, no_grad_features = self.qf_predict_network(self.detection_image, None)
 
             loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
             logs['CE_detection'] = loss_CE_detection.item()
@@ -299,7 +298,6 @@ class RR_IFA(base_IFA):
         self.qf_predict_network.eval()
         self.generator.train()
 
-        no_grad_features = None
         self.real_H = self.real_H[:self.batch_size]
 
         with torch.enable_grad():
@@ -310,36 +308,38 @@ class RR_IFA(base_IFA):
 
             noise_patterns = self.generator(self.real_H, None)[0]
             idx_pattern = 0  # self.global_step%5
-            selected_patterns = torch.tanh(noise_patterns)  # [:,idx_pattern*3:(1+idx_pattern)*3]
+            selected_patterns = noise_patterns #torch.tanh(noise_patterns)  # [:,idx_pattern*3:(1+idx_pattern)*3]
             mixed_image = self.real_H + self.detection_mask * selected_patterns
             mixed_image = self.clamp_with_grad(mixed_image)
             psnr = self.psnr(self.postprocess(mixed_image), self.postprocess(self.real_H)).item()
 
-            pred_mask_sum, pred_class, pred_features_sum = self.qf_predict_network(torch.cat([self.detection_image, mixed_image], dim=0), None)
+            pred_mask_sum, pred_class = self.qf_predict_network(torch.cat([self.detection_image, mixed_image], dim=0), None)
             pred_detection_mask, pred_mask = pred_mask_sum[:self.batch_size], pred_mask_sum[self.batch_size:]
 
             loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
             logs['CE_detection'] = loss_CE_detection.item()
 
             loss_CE = self.bce_with_logit_loss(pred_mask, self.detection_mask)  # pred loss
-            mixed_image_aug = mixed_image / torch.mean(self.detection_mask,dim=[1,2,3]).unsqueeze(1).unsqueeze(2).unsqueeze(3)
+            mixed_image_aug = mixed_image #/ torch.mean(self.detection_mask,dim=[1,2,3]).unsqueeze(1).unsqueeze(2).unsqueeze(3)
             loss_L1 = self.l1_loss(mixed_image_aug, self.real_H)  # pattern loss
-            loss_distill = 0
-            for i in range(len(pred_features_sum)):
-                no_grad_features, pred_features = pred_features_sum[i][:self.batch_size], pred_features_sum[i][self.batch_size:]
-                loss_this_feature = self.l1_loss(pred_features, no_grad_features.detach())  # distill loss
-                # loss_this_feature = -torch.mean(self.consine_similarity(pred_features, no_grad_features))
-                loss_distill += loss_this_feature
-                logs[f'd{i}'] = loss_this_feature.item()
-            loss_distill *= 1  # /len(pred_features))
-            if loss_distill > 100:
-                raise StopIteration(f"gradient exploded. {loss_distill.item()}")
+            # loss_distill = 0
+            # for i in range(len(pred_features_sum)):
+            #     no_grad_features, pred_features = pred_features_sum[i][:self.batch_size], pred_features_sum[i][self.batch_size:]
+            #     loss_this_feature = self.l1_loss(pred_features, no_grad_features.detach())  # distill loss
+            #     # loss_this_feature = -torch.mean(self.consine_similarity(pred_features, no_grad_features))
+            #     loss_distill += loss_this_feature
+            #     logs[f'd{i}'] = loss_this_feature.item()
+            # loss_distill *= 1  # /len(pred_features))
+            # if loss_distill > 100:
+            #     raise StopIteration(f"gradient exploded. {loss_distill.item()}")
 
             loss_bc = self.bce_with_logit_loss(pred_class, self.bc_label)
             loss_adv = self.bce_with_logit_loss(pred_class, self.adv_label)
 
-            alpha = self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=1,exp=2,psnr_thresh=30)
-            loss =  alpha * loss_L1 + loss_distill + 1 * loss_adv
+            alpha = self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=1,exp=2,psnr_thresh=25)
+            loss =  alpha * loss_L1
+            # loss += loss_distill
+            loss += 0.1 * loss_adv
 
             logs['rate'] = torch.mean(self.detection_mask).item()
             logs['loss'] = loss.item()
@@ -347,7 +347,7 @@ class RR_IFA(base_IFA):
             logs['CE'] = loss_CE.item()
             logs['alpha'] = alpha
             logs['PSNR'] = psnr
-            logs['distill'] = loss_distill.item()
+            # logs['distill'] = loss_distill.item()
             logs['bc'] = loss_bc.item()
             logs['adv'] = loss_adv.item()
 
@@ -385,43 +385,46 @@ class RR_IFA(base_IFA):
         with torch.no_grad():
             noise_patterns = self.generator(self.real_H, None)[0]
             idx_pattern = 0  # self.global_step%5
-            selected_patterns = torch.tanh(noise_patterns)  # [:,idx_pattern*3:(1+idx_pattern)*3]
+            selected_patterns = noise_patterns #torch.tanh(noise_patterns)  # [:,idx_pattern*3:(1+idx_pattern)*3]
             mixed_image = self.real_H + self.detection_mask * selected_patterns
             mixed_image = self.clamp_with_grad(mixed_image)
             psnr = self.psnr(self.postprocess(mixed_image), self.postprocess(self.real_H)).item()
 
         with torch.enable_grad():
 
-            pred_mask_sum, pred_class, pred_features_sum = self.qf_predict_network(torch.cat([self.detection_image,mixed_image.detach()],dim=0), None)
+            pred_mask_sum, pred_class = self.qf_predict_network(torch.cat([self.detection_image,mixed_image.detach()],dim=0), None)
             pred_detection_mask, pred_mask = pred_mask_sum[:self.batch_size], pred_mask_sum[self.batch_size:]
 
             loss_CE_detection = self.bce_with_logit_loss(pred_detection_mask, self.detection_mask)
             logs['CE_detection'] = loss_CE_detection.item()
 
             loss_CE = self.bce_with_logit_loss(pred_mask_sum, torch.cat([self.detection_mask,self.detection_mask],dim=0))  # pred loss
-            loss_L1 = self.l1_loss(mixed_image, self.real_H)  # pattern loss
-            loss_distill = 0
-            for i in range(len(pred_features_sum)):
-                no_grad_features, pred_features = pred_features_sum[i][:self.batch_size], pred_features_sum[i][self.batch_size:]
-                loss_this_feature = self.l1_loss(pred_features, no_grad_features.detach())  # distill loss
-                # loss_this_feature = -torch.mean(self.consine_similarity(pred_features, no_grad_features))
-                loss_distill += loss_this_feature
-                logs[f'd{i}'] = loss_this_feature.item()
-            loss_distill *= 1  # /len(pred_features))
-            if loss_distill > 100:
-                raise StopIteration(f"gradient exploded. {loss_distill.item()}")
+            mixed_image_aug = mixed_image #/ torch.mean(self.detection_mask, dim=[1, 2, 3]).unsqueeze(1).unsqueeze(2).unsqueeze(3)
+            loss_L1 = self.l1_loss(mixed_image_aug, self.real_H)  # pattern loss
+            # loss_distill = 0
+            # for i in range(len(pred_features_sum)):
+            #     no_grad_features, pred_features = pred_features_sum[i][:self.batch_size], pred_features_sum[i][self.batch_size:]
+            #     loss_this_feature = self.l1_loss(pred_features, no_grad_features.detach())  # distill loss
+            #     # loss_this_feature = -torch.mean(self.consine_similarity(pred_features, no_grad_features))
+            #     loss_distill += loss_this_feature
+            #     logs[f'd{i}'] = loss_this_feature.item()
+            # loss_distill *= 1  # /len(pred_features))
+            # if loss_distill > 100:
+            #     raise StopIteration(f"gradient exploded. {loss_distill.item()}")
 
             loss_bc = self.bce_with_logit_loss(pred_class, self.bc_label)
             loss_adv = self.bce_with_logit_loss(pred_class, self.adv_label)
 
-            alpha = self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=1,exp=2, psnr_thresh=30)
-            loss = 1 * loss_CE + 0.1 * loss_bc
+            alpha = self.exponential_weight_for_backward(value=psnr,norm=-1,alpha=1,exp=2, psnr_thresh=25)
+            loss = 1 * loss_CE
+            loss += 0.1 * loss_bc
 
             logs['loss'] = loss.item()
             logs['L1'] = loss_L1.item()
             logs['CE'] = loss_CE.item()
             logs['alpha'] = alpha
             logs['PSNR'] = psnr
+            # logs['distill'] = loss_distill.item()
             logs['bc'] = loss_bc.item()
             logs['adv'] = loss_adv.item()
 

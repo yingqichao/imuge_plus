@@ -347,14 +347,15 @@ class BaseModel():
     def create_folders_for_the_experiment(self):
         pass
 
-    def define_ddpm_unet_network(self, out_dim=3, dim = 32, use_bayar=False, use_fft=False, use_classification=False, use_middle_features=False):
+    def define_ddpm_unet_network(self, out_dim=3, dim = 32, use_bayar=False, use_fft=False, use_classification=False,
+                                 use_middle_features=False, use_hierarchical_class=False):
         from network.CNN_architectures.ddpm_lucidrains import Unet
         # input = torch.ones((3, 3, 128, 128)).cuda()
         # output = model(input, torch.zeros((1)).cuda())
 
-        print("using ddpm_unet")
+        print(f"using ddpm_unet, use_fft: {use_fft}, use_bayar: {use_bayar}, use_classification: {use_classification}, use_middle_features: {use_middle_features}")
         model = Unet(out_dim=out_dim, dim=dim, use_bayar=use_bayar, use_fft=use_fft, use_classification=use_classification,
-                     use_middle_features=use_middle_features).cuda()
+                     use_middle_features=use_middle_features, use_hierarchical_class=use_hierarchical_class).cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
         return model
