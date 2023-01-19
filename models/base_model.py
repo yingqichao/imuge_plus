@@ -731,7 +731,7 @@ class BaseModel():
 
         return attacked_real_jpeg.cuda()
 
-    def benign_attack_ndarray_auto_control(self, *, forward_image, psnr_requirement=None, get_label=False,
+    def benign_attack_ndarray_auto_control(self, *, forward_image, psnr_requirement=None, index=None, get_label=False,
                                            local_compensate=True, global_compensate=False):
         '''
             real-world attack, whose setting should be fed.
@@ -740,6 +740,9 @@ class BaseModel():
         ## torch.ones((1,1),device=a.get_device())
         # compare_image = forward_image.detach().cpu()
         # index_for_postprocessing = index  # self.global_step
+        if index is not None:
+            index = index % self.amount_of_benign_attack
+
         if psnr_requirement is None:
             psnr_requirement = self.opt['minimum_PSNR_caused_by_attack']
 
@@ -753,23 +756,23 @@ class BaseModel():
             grid = forward_image[idx_atkimg]
             max_try, tried, psnr, psnr_best = 1, 0, 0, 0
             realworld_attack = None
-
-            index = np.random.randint(0,10000)
+            if index is None:
+                index = np.random.randint(0,10000)
 
             kernel_list = random.sample([3, 5, 7], 3)
-            resize_list = [
+            resize_list = random.sample([
+                (
+                int(self.random_float(0.5, 0.7) * self.width_height), int(self.random_float(1.25, 2) * self.width_height)),
+                (
+                int(self.random_float(1.25, 2) * self.width_height), int(self.random_float(0.5, 0.7) * self.width_height)),
                 (
                 int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
-                (
-                int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
-                (
-                int(self.random_float(0.5, 2) * self.width_height), int(self.random_float(0.5, 2) * self.width_height)),
-            ]
-            quality_list = [
+            ],3)
+            quality_list = random.sample([
                 int(self.get_quality_idx_by_iteration(index=index) * 5),
                 int(self.get_quality_idx_by_iteration(index=index) * 5),
                 int(self.get_quality_idx_by_iteration(index=index) * 5),
-            ]
+            ],3)
 
             while tried<max_try:
                 realworld_candidate = self.real_world_attacking_on_ndarray(grid=grid, qf_after_blur=quality_list[tried],

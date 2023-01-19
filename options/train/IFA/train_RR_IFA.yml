@@ -19,6 +19,23 @@ gpu_ids: [2]
 restart_step: 1000
 model_save_period: 2000
 
+simulated_resize_indices: [0,5]
+simulated_gblur_indices: [1]
+simulated_mblur_indices: [2]
+simulated_AWGN_indices: [4]
+simulated_strong_JPEG_indices: [3,6,7]
+simulated_weak_JPEG_indices: []
+
+simulated_hue: [0]
+simulated_contrast: [1,4]
+simulated_saturation: [2,5]
+simulated_brightness: [3,6]
+simulated_gamma: []
+
+weak_JPEG_lower_bound: 20
+strong_JPEG_upper_bound: 20
+strong_JPEG_lower_bound: 10
+
 
 
 datasets:

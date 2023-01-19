@@ -77,9 +77,8 @@ class PSNR(nn.Module):
 
     def from_mse_to_psnr(self, pred_mse):
         lst, lmse = [], []
-        pred_mse = pred_mse * (255**2)
         for i in range(pred_mse.shape[0]):
-            mse = pred_mse[i]
+            mse = pred_mse[i] * (255**2)
             if mse == 0:
                 psnr = self.identity_PSNR
             else:
