@@ -277,7 +277,7 @@ class BaseModel():
 
 
     ### todo: Helper functions
-    def exponential_weight_for_backward(self, *, value, exp=1.5, norm=1, alpha=0.5, psnr_thresh=None):
+    def exponential_weight_for_backward(self, *, value, exp=1.5, norm=1, alpha=0.5, psnr_thresh=None, penalize=1):
         '''
             exponential loss for recovery loss's weight.
             PSNR  29     30     31     32     33(base)   34     35
@@ -289,7 +289,7 @@ class BaseModel():
             alpha = self.opt['CE_hyper_param']
         if psnr_thresh is None:
             psnr_thresh = self.opt['psnr_thresh']
-        return min(1, alpha*((exp)**(norm*(value-psnr_thresh))))
+        return min(penalize, alpha*((exp)**(norm*(value-psnr_thresh))))
 
     def update_history_losses(self, *, index, PSNR, loss, loss_CE, PSNR_attack):
         '''

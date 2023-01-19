@@ -15,7 +15,7 @@ detection_dataset: CASIA2
 predictor_folder: /groupshare/IFA_results/model/IFA_distill/
 
 load_predictor_models: 0_9999_qf_predict.pth
-load_generator_models: 0_9999_generator.pth
+load_generator_models: ~ #0_9999_generator.pth
 consider_mask_prediction: false
 do_augment: true
 
@@ -67,7 +67,7 @@ datasets:
     use_shuffle: true
     n_workers: 4 # per GPU
 
-    batch_size: 4 # 4
+    batch_size: 6 # 4
     GT_size: 256 # 608
 
     color: RGB
@@ -82,7 +82,7 @@ datasets:
 
 
 train:
-  lr_scratch: !!float 2e-4
+  lr_scratch: !!float 1e-4
   lr_finetune: !!float 2e-5
 #  lr_generator: !!float 1e-5
   beta1: 0.9 #0.9

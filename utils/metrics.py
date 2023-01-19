@@ -44,7 +44,7 @@ class PSNR(nn.Module):
         psnr = sum(lst) / len(lst)
         # mse = sum(lmse) / len(lmse)
 
-        return psnr
+        return torch.tensor(psnr,device=a.device)
 
     def with_mse(self,a,b):
         # mse = torch.mean((a.float() - b.float()) ** 2)
