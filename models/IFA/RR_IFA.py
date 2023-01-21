@@ -143,7 +143,7 @@ class RR_IFA(base_IFA):
         self.zero_metric = torch.zeros((self.batch_size,3,self.width_height,self.width_height)).cuda()
 
         ### todo: network
-        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=[1], use_bayar=3, use_fft=True, use_hierarchical_class=True,
+        self.qf_predict_network = self.define_ddpm_unet_network(out_dim=[1], use_bayar=3, dim=64, use_fft=True, use_hierarchical_class=True,
                                                                 use_classification=False, use_normal_output=True)
         self.generator = self.define_ddpm_unet_network(out_dim=[3*2*1], dim=32, use_bayar=0, use_fft=True,
                                                                 use_classification=False, use_middle_features=False)
@@ -171,7 +171,7 @@ class RR_IFA(base_IFA):
 
         ### todo: network
         self.qf_predict_network = self.define_ddpm_unet_network(out_dim=[1], use_bayar=3, use_fft=True, use_SRM=True, use_hierarchical_segment=[1],
-                                                                use_classification=None, use_hierarchical_class=[1,6],
+                                                                use_classification=None, use_hierarchical_class=[6,6],
                                                                 use_normal_output=None)
 
         if self.opt['use_restore']:
@@ -518,18 +518,19 @@ class RR_IFA(base_IFA):
                                                                         index=np.random.randint(0, 10000),
                                                                         percent_range=(0.0, 0.3))
 
+        #self.l2_loss(self.real_H, outsize_pattern) # *torch.mean(((255*predicted_mse_map[i]).float()) ** 2)
+
         ## outside pattern: reserve the last 2 images
-        auth_non_tamper, auth_tamper = self.real_H[3*self.batch_size//4:], self.real_H[:3 * self.batch_size // 4]
-        index_label = torch.tensor([index] * (3*self.batch_size//4) + [5] * (self.batch_size//4), device=self.real_H.device).long()
+        auth_non_tamper, auth_tamper = self.real_H[3 * self.batch_size // 4:], self.real_H[:3 * self.batch_size // 4]
+        index_label = torch.tensor([index] * (3 * self.batch_size // 4) + [5] * (self.batch_size // 4),
+                                   device=self.real_H.device).long()
 
         compressed_real_H = self.global_post_process(original=auth_tamper, get_label=False, index=index)
 
-        outsize_pattern = torch.cat([compressed_real_H, auth_non_tamper],dim=0)
-
-        #self.l2_loss(self.real_H, outsize_pattern) # *torch.mean(((255*predicted_mse_map[i]).float()) ** 2)
+        outside_pattern = torch.cat([compressed_real_H, auth_non_tamper], dim=0)
 
         ## inside pattern: reserve the first two images
-        auth_non_tamper, auth_tamper = self.real_H[:self.batch_size//4], self.real_H[self.batch_size//4:]
+        auth_non_tamper, auth_tamper = outside_pattern[:self.batch_size//4], outside_pattern[self.batch_size//4:]
 
         masks_GT = torch.cat([self.zero_metric, masks_GT_full[self.batch_size//4:]],dim=0)
 
@@ -539,11 +540,14 @@ class RR_IFA(base_IFA):
         degraded = self.global_post_process(original=auth_tamper, get_label=False, index=index_fg)
         inside_pattern = torch.cat([auth_non_tamper, degraded], dim=0)
 
-        mixed_pattern_images = outsize_pattern * (1 - masks_GT) + inside_pattern * masks_GT
+        mixed_pattern_images = outside_pattern * (1 - masks_GT) + inside_pattern * masks_GT
 
-        mse_gt = torch.mean((self.real_H - mixed_pattern_images) ** 2, dim=[1, 2, 3]).unsqueeze(1)
+
+        # mse_gt = torch.mean((self.real_H - mixed_pattern_images) ** 2, dim=[1, 2, 3]).unsqueeze(1)
         psnr_distort, _ = self.psnr.with_mse(self.postprocess(mixed_pattern_images),
                                                        self.postprocess(self.real_H))
+        # labels: <25 25-30 30-35 35-40 40-45 >45
+        psnr_label = torch.tensor([min(max((i//5)-4,0),5) for i in psnr_distort],device=self.real_H.device).long()
         logs['psnr_distort'] = sum(psnr_distort) / self.batch_size
 
 
@@ -583,17 +587,17 @@ class RR_IFA(base_IFA):
                 predicted_mask = hier_seg_output[0]
                 ### predict global error map
                 # predicted_mse_map = self.clamp_with_grad(predicted_mse_map)
-                loss_psnr_regress = self.l2_loss(predicted_mse, mse_gt)
+                loss_psnr_regress = self.ce_loss(predicted_mse, psnr_label)
                 loss_post_class = self.ce_loss(predicted_post_class, index_label)
                 # predicted_mse = torch.mean(predicted_mse_map**2,dim=[1,2,3])
 
-                predicted_psnr = self.psnr.from_mse_to_psnr(predicted_mse)
+                # predicted_psnr = self.psnr.from_mse_to_psnr(predicted_mse)
 
                 ### predict local noise inconsistency
                 loss_mask = self.bce_with_logit_loss(predicted_mask, masks_GT)
 
                 loss = 0
-                loss += loss_mask
+                loss += 2*loss_mask
                 loss += loss_psnr_regress
                 loss += loss_post_class
                 loss.backward()
@@ -606,17 +610,16 @@ class RR_IFA(base_IFA):
                 logs['psnr_loss'] = loss_psnr_regress.item()
                 logs['mask_loss'] = loss_mask.item()
                 logs['post_class'] = loss_post_class.item()
-                logs['psnr_pred'] = sum(predicted_psnr) / len(predicted_psnr)
-
+                # logs['psnr_pred'] = sum(predicted_psnr) / len(predicted_psnr)
                 # logs['psnr_diff'] = sum([abs(predicted_psnr[i]-psnr_distort[i]) for i in range(len(psnr_distort))])/len(psnr_distort)
 
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             images = stitch_images(
                 self.postprocess(self.real_H),
-                self.postprocess(outsize_pattern),
-                self.postprocess(10 * torch.abs(outsize_pattern - self.real_H)),
+                self.postprocess(outside_pattern),
+                self.postprocess(10 * torch.abs(outside_pattern - self.real_H)),
                 self.postprocess(mixed_pattern_images),
-                self.postprocess(10 * torch.abs(outsize_pattern-mixed_pattern_images)),
+                self.postprocess(10 * torch.abs(outside_pattern-mixed_pattern_images)),
                 # self.postprocess(10*torch.abs(predicted_mse_map)),
                 self.postprocess(mixed_pattern_images_post),
                 self.postprocess(torch.sigmoid(predicted_mask)),

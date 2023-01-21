@@ -308,6 +308,7 @@ class Attention(nn.Module):
 
 # model
 import numpy as np
+from network.attention.fcanet_channel_attention_official import MultiSpectralAttentionLayer
 class Unet(nn.Module):
     def __init__(
         self,
@@ -346,7 +347,7 @@ class Unet(nn.Module):
             self.bayar_mask[2, 2] = 0
             self.bayar_final = (torch.tensor(np.zeros((5, 5)))).cuda()
             self.bayar_final[2, 2] = -1
-            self.activation = nn.ELU()
+            self.activation = nn.SiLU()
             input_channels += self.use_bayar
         self.use_SRM = use_SRM
         if self.use_SRM:
@@ -386,7 +387,7 @@ class Unet(nn.Module):
         self.time_mlp = nn.Sequential(
             sinu_pos_emb,
             nn.Linear(fourier_dim, time_dim),
-            nn.GELU(),
+            nn.SiLU(),
             nn.Linear(time_dim, time_dim)
         )
 
@@ -437,7 +438,7 @@ class Unet(nn.Module):
         if self.use_classification:
             self.middle_class_mlp = nn.Sequential(
                 nn.Linear(mid_dim, mid_dim),
-                nn.ReLU(),
+                nn.SiLU(),
                 nn.Linear(mid_dim, self.use_classification)
             )
 
@@ -450,14 +451,26 @@ class Unet(nn.Module):
         ######## feature refiners
         if (len(self.use_hierarchical_segment)+len(self.use_hierarchical_class))>0:
             self.refine_layers = nn.ModuleList([])
+            self.gates = nn.ModuleList([])
             for idx in range(len(self.use_hierarchical_segment)+len(self.use_hierarchical_class)):
                 self.refine_layers.append(
                     nn.Sequential(
                         nn.Conv2d(sum(dims_hierachical), dim, 1),
                         block_klass(dim, dim, time_emb_dim=time_dim),
                         # nn.Conv2d(dim, self.out_dim[0], 1)
+                    )
                 )
-            )
+
+                self.gates.append(
+                    nn.Sequential(
+                            nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+                            nn.Flatten(),
+                            nn.Linear(sum(dims_hierachical), dim),
+                            nn.SiLU(),
+                            nn.Linear(dim, len(self.use_hierarchical_segment)+len(self.use_hierarchical_class)),
+                            nn.Softmax(dim=1),
+                    )
+                )
 
         ######## hierarchical feat output (classification)
         if self.use_hierarchical_class:
@@ -468,7 +481,7 @@ class Unet(nn.Module):
                         nn.AdaptiveAvgPool2d(output_size=(1, 1)),
                         nn.Flatten(),
                         nn.Linear(dim, dim),
-                        nn.ReLU(),
+                        nn.SiLU(),
                         nn.Linear(dim, self.use_hierarchical_class[idx])
                     )
                 )
@@ -583,10 +596,19 @@ class Unet(nn.Module):
         return x, r, t, middle_feats, x_cls
 
     def forward(self, x, time=None, x_self_cond = None):
-        hier_class_output, hier_seg_output, hier_post_feats = [], [], []
+        hier_class_output, hier_seg_output, hier_post_feats, refined_feats, gates = [], [], [], [], []
         x, r, t, middle_feats, x_cls = self.feature_extract(x, x_self_cond)
+        cat_feats = torch.cat(middle_feats, dim=1)
         for idx in range(len(self.use_hierarchical_class)+len(self.use_hierarchical_segment)):
-            out = self.refine_layers[idx](torch.cat(middle_feats, dim=1))
+            refined = self.refine_layers[idx](cat_feats)
+            gate = self.gates[idx](cat_feats)
+            refined_feats.append(refined)
+            gates.append(gate)
+
+        for idx in range(len(self.use_hierarchical_class) + len(self.use_hierarchical_segment)):
+            out = 0
+            for idx_gate in range(len(self.use_hierarchical_class) + len(self.use_hierarchical_segment)):
+                out += refined_feats[idx_gate]*gates[idx][:,idx_gate].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             hier_post_feats.append(out)
 
         # if self.use_hierarchical_class:
