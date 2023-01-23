@@ -347,13 +347,13 @@ class BaseModel():
     def create_folders_for_the_experiment(self):
         pass
 
-    def define_ddpm_unet_network(self, out_dim=[3], dim = 32, **kwargs):
+    def define_ddpm_unet_network(self, dim = 32, **kwargs):
         from network.CNN_architectures.ddpm_lucidrains import Unet
         # input = torch.ones((3, 3, 128, 128)).cuda()
         # output = model(input, torch.zeros((1)).cuda())
 
         print(f"using ddpm_unet, {kwargs}")
-        model = Unet(out_dim=out_dim, dim=dim, **kwargs).cuda()
+        model = Unet(dim=dim, **kwargs).cuda()
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)
         return model
@@ -732,7 +732,7 @@ class BaseModel():
         return attacked_real_jpeg.cuda()
 
     def benign_attack_ndarray_auto_control(self, *, forward_image, psnr_requirement=None, index=None, get_label=False,
-                                           local_compensate=True, global_compensate=False):
+                                           local_compensate=True, global_compensate=False, adjust_color=False):
         '''
             real-world attack, whose setting should be fed.
         '''
@@ -826,19 +826,19 @@ class BaseModel():
         # attacked_real_jpeg = attack_backup
 
         ## color adjustment
-        # if self.opt['do_augment'] and np.random.rand() > 0.5:
-        #     attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_real_jpeg,
-        #                                                                 index=np.random.randint(0, 10000),
-        #                                                                 scale=1)
-        #
-        #
-        #     # psnr = self.psnr(self.postprocess(attacked_adjusted), self.postprocess(forward_image)).item()
-        #     ## global compensate (color) to make dense probailities
-        #     if global_compensate and np.random.rand() > 0.5: # and psnr<self.opt['minimum_PSNR_caused_by_attack']:
-        #         beta = np.random.rand()
-        #         attacked_real_jpeg = beta * attacked_real_jpeg + (1 - beta) * attacked_adjusted
-        #     else:
-        #         attacked_real_jpeg = attacked_adjusted
+        if adjust_color:
+            attacked_adjusted = self.data_augmentation_on_rendered_rgb(attacked_real_jpeg,
+                                                                        index=np.random.randint(0, 10000),
+                                                                        scale=1)
+
+
+            # psnr = self.psnr(self.postprocess(attacked_adjusted), self.postprocess(forward_image)).item()
+            ## global compensate (color) to make dense probailities
+            # if global_compensate and np.random.rand() > 0.5: # and psnr<self.opt['minimum_PSNR_caused_by_attack']:
+            #     beta = np.random.rand()
+            #     attacked_real_jpeg = beta * attacked_real_jpeg + (1 - beta) * attacked_adjusted
+            # else:
+            attacked_real_jpeg = attacked_adjusted
         # if get_label:
         #     ## calculate psnr label
         #     psnr_label, mix_num, psnr_avg, mse_avg = self.calculate_psnr_label(real=forward_image, fake=attacked_real_jpeg,

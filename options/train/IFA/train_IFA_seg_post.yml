@@ -9,7 +9,7 @@ psnr_thresh: 28
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: ~ #5_1999_qf_predict.pth #4_3999_qf_predict.pth
+load_predictor_models: ~ #0_13999_qf_predict.pth #4_3999_qf_predict.pth
 consider_mask_prediction: false
 do_augment: true
 
@@ -62,7 +62,7 @@ datasets:
     use_shuffle: true
     n_workers: 4 # per GPU
 
-    batch_size: 4 # 4
+    batch_size: 8 # 4
     GT_size: 256 # 608
 
     color: RGB

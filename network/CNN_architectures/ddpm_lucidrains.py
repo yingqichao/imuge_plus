@@ -167,9 +167,12 @@ class RandomOrLearnedSinusoidalPosEmb(nn.Module):
 # building block modules
 
 class Block(nn.Module):
-    def __init__(self, dim, dim_out, groups = 8):
+    def __init__(self, dim, dim_out, groups = 8, use_bayar=False):
         super().__init__()
-        self.proj = WeightStandardizedConv2d(dim, dim_out, 3, padding = 1)
+        if use_bayar:
+            self.proj = BayarConv(dim, dim_out, groups=2)
+        else:
+            self.proj = WeightStandardizedConv2d(dim, dim_out, 5, padding = 2)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
 
@@ -185,7 +188,7 @@ class Block(nn.Module):
         return x
 
 class ResnetBlock(nn.Module):
-    def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8, enable_fft = True):
+    def __init__(self, dim, dim_out, *, time_emb_dim = None, groups = 8, enable_fft = True, use_bayar=False):
         super().__init__()
         self.time_mlp = nn.Sequential(
             nn.SiLU(),
@@ -199,13 +202,13 @@ class ResnetBlock(nn.Module):
 
         if self.enable_fft:
 
-            self.block1 = Block(dim, dim_out//2, groups = groups)
+            self.block1 = Block(dim, dim_out//2, groups = groups, use_bayar=use_bayar)
             self.block2 = Block(dim_out//2, dim_out//2, groups = groups)
 
             self.block1_fft = Block(2*dim+2, dim_out, groups=groups)
             self.block2_fft = Block(dim_out, dim_out, groups=groups)
         else:
-            self.block1 = Block(dim, dim_out , groups=groups)
+            self.block1 = Block(dim, dim_out , groups=groups, use_bayar=use_bayar)
             self.block2 = Block(dim_out, dim_out, groups=groups)
 
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
@@ -307,12 +310,48 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 # model
+# from einops.layers.torch import Reduce
+class BayarConv(nn.Module):
+    def __init__(self, num_in, num_out, groups=2):
+        super().__init__()
+        self.groups = groups
+        assert groups<=2, "group of bayarconv cannot exceed 2!"
+        self.num_in_bayar = num_in
+        self.num_out_bayar = num_out//groups
+        self.BayarConv2D = nn.Conv2d(num_in, num_out//groups, 5, 1, padding=2, bias=False)
+        self.bayar_mask = (torch.tensor(np.ones(shape=(5, 5)))).cuda()
+        self.bayar_mask[2, 2] = 0
+        self.bayar_final = (torch.tensor(np.zeros((5, 5)))).cuda()
+        self.bayar_final[2, 2] = -1
+        if groups>1:
+            self.vanillaConv2D = nn.Conv2d(num_in, num_out // groups, 5, 1, padding=2, bias=False)
+
+        self.norm = nn.GroupNorm(groups, num_out)
+        self.act = nn.SiLU()
+
+
+    def forward(self, x):
+        self.BayarConv2D.weight.data *= self.bayar_mask
+        self.BayarConv2D.weight.data *= torch.pow(
+            self.BayarConv2D.weight.data.sum(axis=(2, 3)).view(self.num_out_bayar, self.num_in_bayar, 1, 1), -1)
+        self.BayarConv2D.weight.data += self.bayar_final
+
+        if self.groups>1:
+            x = torch.cat([self.BayarConv2D(x), self.vanillaConv2D(x)],dim=1)
+        else:
+            x = self.BayarConv2D(x)
+        x = self.norm(x)
+        x = self.act(x)
+
+        return x
+
+
 import numpy as np
 from network.attention.fcanet_channel_attention_official import MultiSpectralAttentionLayer
 class Unet(nn.Module):
     def __init__(
         self,
-        out_dim,
+        # out_dim,
         init_dim=None,
         dim=32,
         dim_mults=[1, 2, 4, 8],
@@ -329,7 +368,7 @@ class Unet(nn.Module):
         # use_middle_features = False,
         use_hierarchical_class = None,
         use_hierarchical_segment = None,
-        use_normal_output = True,
+        use_normal_output = None,
         use_SRM = False
     ):
         super().__init__()
@@ -339,14 +378,17 @@ class Unet(nn.Module):
         # self.use_middle_features = use_middle_features
         self.use_hierarchical_class = use_hierarchical_class
         self.use_hierarchical_segment = use_hierarchical_segment
+        self.use_normal_output = use_normal_output
+        self.use_classification = use_classification
         # determine dimensions
         self.use_bayar = use_bayar
         if self.use_bayar:
-            self.BayarConv2D = nn.Conv2d(3, self.use_bayar, 5, 1, padding=2, bias=False)
-            self.bayar_mask = (torch.tensor(np.ones(shape=(5, 5)))).cuda()
-            self.bayar_mask[2, 2] = 0
-            self.bayar_final = (torch.tensor(np.zeros((5, 5)))).cuda()
-            self.bayar_final[2, 2] = -1
+            self.BayarConv2D = BayarConv(3, self.use_bayar, groups=1)
+            # self.BayarConv2D = nn.Conv2d(3, self.use_bayar, 5, 1, padding=2, bias=False)
+            # self.bayar_mask = (torch.tensor(np.ones(shape=(5, 5)))).cuda()
+            # self.bayar_mask[2, 2] = 0
+            # self.bayar_final = (torch.tensor(np.zeros((5, 5)))).cuda()
+            # self.bayar_final[2, 2] = -1
             self.activation = nn.SiLU()
             input_channels += self.use_bayar
         self.use_SRM = use_SRM
@@ -365,7 +407,7 @@ class Unet(nn.Module):
 
 
         init_dim = default(init_dim, dim)
-        self.out_dim = out_dim  # default(out_dim, default_out_dim)
+        # self.out_dim = out_dim  # default(out_dim, default_out_dim)
 
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
@@ -401,7 +443,7 @@ class Unet(nn.Module):
             is_last = ind >= (num_resolutions - 1)
 
             self.downs.append(nn.ModuleList([
-                block_klass(dim_in, dim_in, time_emb_dim = time_dim),
+                block_klass(dim_in, dim_in, time_emb_dim = time_dim, use_bayar=use_bayar>0),
                 block_klass(dim_in, dim_in, time_emb_dim = time_dim),
                 Residual(PreNorm(dim_in, LinearAttention(dim_in))),
                 Downsample(dim_in, dim_out) if not is_last else nn.Conv2d(dim_in, dim_out, 3, padding = 1)
@@ -415,7 +457,6 @@ class Unet(nn.Module):
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
-
             self.ups.append(nn.ModuleList([
                 block_klass(dim_out + dim_in, dim_out, time_emb_dim = time_dim),
                 block_klass(dim_out + dim_in, dim_out, time_emb_dim = time_dim),
@@ -425,28 +466,34 @@ class Unet(nn.Module):
 
         self.up_res_block = block_klass(dim * 2, dim, time_emb_dim=time_dim)
 
-
-        ######## upsample layers
-        self.upsamples = nn.ModuleList([])
-        for item in reversed(dim_mults):
-            self.upsamples.append(nn.Upsample(scale_factor = item, mode = 'nearest'))
-
-        # default_out_dim = channels * (1 if not learned_variance else 2)
-
-        ######## classification head at the middle
-        self.use_classification = use_classification
-        if self.use_classification:
-            self.middle_class_mlp = nn.Sequential(
-                nn.Linear(mid_dim, mid_dim),
-                nn.SiLU(),
-                nn.Linear(mid_dim, self.use_classification)
-            )
-
         ######## norm layers
         # self.norm_class = nn.ModuleList([])
         dims_hierachical = [*map(lambda m: dim * m, reversed(dim_mults))]
         # for i in range(len(self.ups)):
         #     self.norm_class.append(nn.LayerNorm(dims_hierachical[i]))
+
+        ######## upsample layers
+        self.upsamples = nn.ModuleList([])
+        self.bottleneck = nn.ModuleList([])
+        for item in reversed(dim_mults):
+            self.upsamples.append(nn.Upsample(scale_factor = item, mode = 'nearest'))
+            self.bottleneck.append(nn.Conv2d(dim*item, dim, 1))
+        # default_out_dim = channels * (1 if not learned_variance else 2)
+
+        ######## classification head at the middle
+        if self.use_classification:
+            self.middle_class_mlp = nn.ModuleList([])
+            for idx in range(len(self.use_classification)):
+                self.middle_class_mlp.append(
+                    nn.Sequential(
+                        nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+                        nn.Flatten(),
+                        nn.Linear(mid_dim, mid_dim),
+                        nn.SiLU(),
+                        nn.Linear(mid_dim, self.use_classification[idx])
+                    )
+                )
+
 
         ######## feature refiners
         if (len(self.use_hierarchical_segment)+len(self.use_hierarchical_class))>0:
@@ -455,7 +502,7 @@ class Unet(nn.Module):
             for idx in range(len(self.use_hierarchical_segment)+len(self.use_hierarchical_class)):
                 self.refine_layers.append(
                     nn.Sequential(
-                        nn.Conv2d(sum(dims_hierachical), dim, 1),
+                        # nn.Conv2d(sum(dims_hierachical), dim, 1),
                         block_klass(dim, dim, time_emb_dim=time_dim),
                         # nn.Conv2d(dim, self.out_dim[0], 1)
                     )
@@ -465,7 +512,7 @@ class Unet(nn.Module):
                     nn.Sequential(
                             nn.AdaptiveAvgPool2d(output_size=(1, 1)),
                             nn.Flatten(),
-                            nn.Linear(sum(dims_hierachical), dim),
+                            nn.Linear(dim, dim),
                             nn.SiLU(),
                             nn.Linear(dim, len(self.use_hierarchical_segment)+len(self.use_hierarchical_class)),
                             nn.Softmax(dim=1),
@@ -495,11 +542,16 @@ class Unet(nn.Module):
                         nn.Conv2d(dim, self.use_hierarchical_segment[idx], self.use_hierarchical_segment[idx])
                 )
             )
-        # self.use_normal_output = use_normal_output
-        # if self.use_normal_output:
-        #     self.final_conv = nn.Conv2d(dim, self.out_dim[-1], 1)
 
-    def feature_extract(self,input, time=None, x_self_cond=None):
+        if self.use_normal_output:
+            self.final_conv = nn.ModuleList([])
+            for idx in range(len(self.use_normal_output)):
+                self.final_conv.append(
+                    nn.Conv2d(dim, self.use_normal_output[-1], 1)
+                )
+
+
+    def feature_extract_encoder(self,input, time=None, x_self_cond=None):
         # outputs = []
         batch = input.shape[0]
         middle_feats = []
@@ -512,10 +564,10 @@ class Unet(nn.Module):
             input = torch.cat((x_self_cond, input), dim=1)
         ### support bayar conv as init
         if self.use_bayar:
-            self.BayarConv2D.weight.data *= self.bayar_mask
-            self.BayarConv2D.weight.data *= torch.pow(
-                self.BayarConv2D.weight.data.sum(axis=(2, 3)).view(self.use_bayar, 3, 1, 1), -1)
-            self.BayarConv2D.weight.data += self.bayar_final
+            # self.BayarConv2D.weight.data *= self.bayar_mask
+            # self.BayarConv2D.weight.data *= torch.pow(
+            #     self.BayarConv2D.weight.data.sum(axis=(2, 3)).view(self.use_bayar, 3, 1, 1), -1)
+            # self.BayarConv2D.weight.data += self.bayar_final
 
             # Symmetric padding
             # x = symm_pad(x, (2, 2, 2, 2))
@@ -555,13 +607,18 @@ class Unet(nn.Module):
         x = self.mid_attn(x)
         x = self.mid_block2(x, t)
 
-        x_cls = None
+        x_cls = []
         if self.use_classification:
-            x_cls = self.norm_class[0](x.mean([-2, -1]))
-            x_cls = self.middle_class_mlp(x_cls)
-            # outputs.append(x_cls)
-            # t = self.time_mlp(x_cls.detach())
+            # x_norm = x.mean([-2, -1])
+            for idx in range(len(self.use_classification)):
+                # x_cls = self.norm_class[0]()
+                x_cls.append(self.middle_class_mlp[idx](x))
+                # outputs.append(x_cls)
+                # t = self.time_mlp(x_cls.detach())
 
+        return x, r, t, h, middle_feats, x_cls
+
+    def feature_extract_decoder(self, x, r, t, h, middle_feats, x_cls):
         for idx, item in enumerate(self.ups):
             block1, block2, attn, upsample = item
             x = torch.cat((x, h.pop()), dim=1)
@@ -577,7 +634,7 @@ class Unet(nn.Module):
             #     middle_feats.append(self.upsamples[idx](x))
             # else:
             if idx!=len(self.ups)-1:
-                middle_feats.append(self.upsamples[idx](x))
+                middle_feats.append(self.bottleneck[idx](self.upsamples[idx](x)))
                 # middle_feats.append(self.norm_class[idx](x.mean([-2, -1])))
                 # middle_feats.append(x)
             x = upsample(x)
@@ -592,24 +649,31 @@ class Unet(nn.Module):
         middle_feats.append(x)
         ## varied last output: (x_cls), middle_feats, (hierarchical_class), (hierarchical_segment), (out)
         # outputs.append(middle_feats)
-
         return x, r, t, middle_feats, x_cls
 
     def forward(self, x, time=None, x_self_cond = None):
-        hier_class_output, hier_seg_output, hier_post_feats, refined_feats, gates = [], [], [], [], []
-        x, r, t, middle_feats, x_cls = self.feature_extract(x, x_self_cond)
-        cat_feats = torch.cat(middle_feats, dim=1)
-        for idx in range(len(self.use_hierarchical_class)+len(self.use_hierarchical_segment)):
-            refined = self.refine_layers[idx](cat_feats)
-            gate = self.gates[idx](cat_feats)
-            refined_feats.append(refined)
-            gates.append(gate)
+        num_tasks = len(self.use_hierarchical_class) + len(self.use_hierarchical_segment)
+        hier_class_output, hier_seg_output, hier_post_feats, refined_feats, gates, outs = [], [], [[]*(num_tasks)], [], [], []
+        x_out = None
+        x, r, t, h, middle_feats, x_cls = self.feature_extract_encoder(x, x_self_cond)
+        x, r, t, middle_feats, x_cls = self.feature_extract_decoder(x, r, t, h, middle_feats, x_cls)
+        # cat_feats = torch.cat(middle_feats, dim=1)
+        for i, feat in enumerate(middle_feats):
+            for idx in range(len(self.use_hierarchical_class)+len(self.use_hierarchical_segment)):
+                refined = self.refine_layers[idx](feat)
+                ## predict score on the refined feature
+                gate = self.gates[idx](refined)
+                refined_feats.append(refined)
+                gates.append(gate)
 
-        for idx in range(len(self.use_hierarchical_class) + len(self.use_hierarchical_segment)):
-            out = 0
-            for idx_gate in range(len(self.use_hierarchical_class) + len(self.use_hierarchical_segment)):
-                out += refined_feats[idx_gate]*gates[idx][:,idx_gate].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-            hier_post_feats.append(out)
+            for idx in range(len(self.use_hierarchical_class) + len(self.use_hierarchical_segment)):
+                hier_feats_task = hier_post_feats[idx]
+                out = 0
+                for idx_gate in range(len(self.use_hierarchical_class) + len(self.use_hierarchical_segment)):
+                    out += refined_feats[idx_gate]*gates[idx][:,idx_gate].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+
+                hier_feats_task.append(out)
+
 
         # if self.use_hierarchical_class:
         #     middle_feats.append(self.norm_class[idx](x.mean([-2, -1])))
@@ -621,28 +685,43 @@ class Unet(nn.Module):
             # for idx in range(len(self.ups)):
             #     middle_pool_feats.append(self.norm_class[idx](middle_feats[idx].mean([-2, -1])))
             for idx in range(len(self.use_hierarchical_class)):
-                out = self.hierarchical_class_mlp[idx](hier_post_feats[idx])
+                hier_feats_task = hier_post_feats[idx]
+                feats_class = []
+                for feat in hier_feats_task:
+                    out = self.hierarchical_class_mlp[idx](feat)
+                    feats_class.append(out)
+                out = reduce(torch.cat(feats_class, dim=1), 'b c -> b 1', 'mean')
                 hier_class_output.append(out)
+
+                # out = self.hierarchical_class_mlp[idx](hier_post_feats[idx])
+                # hier_class_output.append(out)
+
         if self.use_hierarchical_segment:
             # middle_upsample_feats = []
             # for idx in range(len(self.ups)):
             #     middle_upsample_feats.append(self.upsamples[idx](middle_feats[idx]))
             for idx in range(len(self.use_hierarchical_segment)):
-                out = self.final_hierarchical_conv[idx](hier_post_feats[idx+len(self.use_hierarchical_class)])
+                hier_feats_task = hier_post_feats[idx+len(self.use_hierarchical_class)]
+                feats_seg = []
+                for feat in hier_feats_task:
+                    out = self.final_hierarchical_conv[idx](feat)
+                    feats_seg.append(out)
+                out = reduce(torch.cat(feats_seg,dim=1), 'b c h w -> b 1 h w', 'max')
                 hier_seg_output.append(out)
-        # if self.use_normal_output:
-        #     out = self.final_conv(x)
-        #     outputs.append(out)
 
-        return middle_feats, hier_class_output, hier_seg_output, x_cls
+        if self.use_normal_output:
+            for idx in range(len(self.use_normal_output)):
+                out = self.final_conv[idx](middle_feats[-1])
+                outs.append(out)
 
-    def forward_detach_hierarchical_class(self, x=None, time=None, x_self_cond = None, middle_feats=None):
-        if middle_feats is None:
-            x, r, t, middle_feats, outputs = self.feature_extract(x, x_self_cond)
+        return middle_feats, hier_class_output, hier_seg_output, x_cls, outs
 
-        out = self.hierarchical_class_mlp(torch.cat(middle_feats, dim=1).detach())
+    def forward_classification(self, x=None, time=None, x_self_cond = None, middle_feats=None):
+        hier_class_output, hier_seg_output, hier_post_feats, refined_feats, gates, outs = [], [], [], [], [], []
+        x_out = None
+        x, r, t, h, middle_feats, x_cls = self.feature_extract_encoder(x, x_self_cond)
 
-        return out
+        return x_cls
 
 # gaussian diffusion trainer class
 

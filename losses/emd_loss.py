@@ -30,3 +30,11 @@ def emd_loss(p, q, r=2):
     for i in range(mini_batch_size):
         loss_vector.append(single_emd_loss(p[i], q[i], r=r))
     return sum(loss_vector) / mini_batch_size
+
+if __name__ == '__main__':
+    a=torch.zeros((2,6))
+    b=torch.zeros((2,6))
+    b[1,2] = 1
+    a = torch.softmax(a,dim=1)
+    loss = emd_loss(a,b)
+    print(loss)
