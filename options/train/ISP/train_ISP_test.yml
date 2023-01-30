@@ -1,17 +1,17 @@
-gpu_ids: [1, ]
-load_discriminator_models: 499
-load_RAW_models: 499 # 13999
-load_ISP_models: 16999 #43999
+gpu_ids: [2, ]
+load_discriminator_models: 11999
+load_RAW_models: 11999 # 13999
+load_ISP_models: 43999 #43999
 #load_MVSS_models: 8999
 #load_OSN_models: 8999
-load_localizer_models: 499
+load_localizer_models: 11999
 
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
 task_name_KD_JPEG_model: my_own_elastic
 task_name_customized_model: ISP_alone
 task_name_ISP_model: my_own_elastic #my_own_elastic
 
-activate_OSN: true
+activate_OSN: false
 test_baseline: false
 test_restormer: 0 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixisp训练版 4代表传统isp单独版
 
@@ -23,24 +23,24 @@ test_restormer: 0 # 1代表addISP 2是restormer 0是MixISP简单版 3代表mixis
 which_model_for_inpainting: 0
 
 #### model path dirs
-ISP_folder: /groupshare/ISP_results/complete_results/model/ISP_CANON/ # or finished_MVSS. Don't forget the last /!
-protection_folder: /groupshare/ISP_results/complete_results/model/OSN/
+ISP_folder: /groupshare/ISP_results/complete_results/model/ISP_RAISE/ # or finished_MVSS. Don't forget the last /!
+protection_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
 #detector_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #MVSS_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
 #OSN_folder: /groupshare/ISP_results/complete_results/model/my_own_elastic/
-detector_folder: /groupshare/ISP_results/complete_results/model/OSN/
-localizer_folder: /groupshare/ISP_results/complete_results/model/OSN/
+detector_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
+localizer_folder: /groupshare/ISP_results/complete_results/model/ours_finished/
 # MVSS_origin_localizer or MVSS_finetuned_localizer
-using_which_model_for_test: OSN_localizer #OSN_finetuned_localizer #OSN_localizer #Resfcn_localizer #discriminator_mask #CAT_localizer # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
+using_which_model_for_test: CAT #OSN_finetuned_localizer #OSN_localizer #Resfcn_localizer #discriminator_mask #CAT_localizer # note: restormer cannot be loaded simultaneously with OSN network, because they share the same variable
 ### these variables are the most important, make sure dont mess them up
 which_model_for_detector: discriminator_mask # using self.discriminator or using self.localizer
-using_which_dataset_for_test: FiveK_Canon
+using_which_dataset_for_test: Raise
 
 #### test settings
 inference_benign_attack_begin_idx: 0
 inference_load_real_world_tamper: false # true代表splicing
 inference_do_subsequent_prediction: false
-inference_tamper_index: 2 # 2代表cmf 1代表inpainting
+inference_tamper_index: 1 # 2代表cmf 1代表inpainting
 inference_save_image: true
 
 restart_step: 200000

@@ -264,16 +264,16 @@ class Performance_Test(Modified_invISP):
             )
 
         ### attacks generate them all ###
-        # attack_lists = [
-        #     (None, None, None), (0, None, None), (1, None, None), (2, None, None),
-        #     (3, 18, None), (3, 14, None), (3, 10, None), (4, None, None),
-        #     (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
-        # ]
+        attack_lists = [
+            (None, None, None), (0, None, None), (1, None, None), (2, None, None),
+            (3, 18, None), (3, 14, None), (3, 10, None), (4, None, None),
+            (None, None, 0), (None, None, 1), (None, None, 2), (None, None, 3),
+        ]
         # rescale gaussian blur median blur jpeg70
 
-        attack_lists = [
-            (0, None, None), (1, None, None), (2, None, None), (3, 14, None),
-        ]
+        # attack_lists = [
+        #     (0, None, None), (1, None, None), (2, None, None), (3, 14, None),
+        # ]
 
         # attack_lists = [
         #     (3, 14, 0),  (1, 20, 1), (2, 20, 2), (4, 20, 3)

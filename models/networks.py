@@ -783,7 +783,7 @@ class UnetResBlock(BaseNetwork):
 
 class UNetDiscriminator(BaseNetwork):
     def __init__(self, in_channels=3, out_channels=1, residual_blocks=4, init_weights=True, use_spectral_norm=True,
-                 use_SRM=True, dim=32, use_sigmoid=False, output_middle_feature=False):
+                 use_SRM=True, dim=16, use_sigmoid=False, output_middle_feature=False):
         super(UNetDiscriminator, self).__init__()
         # dim = 32
         self.use_SRM = use_SRM

@@ -29,7 +29,7 @@ import yaml
 # coco_classes = dict([(v["id"], v["name"]) for k, v in coco.cats.items()])
 # import lpips
 # from .networks import SPADE_UNet
-from inpainting_methods.lama_models import my_own_elastic
+from inpainting_methods.lama_models.my_own_elastic_dtcwt import my_own_elastic
 from models.base_model import BaseModel
 # from .invertible_net import Inveritible_Decolorization_PAMI
 # from models.networks import UNetDiscriminator
@@ -393,9 +393,9 @@ class Modified_invISP(BaseModel):
 
     def predict_with_sigmoid_eg_resfcn_mantra(self, *, model, attacked_image):
         """
-            eg: resfcn, mantranet
+            eg: resfcn, mantranet (todo: modified - mantra is ok now)
         """
-        pred_resfcn = model(attacked_image)
+        _, pred_resfcn = model(attacked_image)
         pred_resfcn = torch.sigmoid(pred_resfcn)
 
         return pred_resfcn
@@ -705,8 +705,7 @@ class Modified_invISP(BaseModel):
     def define_UNet_as_ISP(self):
         print("using Unet as ISP")
         model = UNetDiscriminator(in_channels=3, out_channels=3, use_SRM=False).cuda()
-        model = DistributedDataParallel(model,
-                                                          device_ids=[torch.cuda.current_device()],
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()],
                                                           find_unused_parameters=True)
         return model
 
@@ -782,8 +781,8 @@ class Modified_invISP(BaseModel):
     def define_inpainting_lama(self):
         from inpainting_methods.saicinpainting.training.trainers import load_checkpoint
         print("Building LAMA...........please wait...")
-        checkpoint_path = './big-lama/models/best.ckpt'
-        train_config_path = './big-lama/config.yaml'
+        checkpoint_path = '/groupshare/codes/inpainting_methods/big-lama/models/best.ckpt'
+        train_config_path = '/groupshare/codes/inpainting_methods/big-lama/config.yaml'
         with open(train_config_path, 'r') as f:
             train_config = OmegaConf.create(yaml.safe_load(f))
 

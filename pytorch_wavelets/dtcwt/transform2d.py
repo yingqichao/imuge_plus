@@ -7,7 +7,7 @@ from pytorch_wavelets.dtcwt.lowlevel import prep_filt
 from pytorch_wavelets.dtcwt.transform_funcs import FWD_J1, FWD_J2PLUS
 from pytorch_wavelets.dtcwt.transform_funcs import INV_J1, INV_J2PLUS
 from pytorch_wavelets.dtcwt.transform_funcs import get_dimensions6
-from pytorch_wavelets.dwt import mode_to_int
+from pytorch_wavelets.dwt.lowlevel import mode_to_int
 
 
 def pm(a, b):

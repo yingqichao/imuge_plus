@@ -6,6 +6,7 @@ from inpainting_methods.ZITSinpainting.src.losses.perceptual import ResNetPL
 from inpainting_methods.ZITSinpainting.src.models.LaMa import *
 from inpainting_methods.ZITSinpainting.src.models.upsample import StructureUpsampling
 from inpainting_methods.ZITSinpainting.src.utils import get_lr_schedule_with_warmup, torch_init_model
+from inpainting_methods.ZITSinpainting.src.models.TSR_model import EdgeLineGPTConfig, EdgeLineGPT256RelBCE
 
 
 def make_optimizer(parameters, kind='adamw', **kwargs):

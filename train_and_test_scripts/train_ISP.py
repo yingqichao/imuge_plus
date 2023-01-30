@@ -31,7 +31,10 @@ def training_script_ISP(*, opt, args, rank, model, train_loader, val_loader, tra
         # running_CE_MVSS, running_CE_mantra, running_CE_resfcn, valid_idx = 0.0, 0.0, 0.0, 0.0
         if opt['dist']:
             train_sampler.set_epoch(epoch)
-        for idx, train_data in enumerate(train_loader):
+        idx = 0
+        # for idx, train_data in enumerate(train_loader):
+        while True:
+
             #### get item from another dataset
             # try:
             #     train_item_1 = next(train_generator_1)
@@ -39,10 +42,13 @@ def training_script_ISP(*, opt, args, rank, model, train_loader, val_loader, tra
             #     print("The end of val set is reached. Refreshing...")
             #     train_generator_1 = iter(train_loader_1)
             #     train_item_1 = next(train_generator_1)
-            #### training
-            model.feed_data_router(batch=train_data, mode=args.mode)
+            # #### training
+            # model.feed_data_router(batch=train_data, mode=args.mode)
 
-            logs, debug_logs, did_val = model.optimize_parameters_router(mode=args.mode, step=current_step, epoch=epoch)
+            # val
+            model.feed_data_router(batch=val_item, mode=args.mode)
+
+            logs, debug_logs, did_val = model.optimize_parameters_router(mode=args.mode, step=current_step)
             if did_val:
                 try:
                     val_item = next(val_generator)
@@ -52,18 +58,19 @@ def training_script_ISP(*, opt, args, rank, model, train_loader, val_loader, tra
                     info_str = f'valid_idx:{valid_idx} '
                     for key in running_list:
                         info_str += f'{key}: {running_list[key] / valid_idx:.4f} '
-                    with open('./test_result_CASIA.txt', 'a') as f:
+                    with open('./test_result_2.txt', 'a') as f:
                         f.write(info_str + '\n')
                     f.close()
-                    raise StopIteration()
-                    # opt['inference_benign_attack_begin_idx'] = opt['inference_benign_attack_begin_idx'] + 1
-                    # if opt['inference_benign_attack_begin_idx'] >= 24:
-                    #     raise StopIteration()
-                    # current_step = 0
-                    # running_list = {} #[0.0] * len(variables_list)
-                    # valid_idx = 0
-                    # val_generator = iter(val_loader)
-                    # val_item = next(val_generator)
+                    # raise StopIteration()
+                    opt['inference_benign_attack_begin_idx'] = opt['inference_benign_attack_begin_idx'] + 1
+                    if opt['inference_benign_attack_begin_idx'] >= 24:
+                        raise StopIteration()
+                    current_step = 0
+                    idx = 0
+                    running_list = {} #[0.0] * len(variables_list)
+                    valid_idx = 0
+                    val_generator = iter(val_loader)
+                    val_item = next(val_generator)
                 model.feed_data_val_router(batch=val_item, mode=args.mode)
 
             # if variables_list[0] in logs or variables_list[1] in logs or variables_list[2] in logs:
@@ -97,9 +104,10 @@ def training_script_ISP(*, opt, args, rank, model, train_loader, val_loader, tra
                     valid_idx = 0
 
             current_step += 1
+            idx += 1
 
-        ## todo: inference 100 images
-        from inference_RR_IFA import inference_script_RR_IFA
-        inference_script_RR_IFA(opt=opt, args=args, rank=rank, model=model,
-                                train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler,
-                                num_images=100)
+        # ## todo: inference 100 images
+        # from inference_RR_IFA import inference_script_RR_IFA
+        # inference_script_RR_IFA(opt=opt, args=args, rank=rank, model=model,
+        #                         train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler,
+        #                         num_images=100)

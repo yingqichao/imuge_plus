@@ -146,23 +146,23 @@ class Protected_Image_Generation(Modified_invISP):
         RAW_PSNR = self.psnr(self.postprocess(original_1), self.postprocess(modified_input_1)).item()
         logs['RGB_PSNR_1'] = RAW_PSNR
 
-        # rawpy
-        modified_input_2 = self.pipeline_ISP_gathering(modified_raw_one_dim=modified_raw_one_dim,
-                                                          file_name=file_name, gt_rgb=gt_rgb, using_rawpy=True, camera_name=camera_name)
-        modified_input_2 = self.clamp_with_grad(modified_input_2)
-
-        original_2 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim, file_name=file_name,
-                                                 gt_rgb=gt_rgb, using_rawpy=True, camera_name=camera_name)
-        original_2 = self.clamp_with_grad(original_2)
-
-        # tradISP
-        modified_input_3 = self.pipeline_ISP_gathering(modified_raw_one_dim=modified_raw_one_dim,
-                                                       file_name=file_name, gt_rgb=gt_rgb)
-        modified_input_3 = self.clamp_with_grad(modified_input_3)
-
-        original_3 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim, file_name=file_name,
-                                                 gt_rgb=gt_rgb)
-        original_3 = self.clamp_with_grad(original_3)
+        # # rawpy
+        # modified_input_2 = self.pipeline_ISP_gathering(modified_raw_one_dim=modified_raw_one_dim,
+        #                                                   file_name=file_name, gt_rgb=gt_rgb, using_rawpy=True, camera_name=camera_name)
+        # modified_input_2 = self.clamp_with_grad(modified_input_2)
+        #
+        # original_2 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim, file_name=file_name,
+        #                                          gt_rgb=gt_rgb, using_rawpy=True, camera_name=camera_name)
+        # original_2 = self.clamp_with_grad(original_2)
+        #
+        # # tradISP
+        # modified_input_3 = self.pipeline_ISP_gathering(modified_raw_one_dim=modified_raw_one_dim,
+        #                                                file_name=file_name, gt_rgb=gt_rgb)
+        # modified_input_3 = self.clamp_with_grad(modified_input_3)
+        #
+        # original_3 = self.pipeline_ISP_gathering(modified_raw_one_dim=input_raw_one_dim, file_name=file_name,
+        #                                          gt_rgb=gt_rgb)
+        # original_3 = self.clamp_with_grad(original_3)
 
 
         # modified_input_2 = self.netG(modified_raw)
@@ -179,7 +179,7 @@ class Protected_Image_Generation(Modified_invISP):
 
         ori_raw_visualized = self.bilinear_demosaic.bilinear_demosaic(input_raw_one_dim, bayer_pattern)
         modified_raw_visualized = self.bilinear_demosaic.bilinear_demosaic(modified_raw_one_dim, bayer_pattern)
-        name = f"{self.out_space_storage}/hand_forged_images/test_mvss/"
+        name = f"{self.out_space_storage}/hand_forged_images/test_rebuttal/"
         # print('\nsaving sample ' + name)
         for image_no in range(batch_size):
             if self.opt['inference_save_image']:
@@ -189,34 +189,34 @@ class Protected_Image_Generation(Modified_invISP):
                 # self.get_error_map((modified_raw_one_dim[image_no]-input_raw_one_dim[image_no]).squeeze().cpu().numpy(),
                 #                    diff_raw_path)
 
-                self.print_this_image((20*torch.abs(ori_raw_visualized[image_no]-modified_raw_visualized[image_no])),
+                self.print_this_image((50*torch.abs(ori_raw_visualized[image_no]-modified_raw_visualized[image_no])),
                                       f"{name}/{str(step).zfill(5)}_diff_raw.png")
 
                 self.print_this_image(modified_input_0[image_no], f"{name}/{str(step).zfill(5)}_0.png")
                 self.print_this_image(original_0[image_no], f"{name}/{str(step).zfill(5)}_0_ori.png")
 
-                self.print_this_image((10 * torch.abs(modified_input_0[image_no] - original_0[image_no])),
+                self.print_this_image((20 * torch.abs(modified_input_0[image_no] - original_0[image_no])),
                                       f"{name}/{str(step).zfill(5)}_0_diff.png")
 
                 self.print_this_image(modified_input_1[image_no], f"{name}/{str(step).zfill(5)}_1.png")
                 self.print_this_image(original_1[image_no], f"{name}/{str(step).zfill(5)}_1_ori.png")
 
-                self.print_this_image((10 * torch.abs(modified_input_1[image_no] - original_1[image_no])),
+                self.print_this_image((20 * torch.abs(modified_input_1[image_no] - original_1[image_no])),
                                       f"{name}/{str(step).zfill(5)}_1_diff.png")
                 # self.print_this_image((10 * torch.abs(modified_input_2[image_no] - original_2[image_no])),
                 #                       f"{name}/{str(step).zfill(5)}_2_diff.png")
 
-                self.print_this_image(modified_input_2[image_no], f"{name}/{str(step).zfill(5)}_2.png")
-                self.print_this_image(original_2[image_no], f"{name}/{str(step).zfill(5)}_2_ori.png")
-
-                self.print_this_image((10 * torch.abs(modified_input_2[image_no] - original_2[image_no])),
-                                      f"{name}/{str(step).zfill(5)}_2_diff.png")
-
-                self.print_this_image(modified_input_3[image_no], f"{name}/{str(step).zfill(5)}_3.png")
-                self.print_this_image(original_3[image_no], f"{name}/{str(step).zfill(5)}_3_ori.png")
-
-                self.print_this_image((10 * torch.abs(modified_input_3[image_no] - original_3[image_no])),
-                                      f"{name}/{str(step).zfill(5)}_3_diff.png")
+                # self.print_this_image(modified_input_2[image_no], f"{name}/{str(step).zfill(5)}_2.png")
+                # self.print_this_image(original_2[image_no], f"{name}/{str(step).zfill(5)}_2_ori.png")
+                #
+                # self.print_this_image((10 * torch.abs(modified_input_2[image_no] - original_2[image_no])),
+                #                       f"{name}/{str(step).zfill(5)}_2_diff.png")
+                #
+                # self.print_this_image(modified_input_3[image_no], f"{name}/{str(step).zfill(5)}_3.png")
+                # self.print_this_image(original_3[image_no], f"{name}/{str(step).zfill(5)}_3_ori.png")
+                #
+                # self.print_this_image((10 * torch.abs(modified_input_3[image_no] - original_3[image_no])),
+                #                       f"{name}/{str(step).zfill(5)}_3_diff.png")
 
                 self.print_this_image(gt_rgb[image_no], f"{name}/{str(step).zfill(5)}_gt.png")
                 # np.save(f"{name}/{str(step).zfill(5)}_gt", modified_raw.detach().cpu().numpy())
