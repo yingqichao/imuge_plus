@@ -539,7 +539,7 @@ class Unet(nn.Module):
             for idx in range(len(self.use_hierarchical_segment)):
                 self.final_hierarchical_conv.append(
                     nn.Sequential(
-                        nn.Conv2d(dim, self.use_hierarchical_segment[idx], self.use_hierarchical_segment[idx])
+                        nn.Conv2d(dim, self.use_hierarchical_segment[idx], 1)
                 )
             )
 
@@ -686,11 +686,15 @@ class Unet(nn.Module):
             #     middle_pool_feats.append(self.norm_class[idx](middle_feats[idx].mean([-2, -1])))
             for idx in range(len(self.use_hierarchical_class)):
                 hier_feats_task = hier_post_feats[idx]
-                feats_class = []
+                # feats_class = []
+                # for feat in hier_feats_task:
+                #     out = self.hierarchical_class_mlp[idx](feat)
+                #     feats_class.append(out)
+                # out = reduce(torch.cat(feats_class, dim=1), 'b c -> b 1', 'mean')
+                feat_class = None
                 for feat in hier_feats_task:
-                    out = self.hierarchical_class_mlp[idx](feat)
-                    feats_class.append(out)
-                out = reduce(torch.cat(feats_class, dim=1), 'b c -> b 1', 'mean')
+                    feat_class = feat if feat_class is None else feat_class + feat
+                out = self.hierarchical_class_mlp[idx](feat_class)
                 hier_class_output.append(out)
 
                 # out = self.hierarchical_class_mlp[idx](hier_post_feats[idx])
@@ -702,11 +706,15 @@ class Unet(nn.Module):
             #     middle_upsample_feats.append(self.upsamples[idx](middle_feats[idx]))
             for idx in range(len(self.use_hierarchical_segment)):
                 hier_feats_task = hier_post_feats[idx+len(self.use_hierarchical_class)]
-                feats_seg = []
+                # feats_seg = []
+                # for feat in hier_feats_task:
+                #     out = self.final_hierarchical_conv[idx](feat)
+                #     feats_seg.append(out)
+                # out = reduce(torch.cat(feats_seg,dim=1), 'b c h w -> b 1 h w', 'max')
+                feat_seg = None
                 for feat in hier_feats_task:
-                    out = self.final_hierarchical_conv[idx](feat)
-                    feats_seg.append(out)
-                out = reduce(torch.cat(feats_seg,dim=1), 'b c h w -> b 1 h w', 'max')
+                    feat_seg = feat if feat_seg is None else feat_seg+feat
+                out = self.final_hierarchical_conv[idx](feat_seg)
                 hier_seg_output.append(out)
 
         if self.use_normal_output:

@@ -69,6 +69,13 @@ class Protected_Image_Generation(Modified_invISP):
         # self.load_model_wrapper(folder_name='detector_folder', model_name='load_discriminator_models',
         #                         network_lists=['discriminator_mask'])
 
+        ## inpainting model
+        self.define_inpainting_edgeconnect()
+        self.define_inpainting_ZITS()
+        self.define_inpainting_lama()
+
+
+
     def get_error_map(self, pred, filepath):
         width = pred.shape[1]  # in pixels
         fig = plt.figure(frameon=False)
@@ -84,6 +91,8 @@ class Protected_Image_Generation(Modified_invISP):
     def get_protected_RAW_and_corresponding_images(self, step=None):
         ##########################    inference single image   ########################
         ### what is tamper_source? used for simulated inpainting, only activated if self.global_step%3==2
+        tamper_index = self.opt['tamper_index']
+        postprocess_index = self.opt['postprocess_index']
 
         input_raw_one_dim = self.real_H_val
         file_name = self.file_name_val
@@ -177,6 +186,37 @@ class Protected_Image_Generation(Modified_invISP):
         # RAW_PSNR = self.psnr(self.postprocess(original_2), self.postprocess(modified_input_2)).item()
         # logs['RGB_PSNR_2'] = RAW_PSNR
 
+        ###############   TAMPERING   ##################################################################################
+        attacked_forward = None
+        if tamper_index is not None:
+
+            masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input_1,
+                                                                  percent_range=(0.0,0.15), index=self.global_step)
+
+            if not (tamper_index in self.opt['simulated_splicing_indices'] and self.previous_previous_images is None):
+                attacked_forward, _, _ = self.tampering_RAW(
+                    masks=masks, masks_GT=masks_GT, gt_rgb=gt_rgb,
+                    modified_input=modified_input_1, percent_range=percent_range, index=tamper_index
+                )
+
+            self.previous_previous_images = gt_rgb
+
+        ###############   Post-process   ##################################################################################
+        attacked_image = None
+        if attacked_forward is not None and postprocess_index is not None:
+            kernel = 7
+            resize_ratio = (int(self.random_float(0.5, 2) * self.width_height),
+                            int(self.random_float(0.5, 2) * self.width_height))
+            quality_idx = 18
+
+            attacked_image, _, _ = self.benign_attacks(attacked_forward=attacked_forward,
+                                                                                 quality_idx=quality_idx,
+                                                                                 index=postprocess_index,
+                                                                                 kernel_size=kernel,
+                                                                                 resize_ratio=resize_ratio
+                                                                                 )
+
+        ################################ print images ###############################
         ori_raw_visualized = self.bilinear_demosaic.bilinear_demosaic(input_raw_one_dim, bayer_pattern)
         modified_raw_visualized = self.bilinear_demosaic.bilinear_demosaic(modified_raw_one_dim, bayer_pattern)
         name = f"{self.out_space_storage}/hand_forged_images/test_rebuttal/"
@@ -220,6 +260,12 @@ class Protected_Image_Generation(Modified_invISP):
 
                 self.print_this_image(gt_rgb[image_no], f"{name}/{str(step).zfill(5)}_gt.png")
                 # np.save(f"{name}/{str(step).zfill(5)}_gt", modified_raw.detach().cpu().numpy())
+
+                if attacked_forward is not None:
+                    self.print_this_image(attacked_forward[image_no], f"{name}/{str(step).zfill(5)}_tampered_{tamper_index}.png")
+
+                if attacked_image is not None:
+                    self.print_this_image(attacked_image[image_no], f"{name}/{str(step).zfill(5)}_postprocess_{tamper_index}.png")
 
                 print("Saved:{}".format(f"{name}/{str(step).zfill(5)}"))
 

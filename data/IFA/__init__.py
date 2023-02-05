@@ -42,7 +42,7 @@ def create_dataset(*, opt, args):
     if args.mode in [0,4]:
         print("dataset Defacto")
         from data.CASIA_dataset import CASIA_dataset as D
-        val_set = D(opt, val_dataset_opt, is_train=False, dataset=["CASIA2"], attack_list=None, with_mask=True, with_au=True,
+        val_set = D(opt, val_dataset_opt, is_train=False, dataset=["Defacto"], attack_list=None, with_mask=True, with_au=True,
                     split=False)
         # print("dataset LQ")
         # from data.LQ_dataset import LQDataset as D

@@ -1,4 +1,4 @@
-
+skip_training: true
 do_evaluate: 2000
 minimum_PSNR_caused_by_attack: 25
 minimun_PSNR_that_activates_local: 45
@@ -9,7 +9,7 @@ psnr_thresh: 28
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: ~ #0_13999_qf_predict.pth #4_3999_qf_predict.pth
+load_predictor_models: 50_9_qf_predict.pth #4_3999_qf_predict.pth
 consider_mask_prediction: false
 do_augment: true
 
@@ -19,7 +19,7 @@ load_invisp_models: 10_7999_qf_predict.pth
 
 #### general settings
 
-gpu_ids: [0,1]
+gpu_ids: [0]
 
 restart_step: 1000
 model_save_period: 2000

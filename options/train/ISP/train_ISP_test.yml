@@ -6,6 +6,10 @@ load_ISP_models: 43999 #43999
 #load_OSN_models: 8999
 load_localizer_models: 11999
 
+### newly added: auto-generated simulated attack upon uploading to OSNs
+tamper_index: 0
+postprocess_index: 3
+
 task_name_discriminator_model: my_own_elastic # my_own_elastic or ablation_on_RAW
 task_name_KD_JPEG_model: my_own_elastic
 task_name_customized_model: ISP_alone

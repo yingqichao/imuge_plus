@@ -153,6 +153,9 @@ class CASIA_dataset(data.Dataset):
                 'CASIA2': [
                     '/groupshare/CASIA2/Au'
                 ],
+                'Defacto': [
+                    '/groupshare/CASIA2/Au'
+                ],
                 # 'Defacto': [
                 #     '/groupshare/Defacto/splicing_1_img/img',
                 #     '/groupshare/Defacto/inpainting_img/img',
@@ -184,7 +187,7 @@ class CASIA_dataset(data.Dataset):
         # get GT image
         valid=False
         while not valid:
-            if not self.is_train or not self.filter:
+            if not self.filter:
                 valid = True
             filename = self.codebook[index]
             GT_path = self.paths_GT[filename]
@@ -206,7 +209,7 @@ class CASIA_dataset(data.Dataset):
                     # nist16的mask是反过来的，未篡改为白色
                     mask = 1.0 - mask
                 rate = torch.mean(mask)
-                if rate<self.min_rate or rate>self.max_rate:
+                if self.filter and (rate<self.min_rate or rate>self.max_rate):
                     self.ban_list.add(GT_path)
                     index = np.random.randint(0, len(self.paths_mask))
                     continue
@@ -249,14 +252,15 @@ class CASIA_dataset(data.Dataset):
 
             return_list.append(img_au_GT)
 
-        if self.with_au and self.with_mask:
-            return img_GT, mask, img_au_GT
-        elif self.with_au and not self.with_mask:
-            return img_GT, img_au_GT
-        elif not self.with_au and self.with_mask:
-            return img_GT, mask
-        else:
-            return img_GT
+        return tuple(return_list)
+        # if self.with_au and self.with_mask:
+        #     return img_GT, mask, img_au_GT
+        # elif self.with_au and not self.with_mask:
+        #     return img_GT, img_au_GT
+        # elif not self.with_au and self.with_mask:
+        #     return img_GT, mask
+        # else:
+        #     return img_GT
 
     def __len__(self):
         return len(self.paths_GT)

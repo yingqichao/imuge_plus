@@ -37,15 +37,15 @@ def get_filename_from_images(path,sep1,sep2=None,prefix=""):
     for dirpath, _, fnames in sorted(os.walk(path)):
         for fname in sorted(fnames):
             if is_image_file(fname):
-                r1 = len(fname) if sep2 is None else fname.rfind(sep1)
+                r1 = len(fname) if sep1 is None else fname.rfind(sep1)
                 r2 = 0 if sep2 is None else fname[:r1].rfind(sep2)
-                r3 = 0 if sep2 is None else fname[:r2].rfind(sep2)
+                # r3 = 0 if sep3 is None else fname[:r2].rfind(sep2)
                 img_path = os.path.join(dirpath, fname)
                 filename = fname[r2:r1]
                 if filename in images:
-                    raise ValueError(f"发现重复data：{img_path} {filename} {r1} {r2} {r3}")
-                images[prefix+filename] = img_path
-                codebook.append(prefix+filename)
+                    raise ValueError(f"发现重复data：{img_path} {filename} already exist:{images[filename]}")
+                images[f"{prefix}:{filename}"] = img_path
+                codebook.append(f"{prefix}:{filename}")
     assert images, '{:s} has no valid image file'.format(path)
     return images, codebook
 

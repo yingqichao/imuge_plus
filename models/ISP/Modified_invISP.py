@@ -209,9 +209,9 @@ class Modified_invISP(BaseModel):
             self.real_H_val = img.cuda()
             self.canny_image_val = mask.unsqueeze(1).cuda()
 
-    def optimize_parameters_router(self, mode, step=None):
+    def optimize_parameters_router(self, mode, step=None, epoch=None, **kwargs):
         if mode == 0.0:
-            return self.get_protected_RAW_and_corresponding_images(step=step)
+            return self.get_protected_RAW_and_corresponding_images(step=step, **kwargs)
         elif mode==1.0:
             return self.predict(step=step)
         elif mode==2.0:
@@ -237,7 +237,7 @@ class Modified_invISP(BaseModel):
     # todo: MODE == 0
     # todo: get_protected_RAW_and_corresponding_images
     ####################################################################################################
-    def get_protected_RAW_and_corresponding_images(self, step=None):
+    def get_protected_RAW_and_corresponding_images(self, step=None, **kwargs):
         pass
 
     ####################################################################################################
@@ -1119,14 +1119,14 @@ class Modified_invISP(BaseModel):
             logs["cropped"] = False
 
 
+        ###############   TAMPERING   ##################################################################################
         percent_range = [0.05, 0.3] if self.global_step % self.amount_of_tampering in \
-                                    (self.opt['simulated_copymove_indices']+self.opt['simulated_inpainting_indices']) \
+                                       (self.opt['simulated_copymove_indices'] + self.opt[
+                                           'simulated_inpainting_indices']) \
             else [0.05, 0.2]
         index_for_postprocessing = self.global_step
 
         quality_idx = self.get_quality_idx_by_iteration(index=index_for_postprocessing)
-
-        ###############   TAMPERING   ##################################################################################
         rate_mask, masks, masks_GT = 0, None, None
         # while rate_mask < 0.05 or rate_mask >= 0.33:  # prevent too small or too big
         masks, masks_GT, percent_range = self.mask_generation(modified_input=modified_input,
