@@ -9,12 +9,14 @@ default_attack_opt = {
     'ISP': 'options/train/attack_layer_setting/ISP_attack_layer.yml',
     'PAMI': 'options/train/attack_layer_setting/PAMI_attack_layer.yml',
     'IFA': 'options/train/attack_layer_setting/IFA_attack_layer.yml',
+    'tianchi': 'options/train/attack_layer_setting/IFA_attack_layer.yml',
 }
 
 default_base_opt = {
     'ISP': 'options/train/ISP/train_ISP_base.yml',
     'PAMI': 'options/train/PAMI/train_PAMI_base.yml',
     'IFA': 'options/train/IFA/train_IFA_base.yml',
+    'tianchi': 'options/train/tianchi/train_tianchi_base.yml',
 }
 
 def parse(*, opt_path,
@@ -30,6 +32,8 @@ def parse(*, opt_path,
             base_opt_path = default_base_opt['PAMI']
         elif 'IFA' in opt_path:
             base_opt_path = default_base_opt['IFA']
+        elif 'tianchi' in opt_path:
+            base_opt_path = default_base_opt['tianchi']
         else:
             raise NotImplementedError("base opt not found")
     with open(base_opt_path, mode='r') as f:
@@ -43,6 +47,8 @@ def parse(*, opt_path,
             attack_opt_path = default_attack_opt['PAMI']
         elif 'IFA' in opt_path:
             attack_opt_path = default_attack_opt['IFA']
+        elif 'tianchi' in opt_path:
+            attack_opt_path = default_attack_opt['tianchi']
         else:
             raise NotImplementedError("base opt not found")
     with open(attack_opt_path, mode='r') as f:
@@ -72,10 +78,10 @@ def parse(*, opt_path,
         if "restart_step" not in opt:
             print("using default value as restart_step: 1000")
             opt['restart_step'] = 1000
-    elif 'PAMI' in opt_path:
-        pass
-    elif 'IFA' in opt_path:
-        pass
+    # elif 'PAMI' in opt_path:
+    #     pass
+    # elif 'IFA' in opt_path:
+    #     pass
 
     print(f"Opt List: {opt}")
 

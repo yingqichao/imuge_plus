@@ -1,0 +1,54 @@
+#### models path dirs
+conduct_test: false
+network_arch: cat #shunt_convnext
+model_load_number: ~ #6_9_cat.pth #95_43_ViT.pth
+#### general settings
+
+gpu_ids: [2]
+
+only_test: false
+focal_alpha: 0.025
+
+restart_step: 1000
+model_save_period: 2000
+
+with_dual_process: false
+
+datasets:
+  train:
+    name: Rerun
+    mode: LQGT
+#    dataroot_GT: /qichaoying/Downloads/Invertible-Image-Rescaling-master/icassp_real/images    # Test images
+#    dataroot_GT: /groupshare//Places/data_256                                        # Places
+#    dataroot_GT: /groupshare/CelebA/img/img_celeba_200                                          # CelebA
+#    dataroot_GT: /groupshare/paris_street_view/paris_train                            # ParisStreetView
+    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0                                   # COCO
+#    dataroot_GT: /groupshare//Flickr1024/train                                 # Flicker
+#    dataroot_GT: /groupshare//DIV2K_valid                                # DIV2K
+#    dataroot_GT: /groupshare//VOC2012/JPEGImages
+#    dataroot_GT: /groupshare//UCID_color/images                                                 # UCID
+#    dataroot_GT: /groupshare//ILSVRC2012_img_val                                      # ImageNet
+    dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK
+
+    use_shuffle: true
+    n_workers: 1 # per GPU
+
+    batch_size: 1 # 32 for hierarchical
+    GT_size: 512 # 608
+
+    color: RGB
+
+  val:
+    name: val_DIV2K
+    mode: LQGT
+    dataroot_GT: /groupshare/ISP_results/xxhu_test/UNet/FORGERY_0
+    dataroot_LQ: /groupshare/ISP_results/xxhu_test/UNet/MASK # path to validation reference LR images, not necessary, if not provided, LR images will be generated in dataloader
+    GT_size: 512
+
+
+train:
+  lr_CNN: !!float 5e-5
+  lr_transformer: !!float 5e-5
+  beta1: 0.9 #0.9
+  beta2: 0.999 #0.999
+

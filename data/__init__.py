@@ -57,6 +57,12 @@ def create_dataset_and_loader(*, opt,args,rank,seed):
         from data.ISP import create_dataset
         train_set, val_set = create_dataset(opt=opt, args=args)
         # elif "IJCAI"
+    elif "tianchi" in opt['model']:
+        from data.Tianchi import create_dataset
+        train_set, val_set = create_dataset(opt=opt, args=args)
+    elif "wanghaoyue" in opt['model']:
+        from data.wanghaoyue import create_dataset
+        train_set, val_set = create_dataset(opt=opt, args=args)
     else:
         raise NotImplementedError('大神是不是搞错了？')
 

@@ -31,11 +31,7 @@ class LQGTDataset(data.Dataset):
         self.paths_LQ, self.paths_GT = None, None
         self.sizes_LQ, self.sizes_GT = None, None
         self.GT_size = self.dataset_opt['GT_size']
-        # self.jpeg_filepath=['/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_10',
-        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_30',
-        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_50',
-        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_70',
-        #                     '/home/qichaoying/Documents/COCOdataset/jpeg_train2017/train_2017_90']
+
         self.paths_GT, self.sizes_GT = util.get_image_paths(dataset_opt['dataroot_GT'])
         self.transform = A.Compose(
             [

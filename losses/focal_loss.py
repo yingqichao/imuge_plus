@@ -1,6 +1,7 @@
 from torch import nn
 import torch
 from torch.nn import functional as F
+from einops import rearrange
 
 class focal_loss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2, num_classes = 3, size_average=True):
@@ -42,6 +43,34 @@ class focal_loss(nn.Module):
 
         preds_softmax = preds_softmax.gather(1,labels.view(-1,1))   # 这部分实现nll_loss ( crossempty = log_softmax + nll )
         preds_logsoft = preds_logsoft.gather(1,labels.view(-1,1))
+        self.alpha = self.alpha.gather(0,labels.view(-1)) # [0.05, 0.95 ... 0.95, 0.05]
+        loss = -torch.mul(torch.pow((1-preds_softmax), self.gamma), preds_logsoft)  # torch.pow((1-preds_softmax), self.gamma) 为focal loss中 (1-pt)**γ
+
+        loss = torch.mul(self.alpha, loss.t())
+        if self.size_average:
+            loss = loss.mean()
+        else:
+            loss = loss.sum()
+        return loss
+
+    def forward_segment(self, preds, labels):
+        """
+        focal_loss损失计算
+        :param preds:   预测类别. size:[B,N,C] or [B,C]    分别对应与检测与分类任务, B 批次, N检测框数, C类别数
+        :param labels:  实际类别. size:[B,N] or [B]
+        :return:
+        """
+        # assert preds.dim()==2 and labels.dim()==1
+        preds = rearrange(preds, 'b c h w -> (b h w) c')
+        labels = rearrange(labels, 'b c h w -> (b h w) c')
+
+        # preds = preds.view(-1,preds.size(-1))
+        self.alpha = self.alpha.to(preds.device)
+        preds_logsoft = F.log_softmax(preds, dim=1) # log_softmax
+        preds_softmax = torch.exp(preds_logsoft)    # softmax
+
+        preds_softmax = preds_softmax.gather(1,labels.view(-1,1))   # 这部分实现nll_loss ( crossempty = log_softmax + nll )
+        preds_logsoft = preds_logsoft.gather(1,labels.view(-1,1))
         self.alpha = self.alpha.gather(0,labels.view(-1))
         loss = -torch.mul(torch.pow((1-preds_softmax), self.gamma), preds_logsoft)  # torch.pow((1-preds_softmax), self.gamma) 为focal loss中 (1-pt)**γ
 
@@ -51,3 +80,10 @@ class focal_loss(nn.Module):
         else:
             loss = loss.sum()
         return loss
+
+if __name__ == '__main__':
+    focal = focal_loss()
+    pred = torch.zeros((1,2,32,32),requires_grad=True)
+    gt = torch.ones((1,1,32,32)).long()
+    loss = focal.forward_segment(pred,gt)
+    print(loss)

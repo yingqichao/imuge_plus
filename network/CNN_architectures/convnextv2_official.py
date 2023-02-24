@@ -141,16 +141,19 @@ class ConvNeXtV2(nn.Module):
             nn.init.constant_(m.bias, 0)
 
     def forward_features(self, x):
+        feats = []
         for i in range(4):
             x = self.downsample_layers[i](x)
             x = self.stages[i](x)
-        return x
+            feats.append(x)
+        return feats
 
     def forward(self, x):
-        x = self.forward_features(x)
+        feats = self.forward_features(x)
+        x = feats[-1]
         x = self.norm(x.mean([-2, -1]))  # global average pooling, (N, C, H, W) -> (N, C)
         x = self.head(x)
-        return x
+        return x, feats
 
 
 def convnextv2_atto(**kwargs):
@@ -191,3 +194,9 @@ def convnextv2_large(**kwargs):
 def convnextv2_huge(**kwargs):
     model = ConvNeXtV2(depths=[3, 3, 27, 3], dims=[352, 704, 1408, 2816], **kwargs)
     return
+
+if __name__ == '__main__':
+    input = torch.ones((1,3,224,224))
+    model = convnextv2_base()
+    output, feats = model(input)
+    print(output.shape)

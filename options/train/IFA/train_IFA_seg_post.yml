@@ -9,7 +9,7 @@ psnr_thresh: 28
 #### model path dirs
 predictor_folder: /groupshare/IFA_results/model/segment_postprocess/
 
-load_predictor_models: 50_9_qf_predict.pth #4_3999_qf_predict.pth
+load_predictor_models: 20_9_qf_predict.pth #4_3999_qf_predict.pth
 consider_mask_prediction: false
 do_augment: true
 

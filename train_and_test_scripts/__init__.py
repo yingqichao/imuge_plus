@@ -24,6 +24,11 @@ def scripts_router(*, which_model, opt, args, rank, model,
         from train_and_test_scripts.train_kdjpeg import training_script_kdjpeg
         training_script_kdjpeg(opt=opt, args=args, rank=rank, model=model,
                                train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
+    elif which_model == 'tianchi':
+        ## todo: tianchi training
+        from train_and_test_scripts.train_tianchi import training_script
+        training_script(opt=opt, args=args, rank=rank, model=model,
+                               train_loader=train_loader, val_loader=val_loader, train_sampler=train_sampler)
 
 
     ####################################################################################################

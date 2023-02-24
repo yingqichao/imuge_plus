@@ -1,0 +1,14 @@
+
+do_evaluate: false
+
+name: /groupshare/tianchi2023_results
+model: tianchi
+
+model_save_period: 5000
+restart_step: 1000
+
+train:
+  lr_CNN: !!float 5e-5
+  lr_transformer: !!float 5e-5
+  beta1: 0.9 #0.9
+  beta2: 0.999 #0.999
