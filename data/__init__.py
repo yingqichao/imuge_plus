@@ -60,8 +60,8 @@ def create_dataset_and_loader(*, opt,args,rank,seed):
     elif "tianchi" in opt['model']:
         from data.Tianchi import create_dataset
         train_set, val_set = create_dataset(opt=opt, args=args)
-    elif "wanghaoyue" in opt['model']:
-        from data.wanghaoyue import create_dataset
+    elif "detection_large_model" in opt['model']:
+        from data.Tianchi import create_dataset
         train_set, val_set = create_dataset(opt=opt, args=args)
     else:
         raise NotImplementedError('大神是不是搞错了？')

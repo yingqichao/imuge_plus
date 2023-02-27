@@ -1,5 +1,5 @@
 use_mae: true
-
+model: detection_large_model
 #### models path dirs
 
 conduct_test: false

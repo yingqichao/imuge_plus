@@ -106,8 +106,9 @@ def main(args,opt):
     print(f"Model name: {which_model}")
     from data import create_dataset_and_loader
     from models import create_models
-    ## data
+    ## todo: 加载data
     train_set, val_set, train_sampler, train_loader, val_loader = create_dataset_and_loader(opt=opt, args=args, rank=rank, seed=seed)
+    ## todo: 加载训练脚本
     model = create_models(opt=opt,args=args, train_set=train_set, val_set=val_set)
 
     from train_and_test_scripts import scripts_router
@@ -127,6 +128,7 @@ if __name__ == '__main__':
     parser.add_argument('-loading_from', type=str, default="COCO_base", help='loading checkpoints from?')
     parser.add_argument('-load_models', type=int, default=1, help='load checkpoint or not.')
     args = parser.parse_args()
+    # todo: 定义option的读法
     opt = option.parse(opt_path=args.opt,
                         args=args)
 
