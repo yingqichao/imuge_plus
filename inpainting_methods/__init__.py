@@ -1,0 +1,1 @@
+print("ZITS inpainting inited")
