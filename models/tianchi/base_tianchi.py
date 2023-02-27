@@ -100,6 +100,7 @@ class BaseTianchi():
 
 
 
+
     ### todo: Abstract Methods
 
 
@@ -159,10 +160,10 @@ class BaseTianchi():
             else:
                 print('Did not find models for class [{:s}] ...'.format(load_path_G))
 
-    def define_CATNET(self, NUM_CLASSES=1):
+    def define_CATNET(self, NUM_CLASSES=1, num_bayar=0, load_pretrained_cat_model=False):
         print("using CATnet")
         from detection_methods.CATNet.model import get_model
-        model = get_model(NUM_CLASSES).cuda()
+        model = get_model(NUM_CLASSES, use_SRM=num_bayar, load_pretrained_cat_model=load_pretrained_cat_model).cuda()
         model = DistributedDataParallel(model,
                                         device_ids=[torch.cuda.current_device()],
                                         find_unused_parameters=True)

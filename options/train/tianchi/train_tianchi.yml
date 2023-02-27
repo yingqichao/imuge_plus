@@ -1,16 +1,16 @@
 #### models path dirs
 conduct_test: false
 network_arch: cat #shunt_convnext
-model_load_number: ~ #6_9_cat.pth #95_43_ViT.pth
+model_load_number: ~ #26_2999_cat.pth #95_43_ViT.pth
 #### general settings
 
-gpu_ids: [2]
+gpu_ids: [2,3]
 
 only_test: false
 focal_alpha: 0.025
 
 restart_step: 1000
-model_save_period: 2000
+model_save_period: 1000
 
 with_dual_process: false
 

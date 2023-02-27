@@ -42,11 +42,11 @@ class TianchiDataset(data.Dataset):
 
         print(f"Using {self.dataset_name} with_au {with_au} with_mask {with_mask} is_train {is_train}")
 
-        # self.transform_just_resize = A.Compose(
-        #     [
-        #         A.Resize(always_apply=True, height=self.GT_size, width=self.GT_size)
-        #     ]
-        # )
+        self.transform = A.Compose(
+            [
+                A.HorizontalFlip(p=0.5),
+            ]
+        )
 
         self.GT_folder = {
             'train':{
@@ -178,7 +178,7 @@ class TianchiDataset(data.Dataset):
             if rescale > 1:
                 img_GT = cv2.resize(np.copy(img_GT), (int(W / rescale), int(H / rescale)),
                                   interpolation=cv2.INTER_LINEAR)
-            # img_GT = self.transform_just_resize(image=copy.deepcopy(img_GT))["image"]
+            img_GT = self.transform(image=copy.deepcopy(img_GT))["image"]
             img_GT = img_GT.astype(np.float32) / 255.
             if img_GT.ndim == 2:
                 img_GT = np.expand_dims(img_GT, axis=2)
@@ -196,25 +196,25 @@ class TianchiDataset(data.Dataset):
                 return_list.append(mask)
                 return_list.append(mask_path[mask_path.rfind('/')+1:])
 
-        if  self.with_au:
-            index = np.random.randint(0,len(self.au_GT))
-            GT_path = self.au_GT[index]
-
-            img_au_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
-            # img_au_GT = util.channel_convert(img_au_GT.shape[2], self.dataset_opt['color'], [img_au_GT])[0]
-            img_au_GT = self.transform_just_resize(image=copy.deepcopy(img_au_GT))["image"]
-            img_au_GT = img_au_GT.astype(np.float32) / 255.
-            if img_au_GT.ndim == 2:
-                img_au_GT = np.expand_dims(img_au_GT, axis=2)
-            # some images have 4 channels
-            if img_au_GT.shape[2] > 3:
-                img_au_GT = img_au_GT[:, :, :3]
-            # BGR to RGB, HWC to CHW, numpy to tensor
-            img_au_GT = img_au_GT[:, :, [2, 1, 0]]
-
-            img_au_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_au_GT, (2, 0, 1)))).float()
-
-            return_list.append(img_au_GT)
+        # if  self.with_au:
+        #     index = np.random.randint(0,len(self.au_GT))
+        #     GT_path = self.au_GT[index]
+        #
+        #     img_au_GT = cv2.imread(GT_path, cv2.IMREAD_COLOR)
+        #     # img_au_GT = util.channel_convert(img_au_GT.shape[2], self.dataset_opt['color'], [img_au_GT])[0]
+        #     img_au_GT = self.transform_just_resize(image=copy.deepcopy(img_au_GT))["image"]
+        #     img_au_GT = img_au_GT.astype(np.float32) / 255.
+        #     if img_au_GT.ndim == 2:
+        #         img_au_GT = np.expand_dims(img_au_GT, axis=2)
+        #     # some images have 4 channels
+        #     if img_au_GT.shape[2] > 3:
+        #         img_au_GT = img_au_GT[:, :, :3]
+        #     # BGR to RGB, HWC to CHW, numpy to tensor
+        #     img_au_GT = img_au_GT[:, :, [2, 1, 0]]
+        #
+        #     img_au_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_au_GT, (2, 0, 1)))).float()
+        #
+        #     return_list.append(img_au_GT)
 
         return tuple(return_list)
         # if self.with_au and self.with_mask:

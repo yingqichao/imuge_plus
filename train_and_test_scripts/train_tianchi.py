@@ -11,10 +11,10 @@ def training_script(*, opt, args, rank, model, train_loader, val_loader, train_s
     # latest_values = None
 
     current_step, valid_idx = 0, 0
-    running_list, print_step, restart_step = {}, 200, opt['restart_step']
+    running_list, print_step, restart_step = {}, 100, opt['restart_step']
     start = time.time()
 
-    epochs = 50 if not opt['only_test'] else 1
+    epochs = 200 if not opt['only_test'] else 1
     for epoch in range(epochs):
         current_step = 0
         if not opt['only_test']:

@@ -82,7 +82,7 @@ class DiceLoss(nn.Module):
         assert predict.shape == target.shape, 'predict & target shape do not match'
         dice = BinaryDiceLoss(**self.kwargs)
         total_loss = 0
-        predict = F.softmax(predict, dim=1)
+        # predict = F.softmax(predict, dim=1)
 
         for i in range(target.shape[1]):
             if i != self.ignore_index:
@@ -94,3 +94,12 @@ class DiceLoss(nn.Module):
                 total_loss += dice_loss
 
         return total_loss/target.shape[1]
+
+if __name__ == '__main__':
+    dice_loss = DiceLoss()
+    # predict = torch.ones((1,2,32,32))+0.1*torch.rand((1,2,32,32))
+    # predict = F.softmax(predict, dim=1)[:,1:2]
+    predict = torch.ones((1, 1, 32, 32))
+    gt = torch.ones((1, 1, 32, 32))
+    loss = dice_loss(predict,gt)
+    print(loss)

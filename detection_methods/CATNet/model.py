@@ -27,7 +27,7 @@ def parse_args():
 
     return args
 
-def get_model(NUM_CLASSES=1):
+def get_model(NUM_CLASSES=1,use_SRM=0,load_pretrained_cat_model=True):
     default_config = './detection_methods/CATNet/experiments/CAT_full.yaml'
     opts = ['TEST.MODEL_FILE', '/groupshare/CATNet/RGB_only_v2.tar', 'TEST.FLIP_TEST', 'False', 'TEST.NUM_SAMPLES', '0']
     args = argparse.Namespace(cfg=default_config, opts=opts)
@@ -38,10 +38,11 @@ def get_model(NUM_CLASSES=1):
     # cudnn.enabled = config.CUDNN.ENABLED
 
     from detection_methods.CATNet.lib.models.network_RGB import get_seg_model
-    model = get_seg_model(config, NUM_CLASSES)
-    model_state_file = config.TEST.MODEL_FILE
-    checkpoint = torch.load(model_state_file, map_location='cpu')
-    model.load_state_dict(checkpoint['state_dict'], strict=False)
+    model = get_seg_model(config, NUM_CLASSES, use_SRM, load_pretrained_cat_model)
+    if load_pretrained_cat_model:
+        model_state_file = config.TEST.MODEL_FILE
+        checkpoint = torch.load(model_state_file, map_location='cpu')
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
     # model = nn.DataParallel(model).cuda()
     return model
 

@@ -12,7 +12,8 @@ from models.tianchi.base_tianchi import BaseTianchi
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 from losses.focal_loss import focal_loss
-
+from losses.dice_loss import DiceLoss
+from losses.F1_score_loss import SoftF1Loss
 # os.environ['CUDA_VISIBLE_DEVICES'] = "3,4"
 
 class baseline_tianchi(BaseTianchi):
@@ -23,7 +24,9 @@ class baseline_tianchi(BaseTianchi):
         self.args = args
         self.history_accuracy = 0.2
         # self.methodology = opt['methodology']
-        self.focal_loss = focal_loss(alpha=self.opt['focal_alpha'])
+        self.focal_loss = focal_loss(alpha=self.opt['focal_alpha']).cuda()
+        self.dice_loss = DiceLoss().cuda()
+        self.f1_loss = SoftF1Loss().cuda()
         """
             prepare_networks_optimizers: set True current, preserved for future uses that only invoke static methods without creating an instances.
 
@@ -32,7 +35,7 @@ class baseline_tianchi(BaseTianchi):
         ### todo: 定义分类网络
         if "cat" in opt['network_arch']:
 
-            self.segmentation_model = self.define_CATNET(NUM_CLASSES=2)
+            self.segmentation_model = self.define_CATNET(NUM_CLASSES=2, num_bayar=3, load_pretrained_cat_model=False)
         else:
             raise NotImplementedError("模型结构不对，请检查！")
         # print(f"{opt['network_arch']} models created. method: {opt['methodology']}")
@@ -67,8 +70,10 @@ class baseline_tianchi(BaseTianchi):
                 name_params_CNN.append(k)
                 optim_params_CNN.append(v)
 
-        self.optimizer_CNN = torch.optim.AdamW(optim_params_CNN,
-                                               lr=self.opt['train']['lr_CNN'], betas=(0.9, 0.999), weight_decay=0.01)
+        # self.optimizer_CNN = torch.optim.AdamW(optim_params_CNN,
+        #                                        lr=self.opt['train']['lr_CNN'], betas=(0.9, 0.999), weight_decay=0.01)
+        self.optimizer_CNN = torch.optim.SGD(optim_params_CNN,
+                                               lr=self.opt['train']['lr_CNN'])
         # self.optimizer_trans = torch.optim.AdamW(optim_params_trans,
         #                                          lr=self.opt['train']['lr_transformer'], betas=(0.9, 0.999),
         #                                          weight_decay=0.01)
@@ -101,35 +106,41 @@ class baseline_tianchi(BaseTianchi):
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
         with torch.enable_grad():
-            pred_mask, x_stage_2, x_stage_3 = self.segmentation_model(self.img, qtable=None, mask_for_focal_loss=None,
+            pred_mask, _, _ = self.segmentation_model(self.img, qtable=None, mask_for_focal_loss=None,
                                                                       multi_exit=True)
             pred_mask = F.interpolate(pred_mask, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')
-            x_stage_2 = F.interpolate(x_stage_2, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')
-            x_stage_3 = F.interpolate(x_stage_3, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')
+            # x_stage_2 = F.interpolate(x_stage_2, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')
+            # x_stage_3 = F.interpolate(x_stage_3, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')
 
             loss = 0
-            loss_seg = self.focal_loss.forward_segment(pred_mask,self.mask.long())
-            loss += loss_seg
-            logs['loss_seg'] = loss_seg.item()
-            ### todo: auxiliary_losses
-            loss_seg_stage_2 = self.focal_loss.forward_segment(x_stage_2, self.mask.long())
-            loss += loss_seg_stage_2
-            logs['loss_stage2'] = loss_seg_stage_2.item()
-            loss_seg_stage_3 = self.focal_loss.forward_segment(x_stage_3, self.mask.long())
-            loss += loss_seg_stage_3
-            logs['loss_stage3'] = loss_seg_stage_3.item()
-
+            ### todo: focal
+            loss_focal = self.focal_loss.forward_segment(pred_mask,self.mask.long())
+            loss += loss_focal
+            logs['loss_focal'] = loss_focal.item()
             ### todo: emsemble
-            pred_mask_emsemble = pred_mask + x_stage_2 + x_stage_3
-            loss_bce = self.bce_loss(torch.softmax(pred_mask_emsemble,dim=1)[:,1:2], self.mask)
+            pred_mask_emsemble = pred_mask  # + x_stage_2 + x_stage_3
+            pred_mask_emsemble = torch.softmax(pred_mask_emsemble, dim=1)[:, 1:2]
+            loss_bce = self.bce_loss(pred_mask_emsemble, self.mask)
             logs['loss_bce'] = loss_bce.item()
+            ### todo: dice
+            loss_dice = self.f1_loss(predict=pred_mask_emsemble, target=self.mask)
+            # loss += loss_dice
+            logs['loss_F1'] = loss_dice.item()
+            ### todo: auxiliary_losses
+            # loss_seg_stage_2 = self.focal_loss.forward_segment(x_stage_2, self.mask.long())
+            # loss += loss_seg_stage_2
+            # logs['loss_stage2'] = loss_seg_stage_2.item()
+            # loss_seg_stage_3 = self.focal_loss.forward_segment(x_stage_3, self.mask.long())
+            # loss += loss_seg_stage_3
+            # logs['loss_stage3'] = loss_seg_stage_3.item()
+
 
             loss.backward()
-            if self.global_step%4==3:
-                nn.utils.clip_grad_norm_(self.segmentation_model.parameters(), 1)
-                self.optimizer_CNN.step()
-                # self.optimizer_trans.step()
-                self.optimizer_CNN.zero_grad()
+            # if self.global_step%4==3:
+            nn.utils.clip_grad_norm_(self.segmentation_model.parameters(), 1)
+            self.optimizer_CNN.step()
+            # self.optimizer_trans.step()
+            self.optimizer_CNN.zero_grad()
             # self.optimizer_trans.zero_grad()
 
             # emsemble_prediction = 0
@@ -149,18 +160,17 @@ class baseline_tianchi(BaseTianchi):
         ######## Finally ####################
         # for scheduler in self.schedulers:
         #     scheduler.step()
-        pred_mask_emsemble = torch.softmax(pred_mask_emsemble, dim=1)[:, 1:2]
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             for image_no in range(self.img.shape[0]):
-                filename = f"{self.out_space_storage}/images/{self.task_name}/{self.global_step}_ori.png"
+                filename = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{self.global_step}_ori_{self.rank}.png"
                 # print(f"image saved at: {filename}")
                 self.print_this_image(image=self.img[image_no], filename=filename[:filename.rfind('.')] + ".png")
 
-                filename = f"{self.out_space_storage}/images/{self.task_name}/{self.global_step}_pred.png"
+                filename = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{self.global_step}_pred_{self.rank}.png"
                 # print(f"image saved at: {filename}")
                 self.print_this_image(image=pred_mask_emsemble[image_no], filename=filename[:filename.rfind('.')] + ".png")
 
-                filename = f"{self.out_space_storage}/images/{self.task_name}/{self.global_step}_gt.png"
+                filename = f"{self.out_space_storage}/images/{self.task_name}/{epoch}_{self.global_step}_gt_{self.rank}.png"
                 # print(f"image saved at: {filename}")
                 self.print_this_image(image=self.mask[image_no], filename=filename[:filename.rfind('.')] + ".png")
             # images = stitch_images(
