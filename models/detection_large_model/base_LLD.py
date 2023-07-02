@@ -98,8 +98,11 @@ class BaseLLD():
         self.l2_loss = nn.MSELoss().cuda()  # reduction="sum"
         self.CE_loss = nn.CrossEntropyLoss().cuda()
 
+        self.customized_loss = self.define_loss
 
 
+    def define_loss(self, *, input, target):
+        return self.l1_loss(input,target)
 
     ### todo: Abstract Methods
 

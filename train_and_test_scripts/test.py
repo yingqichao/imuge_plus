@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from skimage.feature import canny
 from skimage.color import rgb2gray
-from inpainting_methods.CTSDG_inpainting import Generator
+from inpainting_methods.CTSDG_inpainting.models.generator.generator import Generator
 from PIL import Image
 import torchvision.transforms.functional as F
 

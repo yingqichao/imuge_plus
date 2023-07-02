@@ -26,8 +26,8 @@ def create_models(*, opt, args, train_set=None, val_set=None):
         from models.PAMI import create_training_scripts_and_print_variables
     elif 'tianchi' in which_model:
         from models.tianchi import create_training_scripts_and_print_variables
-    elif 'wanghaoyue' in which_model:
-        from models.wanghaoyue import create_training_scripts_and_print_variables
+    elif 'SAM_forgery_detection' in which_model:
+        from models.SAM_forgery_detection import create_training_scripts_and_print_variables
     elif 'detection_large_model' in which_model:
         from models.detection_large_model import create_training_scripts_and_print_variables
     else:

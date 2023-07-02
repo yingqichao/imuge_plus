@@ -86,4 +86,5 @@ if __name__ == '__main__':
     pred = torch.zeros((1,2,32,32),requires_grad=True)
     gt = torch.ones((1,1,32,32)).long()
     loss = focal.forward_segment(pred,gt)
+    loss.backward()
     print(loss)

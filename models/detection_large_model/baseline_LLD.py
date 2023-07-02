@@ -17,7 +17,7 @@ from losses.F1_score_loss import SoftF1Loss
 # os.environ['CUDA_VISIBLE_DEVICES'] = "3,4"
 import os
 from models.ISP.Modified_invISP import Modified_invISP
-
+from large_models.models_mae import mae_vit_base_patch16_dec512d8b
 class baseline_LLD(BaseLLD):
     def __init__(self, opt, args, train_loader=None, val_loader=None):
         self.train_loader = train_loader
@@ -30,20 +30,17 @@ class baseline_LLD(BaseLLD):
         self.dice_loss = DiceLoss().cuda()
         self.f1_loss = SoftF1Loss().cuda()
 
-        self.inpainting_model = Modified_invISP.define_inpainting_ZITS()
         """
             prepare_networks_optimizers: set True current, preserved for future uses that only invoke static methods without creating an instances.
 
         """
         super(baseline_LLD, self).__init__(opt, args)
         ### todo: 定义分类网络
-        if "cat" in opt['network_arch']:
-
-            self.segmentation_model = self.define_CATNET(NUM_CLASSES=2, num_bayar=3, load_pretrained_cat_model=False)
-        else:
-            raise NotImplementedError("模型结构不对，请检查！")
-        # print(f"{opt['network_arch']} models created. method: {opt['methodology']}")
-
+        self.detection_model = self.define_CATNET()
+        self.mae_model = mae_vit_base_patch16_dec512d8b().cuda()
+        self.mae_model = DistributedDataParallel(self.mae_model,
+                                        device_ids=[torch.cuda.current_device()],
+                                        find_unused_parameters=True)
         ## todo: 加载之前的模型
         if self.opt['model_load_number'] is not None:
             self.reload(
@@ -112,16 +109,19 @@ class baseline_LLD(BaseLLD):
 
     def train_LLD(self, *, epoch=None, step=None):
         ## todo:具体实现你的功能
-
-        self.segmentation_model.train()
+        self.detection_model.train()
+        self.mae_model.eval()
         if step is not None:
             self.global_step = step
         logs = {}
         lr = self.get_current_learning_rate()
         logs['lr'] = lr
         with torch.enable_grad():
-            pred_mask, _, _ = self.segmentation_model(self.img, qtable=None, mask_for_focal_loss=None,
-                                                                      multi_exit=True)
+            feature_mae = self.mae_model(self.img)
+            feature_detection = self.detection_model(self.img)
+            ## todo: distill loss
+            distill_loss = self.customized_loss(input=feature_detection, target=feature_mae)
+
             pred_mask = F.interpolate(pred_mask, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')
             # x_stage_2 = F.interpolate(x_stage_2, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')
             # x_stage_3 = F.interpolate(x_stage_3, size=(self.mask.shape[2], self.mask.shape[3]), mode='bilinear')

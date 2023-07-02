@@ -191,6 +191,8 @@ class TianchiDataset(data.Dataset):
             img_GT = torch.from_numpy(np.ascontiguousarray(np.transpose(img_GT, (2, 0, 1)))).float()
             return_list.append(img_GT)
             return_list.append(GT_path[GT_path.rfind('/')+1:])
+            return_list.append(W)
+            return_list.append(H)
 
             if self.with_mask:
                 return_list.append(mask)

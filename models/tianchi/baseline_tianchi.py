@@ -87,16 +87,18 @@ class baseline_tianchi(BaseTianchi):
         # self.schedulers.append(scheduler)
 
     def feed_data_router(self, *, batch, mode):
-        img, GT_path, mask, mask_path = batch
+        img, GT_path, W, H, mask, mask_path = batch
         self.img = img.cuda()
         self.mask = mask.unsqueeze(1).cuda()
         self.GT_path = GT_path
         self.mask_path = mask_path
+        self.W, self.H = W, H
 
     def feed_data_val_router(self, *, batch, mode):
-        img, GT_path = batch
+        img, GT_path, W, H = batch
         self.img_val = img.cuda()
         self.GT_val_path = GT_path
+        self.W, self.H = W, H
 
     def train_tianchi(self, *, epoch=None, step=None):
         self.segmentation_model.train()
@@ -209,8 +211,9 @@ class baseline_tianchi(BaseTianchi):
         logs['lr'] = lr
         with torch.no_grad():
             pred_mask = self.segmentation_model(self.img_val, qtable=None)
-            pred_mask = F.interpolate(pred_mask, size=(self.img_val.shape[2], self.img_val.shape[3]), mode='bilinear')
+            pred_mask = F.interpolate(pred_mask, size=(self.W, self.H), mode='bilinear')
             pred_mask = torch.softmax(pred_mask,dim=1)[:,1:2]
+            pred_mask = torch.where(pred_mask>0.5,1.0,0.0)
 
         if (self.global_step % 1000 == 3 or self.global_step <= 10):
             images = stitch_images(

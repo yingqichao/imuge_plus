@@ -133,7 +133,7 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes=1000, n_input=3):
+    def __init__(self, block:nn.Module=Bottleneck, layers:list=[3,4,6,3], num_classes=1000, n_input=3):
         self.inplanes = 64
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(n_input, 64, kernel_size=7, stride=2, padding=3,
@@ -141,7 +141,7 @@ class ResNet(nn.Module):
         self.bn1 = nn.SyncBatchNorm(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer1 = self._make_layer(block, 64, layers[0])  # block是Bottleneck，是一个带res残差链接的conv
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         rates = [1, 2, 4]
