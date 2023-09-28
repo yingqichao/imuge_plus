@@ -1,4 +1,13 @@
 # A framework for all papers
+
+This framework is developed on the basis of source code from "Invertible image decolorization", which also uses invertible network for image-to-image translation.
+
+In separate research works, we usually encounter repeated codes such as training loop, launching DDP and so on. So I developed this framewotk and the scripts can be called via routers, i.e., using "opt" to define options and using "mode" to do different experiments/ablations for a same project.
+
+## Learning to Immunize Images for Tamper Localization and Self-Recovery
+
+Please see README_PAMI.md
+
 ## DefensiveRAW: Robust Image Authentication via Transferable RAW Protection
 
 ### Mode Define
