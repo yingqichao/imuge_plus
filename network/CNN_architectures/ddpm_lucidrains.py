@@ -285,6 +285,7 @@ class LinearAttention(nn.Module):
         out = rearrange(out, 'b h c (x y) -> b (h c) x y', h = self.heads, x = h, y = w)
         return self.to_out(out)
 
+from timm.models.vision_transformer import ViTBlock
 class Attention(nn.Module):
     def __init__(self, dim, heads = 4, dim_head = 32):
         super().__init__()
