@@ -1,4 +1,6 @@
-# A framework for all papers
+[NEW!] checkpoint release: https://drive.google.com/drive/folders/11V1XJCORcm3XQ_AfaOEfRaKFZpjMLyVm?usp=drive_link (if it expired, contact me via qying@nvidia.com)
+
+# A light-weight e2e dl framework for all papers
 
 This framework is developed on the basis of source code from "Invertible image decolorization", which also uses invertible network for image-to-image translation.
 
